@@ -64,7 +64,7 @@ agentbrain 的定位：**用 pensieve 验证过的跨端配方，承载 abrain �
 
 - **L1 event 最小 schema**：`{schema_version, event_type(observe|correct|archive|explicit), created_at_utc, host(claude|codex|manual), session_id, project_id?, payload, source_quote?, causal_parents[], body_hash}`。`event_id = sha256(canonical_json(body))`；文件名即 hash，跨设备 git merge 天然无冲突（借 ADR 0039 §4.2，去掉 device_seq 等多机字段，留 schema 位）。
 - **L2 frontmatter**：`id / kind(maxim|decision|knowledge|preference) / status(active|provisional|archived|superseded) / scope(project|global) / confidence / trigger_phrases / created / updated / derived_from(L1 event ids)`。由 projector 确定性渲染（固定模板、固定排序、UTF-8/LF），文件头注明"由 projector 生成，手改会被 doctor 报 drift"。
-- **L3**：`.state/index.sqlite`（`node:sqlite` 内置，零外部依赖，借 `adr0039-l3.ts` 的建表边界）承载 FTS 候选召回；完全可重建，不入 git。
+- **L3**：`.state/index.sqlite`（`node:sqlite` 内置 `DatabaseSync`，零外部依赖，表边界借 `adr0039-l3.ts`）：`search_corpus`（FTS5）、`chunks` / `embeddings`（多向量，含 model/dimension/hash）、`projector_state`（投影水位线）、`jobs` / `diagnostics`。完全可重建，不入 git。**不采用 abrain 现状的 JSON sidecar embedding 索引双轨**——agentbrain 无历史包袱，向量直接进 sqlite，一步到位到 ADR 0039 的目标边界。
 
 ## 5. 项目绑定
 
@@ -86,8 +86,21 @@ agentbrain 的定位：**用 pensieve 验证过的跨端配方，承载 abrain �
 **知识层——按需检索（拉 pull）：**
 
 - 不注入。宿主指令文件的 marker 块写清触发时机：设计/取舍/排障/接外部 API 前先 `agentbrain search "<完整检索意图>"`。
-- `search` 返回：候选条目卡片（path / kind / title / status / confidence / 命中摘要），由 sqlite FTS(BM25) + trigger_phrases + 文件名匹配产生；**最终判断留给宿主 LLM**（读命中文件、决定采信哪条）——这是对 abrain LLM 精排的务实降级，换来零独立模型依赖。
-- embedding 召回留接口不实现（v2，见 §13）。
+- `search` 返回：候选条目卡片（path / kind / title / status / confidence / 命中摘要）；**默认最终判断留给宿主 LLM**（读命中文件、决定采信哪条）。
+
+### 6.1 检索栈：三级阶梯，按凭证与配置分级启用
+
+对标 abrain 最新检索架构（stage0 有序 hybrid + stage2 LLM 精排，ADR 0035/0036/0037），按"凭证可得性"拆成三级，`config.json` 的 `retrieval.profile` 选择：
+
+| Tier | 内容 | 启用条件 | 对应 profile |
+|---|---|---|---|
+| **Tier0 sparse**（始终可用） | sqlite FTS5 BM25（char n-gram 分词，中英混合友好）+ `trigger_phrases` 精确命中 + 文件名/`id` 匹配 | 无 | `fast` |
+| **Tier1 dense hybrid** | embedding 多向量召回（每 entry ≤ `multiVectorMaxChunks` 个 sub-vector，长条目分块）与 Tier0 融合：dense 先占候选窗口（扣除 **freshness reserve** 配额，给 stale/missing 条目按 `updated` 插位），再补 BM25 sparse；allow-set 去重；`stage0MaxCandidates` 封顶 | `retrieval.embedding` provider + key 已配置 | `hybrid` |
+| **Tier2 LLM 精排** | 候选全文交给 `LlmInvoker`（§8 任一 adapter）做相关性精排与 verdict；`none` 时可显式返回 Tier0/1 排序的低置信 top-K（对齐 abrain `bestEffortOnNone`，卡片标注"未经精排确认"） | 任一 LLM adapter 可用 | `reranked` |
+
+- **索引维护**：向量索引存 `.state/index.sqlite`（`chunks` + `embeddings` 表），search 时 **auto-reconcile** 增量补齐（新增/变更条目现场补嵌入，超预算留待 `agentbrain index --rebuild`）；全量重建命令等价（配方规则：hook/自动化必有等价手动命令）。
+- **降级语义（与 abrain 的关键差异，有意为之）**：abrain 有 REQ-009 硬合同——精排模型不可用直接 hard error、禁止降级。agentbrain 是多宿主工具，改为**显式分级降级**：embedding 不可用 → 收窄为 sparse-only 并在输出注明"仅稀疏召回"；LLM 不可用 → 返回 Tier0/1 候选并注明"未精排"。降级永远可见，不静默装作全量结果。
+- embedding provider 复用 `api` adapter 的凭证配置块（§8），模型/维度/分块参数全 config 驱动。
 
 ## 7. 写路径（sediment）
 
@@ -134,6 +147,8 @@ interface LlmInvoker {
 
 模型 id、maxTokens、每日预算、触发门槛全部 config 驱动；代码内零默认 model（借 sediment `settings.ts:549` 纪律）。三个 adapter 共用同一提炼 prompt 与输出 schema，切换不改行为语义。
 
+**凭证配置块**（`config.json`）供 `api` adapter 与 `retrieval.embedding` 共用：`{ baseUrl, apiKeyEnv | apiKey, model }` 各一份——沉淀用生成模型、检索用 embedding 模型，key 可以同源（同一订阅）也可以分开。
+
 ## 9. CLI 命令面
 
 `agentbrain` 单命令入口（TypeScript / Node ≥22，仅用内置模块，无运行时依赖）：
@@ -176,7 +191,7 @@ install-hooks --host claude|codex         # 幂等写 hook 配置
 - **M1**：存储布局 + L1 append + projector + 绑定 + `init/bind/status/doctor`。
 - **M2**：读路径双端——`context/search/sync-instructions/install-hooks`（先 Claude 后 Codex）。
 - **M3**：sediment 双端 headless——快路径 hook + `sediment-run` + `headless-claude`/`headless-codex` adapter。
-- **M4**：`api` adapter、`import-pensieve`、git auto-push。
+- **M4**：`api` adapter、Tier1 dense hybrid + Tier2 `reranked` profile（激活依赖独立凭证到位；embedding 模型与分块参数在此调定）、`import-pensieve`、git auto-push。
 
 ## 13. 风险与未验证项
 
@@ -187,8 +202,70 @@ install-hooks --host claude|codex         # 幂等写 hook 配置
 | token 成本（每轮触发） | 已知风险 | 廉价门槛 + 队列合并 + 便宜模型 + 每日预算熔断（config） |
 | headless 子进程权限 | 已知风险 | `--allowedTools` 白名单限制只写 `~/.agentbrain/**` |
 | 多机 git 冲突 | v1 不处理 | L1 内容寻址天然不相交；L2 冲突=丢弃重投影（借 ADR 0039 §4.4），M4 之后再验 |
-| embedding 召回缺失导致 search 召回面窄 | 接受 | FTS + trigger_phrases 起步，v2 评估 embedding（届时复用 `api` adapter 凭证） |
+| Tier0-only 阶段召回面窄 | 接受（过渡态） | 检索栈已按三级设计（§6.1），Tier1/2 激活只差凭证配置；embedding 选型与语料分块为 M4 调参项，不再是设计缺口 |
+
+## 附录 A：abrain / sediment 最新架构全景（2026-08 快照，后续参考）
+
+> 二手快照：整理自 pi-astack 的 ADR 0003/0014/0016/0017/0023/0024/0039/0040/0044/0045、`docs/architecture/{abrain,memory,vault}.md`、迁移 runbook 与 2026-08-04 耦合面盘点（133,279 行 / 195 行宿主调用 / 67% 纯库）。**实施状态以 pi-astack 代码为准**；本附录用于 agentbrain 后续迭代时"抄哪里、为什么不抄"的对照。
+
+### A.1 存储基座：HYBRID_MD_GIT_PLUS_DB（ADR 0039）
+
+三层分工，统一写入纪律是"**唯一低风险写原语 = append Evidence Event**"：
+
+- **L1 Evidence Event SOT**：内容寻址、一事件一文件、immutable 的 canonical JSON（RFC8785/JCS 规范化；信封记 `schema/hash_alg/event_id/body_hash`，`event_id = sha256(JCS(body))`；路径按 hash 分片 `l1/events/sha256/ab/cd/<hex>.json`）。body 必含 `event_type/created_at_utc/device_id/causal_parents/session_id/turn_id/source/payload/sanitizer/producer`。纠错、撤回、遗忘、归档、复活、矛盾**都是追加新事件**，永不覆写；安全门（secret/PII/路径/注入）在 append 前，语义裁决（merge/scope/dedup/冲突）在投影时。LLM 产物入 L2 前必须先固化为 L1 event（记 `model/prompt_hash/input_hash/output_hash`）。
+- **L2 Markdown View**：确定性 renderer 从 L1 派生（拓扑排序 + 稳定 tiebreak；固定模板/标题层级/key 序/UTC/LF）。**不是用户管理界面**——手改 = dirty derived view，reconcile/pre-push 阻断；用户意图必须转成 L1 correction event 再重投影；git merge 冲突的 L2 直接丢弃、合并 L1 后重投影。文件携 machine-readable provenance（projector/template 版本、input set hash、output hash）。
+- **L3 Operational DB/Index**：本地 SQLite（`adr0039-l3.sqlite`，表边界：`l1_events` mirror / `event_edges` / `projector_state` 水位线 / `l2_views` / FTS5 / `chunks`+`embeddings` / `graph_nodes`+`graph_edges` / `jobs` / `diagnostics`）。不入 git、可丢弃、可从 L1+L2 重建；**现状双轨**：`memory_search` 生产运行时仍主要用 JSON sidecar embedding 索引（`.state/memory/embeddings.json`），SQLite 是目标边界的 partial production 实例。
+- **数据拓扑**：`~/.abrain/` 七区（identity/skills/habits/workflows/projects/knowledge/vault）+ 第 8 类 `rules/`；项目记忆在 `~/.abrain/projects/<id>/`（旧 `<repo>/.pensieve/` 已废止为只读迁移源）。
+
+### A.2 写路径：sediment（ADR 0003/0016/0024/0039）
+
+- **不变量**：主会话只读（LLM tool 面没有任何 brain mutation 工具）；sediment 是唯一 writer；INV-INVISIBILITY（用户不管理记忆，唯一合法弹窗是 vault_release）；INV-ACTIVE-CORRECTION（自然对话中"以后用 X / 忘掉那条"是一等纠错信号）；显式用户指令不得因 classifier 不确定而静默丢失（进 queued/unclassified，不丢）。
+- **管线**：`agent_end` → durable intake 记录（崩溃可恢复）→ agent-end-queue（按 key 合并、并发 4）→ 回读宿主 transcript 沿 `parentId` 走出当前分支 → LLM extractor 结构化提取 → 安全门 → append L1 → projector 投影 L2 → git commit。`agent_end` 路径本身**不做任何 canonical mutation**（p99 < 100ms capture 合同）。
+- **多模型 settings 驱动**：extractor / classifier / curator / aggregator / stagingPromotion / multiView.synthesis 各自配模型，代码零硬编码；prompt 全部是独立 markdown 文件（skeptical-historian、multi-view blind/reveal、staging-resolver、active-correction-classifier 等）。
+- **staging 生命周期**：低置信候选入 staging，由后台 LLM 做 promotion / ageout / 冲突解决；高影响动作（跨 scope、merge/supersede、demote）走 multi-view 交叉验证（pass1 盲评 + pass2 揭示）。
+- **Lane 模型**：A（explicit MEMORY fence）/ C（agent_end 自动）/ G（about-me → identity/skills/habits）/ V（vault，同步路径不走 sediment）；B/D promote 概念已废——七区内直接路由，无"晋升"。
+
+### A.3 规则注入（ADR 0023 → 0040）
+
+- 现产 session rule authority 是 **proposition-policy-stable-view**：content-addressed bundle（`.state/sediment/proposition-policy-stable-view/v1/latest` 指针），`session_start` 严格校验后注入；stale 可注入但发诊断，invalid/missing = loud zero（不注入也不回退旧源）。早期 constraint-shadow compiled-view 已退役为离线审计残留。
+- 设计动机：把"哪些规则该进 session"的裁决从写时/注入时移到后台 compiler，注入路径只读上一份稳定投影——**注入快、裁决慢、两者解耦**。
+
+### A.4 读路径：memory_search（ADR 0015/0035/0036/0037）
+
+- 只读工具面：`memory_search / abrain_get / memory_list / memory_activity / memory_decide`；facade 不向 LLM 暴露 backend/scope/source_path（仅 exact lookup 可见）。
+- **stage0 有序 hybrid 召回**：dense（多向量，每 entry ≤ multiVectorMaxChunks 个 sub-vector）先占候选窗口、扣除 freshness reserve 给 stale/missing 条目按更新时间插位 → 剩余 dense → char n-gram BM25 sparse → 剩余 stale；allow-set 去重、`stage0MaxCandidates` 封顶。
+- **stage1 默认跳过**（`stage1Skip=true`，仅 verdict=none 或候选池过小时作为安全网）；**stage2 全文 LLM 精排**产出最终 cards。
+- **REQ-009 accuracy 合同**：精排模型不可用 = hard error，禁止 grep/BM25 冒充结果；embedding 不可用只熔断为 sparse-only 候选（召回面收窄但仍须精排）；`bestEffortOnNone` 允许显式返回未确认低置信 top-K。
+- 索引维护：search 时 autoReconcile 增量补嵌入 + `embed-corpus-init.mjs` 全量重建；`_index.md`/graph/metrics 全部可重建派生物。
+
+### A.5 项目绑定（ADR 0017）
+
+三件套全匹配才 `bound`：`<repo>/.abrain-project.json` + `~/.abrain/projects/<id>/_project.json` + `~/.abrain/.state/projects/local-map.json`（本机路径授权，不入 git）。cwd / git remote 永不隐式授予项目身份；active project 是 boot-time snapshot，会话中 `cd` 不切换；未 bound 时项目写入 fail closed。
+
+### A.6 中心化方向（ADR 0044/0045，目标态）
+
+长期记忆的"接收/排队/裁决/发布"权威迁往中心 memory service（pi-router + `pi_memory_*`）；edge（每台设备的 pi）只保证 source 不丢、交互不阻塞、因果身份不漂移。关键概念：candidate ≠ settled（`agent_end` 只产 candidate，`agent_settled` 写 witness）；C6 因果身份 `(session_id, turn_id, subturn, sub_agent_label, parent)` 与 `run_generation` 执行代际严格分离；禁止永久双主（`local_primary/central_shadow/central_primary/rollback_draining` + authority_generation）；Git 降为异步导出/灾备。现状：Pi 侧 capture-only protocol shadow 已实现、默认关；Stage A/B/C 未实施。**对 agentbrain 的意义**：未来若多宿主并发写入冲突成为真实痛点，"中心服务 + 薄 edge"是已经过 T0 评审的演进方向，agentbrain 的 hook capture + queue 形态与 edge 合同天然对齐。
+
+### A.7 agentbrain 采纳映射
+
+| abrain/sediment 机制 | agentbrain v1 | 理由 |
+|---|---|---|
+| L1 内容寻址一事件一文件 | 采纳（schema 简化，留 `causal_parents`/`schema_version` 位） | 跨设备 git merge 天然无冲突 |
+| L2 确定性投影 + 禁手改 | 采纳（doctor 报 drift，不做 pre-push 硬阻断） | drift 可检可修，单人场景不需要 push 门禁 |
+| L3 SQLite（FTS/向量/水位线） | 采纳，且不搞 JSON sidecar 双轨 | `node:sqlite` 零依赖，无历史包袱 |
+| sediment 结构性触发 | 采纳（hook + detached worker 版） | 意志性触发漏沉淀是 pensieve 实证缺陷 |
+| agent_end 只 capture、语义裁决后移 | 采纳（快/慢路径分离） | 同 abrain 动机：写路径低风险 |
+| stage0 hybrid + stage2 精排 | 采纳为三级阶梯（§6.1），激活按凭证分级 | 多宿主工具不能假设凭证必在 |
+| REQ-009 hard error | **放弃**，改显式分级降级 | 同上；降级必须可见，不静默 |
+| 多模型 settings（6 种角色模型） | 简化为单 `LlmInvoker` + 单提炼 prompt | v1 一个模型角色足够，复杂度后置 |
+| staging 低置信区 | 采纳（含 `_unbound` 认领区） | 防丢弃、防误归 |
+| multi-view 交叉验证 / meta-curator | 放弃 | 投入产出比不成立（v1） |
+| policy stable-view bundle 校验注入 | 简化为 `context` 预算注入 | 单机无 bundle 一致性诉求 |
+| strict binding 三件套 | 简化为两件（去 local-map） | v1 单机 |
+| vault / rules 第 8 类 / C6 / journal seal 合同 | 放弃 | 宿主能力不支持或场景不需要 |
+| 七区数字孪生 | 收窄为 `projects/` + `global/` | agentbrain 定位是工程记忆，不是个人孪生 |
 
 ## 14. 修订记录
 
+- 2026-08-04 v1.1：检索栈升级为三级阶梯（Tier0 FTS → Tier1 dense hybrid → Tier2 LLM 精排，profile 驱动，激活按凭证分级）；L3 表边界细化并明确不采用 JSON sidecar 双轨；新增附录 A「abrain / sediment 最新架构全景」与采纳映射表。
 - 2026-08-04 v1：初稿。三项用户拍板（仓名/中心 SOT/headless 为主 + api 入口）；分层读取模型定稿；M0-M4 里程碑。
