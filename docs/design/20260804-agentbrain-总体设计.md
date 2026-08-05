@@ -207,6 +207,8 @@ install-hooks --host claude|codex         # 幂等写 hook 配置
 ## 附录 A：abrain / sediment 最新架构全景（2026-08 快照，后续参考）
 
 > 二手快照：整理自 pi-astack 的 ADR 0003/0014/0016/0017/0023/0024/0039/0040/0044/0045、`docs/architecture/{abrain,memory,vault}.md`、迁移 runbook 与 2026-08-04 耦合面盘点（133,279 行 / 195 行宿主调用 / 67% 纯库）。**实施状态以 pi-astack 代码为准**；本附录用于 agentbrain 后续迭代时"抄哪里、为什么不抄"的对照。
+>
+> **实现级深挖另见** `docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md`（2026-08-04，基线 `ad6aa8f`）：全部 37 篇 ADR 的决策过程与否决方案、字段级 schema、流水线/状态机细节、prompt 设定、逐模块移植取舍——移植实现时读它，无需再翻 pi-astack 源码。本附录保持"采纳映射级"摘要不变。
 
 ### A.1 存储基座：HYBRID_MD_GIT_PLUS_DB（ADR 0039）
 
@@ -267,5 +269,6 @@ install-hooks --host claude|codex         # 幂等写 hook 配置
 
 ## 14. 修订记录
 
+- 2026-08-04 v1.2：新增配套参考文档 `docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md`（pi-astack 基线 `ad6aa8f`：37 篇 ADR 决策过程、实现级 schema/流水线/prompt、逐模块移植取舍），附录 A 增加指向；附录 A 本身内容未改。
 - 2026-08-04 v1.1：检索栈升级为三级阶梯（Tier0 FTS → Tier1 dense hybrid → Tier2 LLM 精排，profile 驱动，激活按凭证分级）；L3 表边界细化并明确不采用 JSON sidecar 双轨；新增附录 A「abrain / sediment 最新架构全景」与采纳映射表。
 - 2026-08-04 v1：初稿。三项用户拍板（仓名/中心 SOT/headless 为主 + api 入口）；分层读取模型定稿；M0-M4 里程碑。
