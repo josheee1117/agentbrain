@@ -1,10 +1,13 @@
 # agentbrain
 
-Claude Code / Codex 通用记忆机制：结构性沉淀（sediment）+ 证据→投影 + 分层读取。
+以 abrain 为架构母体的本地 Agent 记忆系统：结构性沉淀（sediment）+ L1 证据历史 → L2 确定性投影 → L3 可重建索引 + 分层读取 + Agent Loadout/子代理委派。
 
-- 思想来源：[pi-astack](https://github.com/) 的 abrain/sediment（结构性触发、evidence→projection、writer 纪律）
-- 跨端配方来源：Pensieve skill（纯文本数据、hook 只做加速器、marker 块注入宿主指令文件）
+- 首发宿主：Pi；v2 不承诺 Claude Code、Codex 或 dsh
+- 核心来源：pi-astack 的 abrain/sediment（event-first、统一 proposition、单 writer、确定性投影、自治纠错）
+- 对照来源：TencentDB Agent Memory（选择性吸收 Loadout、capture 调度、provenance、显式降级等机制，不复制团队 Memory Hub）
 
-**当前状态：设计阶段，未开始实现。**
+**当前状态：v2 架构基线，实施尚未开始；Design Gates 关闭并再次获得明确授权后才能编码。**
 
-设计文档：[docs/design/20260804-agentbrain-总体设计.md](docs/design/20260804-agentbrain-总体设计.md)
+- 总体设计：[docs/design/20260804-agentbrain-总体设计.md](docs/design/20260804-agentbrain-总体设计.md)
+- 领域词汇：[CONTEXT.md](CONTEXT.md)
+- Wayfinder 地图：[以 abrain 为母体的 agentbrain v2 路线](https://github.com/josheee1117/agentbrain/issues/1)

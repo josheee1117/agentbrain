@@ -105,6 +105,7 @@ abrain 记忆体系由四个 extension 目录构成，职责严格分离：
 - 0044 动机：多实例/多设备下接收权威、执行器、publication、git 协调都在设备上，难单点观测修复。T0 R4 批准：edge 只保证 **source 不丢 + 交互不阻塞**（awaited 路径 p99<100ms：agent_end/agent_settled 只做本地 durable capture/TerminalWitness）；中心成为 source/job/decision 权威；禁止永久双主；git 降为异步导出/灾备。关键概念：candidate ≠ settled；C6 因果身份 `(session_id, turn_id, subturn, sub_agent_label, parent)` 与 `run_generation` 执行代际**严格分离**。
 - 现状（务必分清）：**当前生产权威仍是本地 intake+queue+publication**；Pi 侧 capture-only protocol shadow 已实现且**默认关**（生产验收 v3 已过：300 samples、end p99=57.7ms / witness p99=18.6ms）；Stage A/B/C 未实施。
 - 0045：daemon 托管的短命 headless worker——`PI_ASTACK_SEDIMENT_WORKER_MODE=1` 下 sediment extension 只注册 3 个 RPC 命令（capabilities/run/maintenance），无普通生命周期 hook。LSEA（local executor authority）single-entry admission：任务准入前 read-lock-read 校验 authority 记录（防 ABA），失败码闭集 `unavailable/revoked/stale` 全部 retryable、全局暂停（不逐条 deadletter）。**authority store 存在时前台 Pi 一律 capture-only**（最新提交 1bd156a 的行为）。
+- **2026-08-21 上游后记（不属于本快照）**：`alfadb/pi-astack` 的 `upstream/main` 已领先本 fork，其中 ADR 0046 Daemon-Owned Canonical Convergence 已实现并通过 Linux production acceptance：同一 LSEA holder 的 daemon worker 成为 canonical convergence executor；global maintenance、CSJ 等机制也继续演进。但这不等于 formal Stage A、ConsumerAck、center primary 或 retention 已完成，也不改变本地 `ad6aa8f` 快照的现役判断。详见 `docs/research/20260821-current-abrain-sediment-复核.md`。
 
 ### 2.2 读路径链：从 grep 到三级检索栈
 
@@ -190,7 +191,7 @@ abrain 记忆体系由四个 extension 目录构成，职责严格分离：
 **确定性 fold 算法（`canonical-l2-reconciler.ts`，364 行——ADR §4.3 的唯一完整参考实现，直接可抄）**：
 
 1. 按 `knowledgeIdentityKeyV1`（`world::<slug>` 或 `project:<id>:<slug>`）分组。
-2. `topoSortKnowledgeEventsV1`：按 `causal_parents` Kahn 拓扑排序；同层 tie-break key = `created_at_utc \0 device_id \0 seq.padStart(20,"0") \0 eventId`，用**纯 code-unit 比较**（全仓库零 `localeCompare` 参与字节生成——locale 是确定性的天敌）。
+2. `topoSortKnowledgeEventsV1`：按 `causal_parents` Kahn 拓扑排序；同层 tie-break key = `created_at_utc \0 device_id \0 seq.padStart(20,"0") \0 eventId`，Knowledge fold 使用**纯 code-unit 比较**。2026-08-21 复核发现，冷审计残留的 constraint 域 latest 选择仍在 `canonical-l2-reconciler.ts:352-355` 使用 `localeCompare` 并影响该域字节，因此旧版“全仓库零 `localeCompare`”表述过度；agentbrain 移植仍应保持所有 canonical 字节生成零 locale 依赖。
 3. winner = 排序最后一个；`created` 取最早事件、`updated` 取 winner（**从不 `Date.now()`**）。winner 的 `operation_hint === "delete"` → 不产文件（墓碑生效）。
 4. `inputEventSetHash`：单事件=eventId；多事件=`sha256(JCS(sortedIds))`。
 5. **self-hash 两遍渲染**：先用空串渲染取 `sha256(withoutHash)`，再塞回 `sediment_output_hash` 渲染第二遍。
@@ -208,6 +209,7 @@ abrain 记忆体系由四个 extension 目录构成，职责严格分离：
 - **git 环境隔离**：剔除所有 `GIT_*` 环境变量 + `LANG=C LC_ALL=C GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null`，只读命令加 `GIT_OPTIONAL_LOCKS=0`——一步消掉"用户 git 配置污染确定性"整类 bug。
 - **push/pull 完全分离在 `abrain/git-sync.ts`**（ADR 0020）：`git push <remote> <oid>:<ref>` 推确切 OID 不推分支名；push 被拒 → fetch + deterministic join → 重试；写入侧用 `withoutCanonicalMutationBarrierContext(() => void pushAsync(...))` 把 push 甩出锁上下文 detached 执行。
 - **git-z-parser.ts（91 行，零依赖）**：NUL 分隔输出安全解析——fatal UTF-8、**NFC 归一强制**（macOS NFD 陷阱）、拒绝 `..`/绝对路径/盘符/反斜杠、porcelain v1 `-z` rename 双记录（目标在前源在后）。**原样拷。**
+- **`canonicalGitRuntime` 总闸（2026-08-21 复核补记）**：`canonical-git-runtime.ts:452-486` 只接受严格 schema `{enabled:boolean, mode:"local_convergence_v2"}`；合法 `enabled:false` 显式选择 legacy publication boundary，配置缺失或非法则 fail-closed。该闸被 sediment writer、abrain bind/sync 及 memory rename/migrate/ingest 等多条写路径复用。它说明 exact-cohort canonical runtime 在代码中是现役可选边界，而非所有本地生产实例必然启用的唯一运行路径；agentbrain 应借鉴“单点、严格、可诊断的 authority 切换”形状，不照搬两套长期并存写者。
 
 ### 3.4 Proposition 家族：ADR 0040 的实现形态（`proposition*.ts`，约 30 文件）
 
@@ -644,7 +646,7 @@ embedding: { multiVector:true, multiVectorMaxChunks:4 }
 forgetting:{ enabled:true, instrumentation:true, executorRealApplyEnabled:false→true(2026-07-23) }
 ```
 
-所有 dark-launch flag 生产已翻开。**注意一处漂移**：stage1/stage2/decide/rewriter 四处全指向同一个高端模型（无便宜模型分层），与 rewriter 注释假设的 flash 便宜模型已不符——agentbrain 定成本模型时以此为鉴（配置与注释都会说谎，看生产快照）。
+以上是 2026-08-04 的生产快照。**2026-08-21 复核更新**：检索与写路径模型已经重新分层；`forgetting.executorRealApplyEnabled` 又回到 `false`；本机还显式配置 `canonicalGitRuntime.enabled=false`，因此走 legacy publication boundary。search/embedding 主开关仍与上表一致。结论不变：配置值、注释和代码默认都会漂移，引用“生产已武装”必须绑定时间，设计应提供单点、可诊断、fail-closed 的 authority/feature gate。具体匿名化结构见 `docs/research/20260821-current-abrain-sediment-复核.md`。
 
 ### 7.11 注册面与 pi 耦合
 
@@ -690,4 +692,5 @@ forgetting:{ enabled:true, instrumentation:true, executorRealApplyEnabled:false�
 
 ## 9. 修订记录
 
+- 2026-08-21 v1.1：以同一 `ad6aa8f` checkout 复核并修正三处：限定 code-unit/`localeCompare` 结论、补 `canonicalGitRuntime` 总闸和本机关闭状态、更新生产 flags/模型分层；增加上游 ADR 0046 DCC 等未合并演进的后记。详见 `docs/research/20260821-current-abrain-sediment-复核.md`。
 - 2026-08-04 v1：初稿。基线 pi-astack `ad6aa8f`（2026-07-30）。素材：7 份架构现状文档全读 + 37 篇 ADR 全读（0039/0040/0043 全文）+ 四扩展源码精读（含 6 路并行子代理阅读成果汇总与本地实测核对）。
