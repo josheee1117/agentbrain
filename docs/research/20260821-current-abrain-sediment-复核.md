@@ -1,9 +1,10 @@
 # 复核：当前 abrain 与 sediment 的现役架构和演进差异
 
 - 日期：2026-08-21
-- 任务：对照 `docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md`（下称"参考"），复核 `/Users/hejiayuan/code_me/pi-astack`（read-only，未做任何修改）当前 HEAD、源码/文档/ADR 与生产设置
+- 任务：对照 `docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md`（下称“参考”），复核 `~/code_me/pi-astack`（read-only，未做任何修改）当前 HEAD、源码/文档/ADR，以及本地非敏感 feature flags 的匿名化结构
 - 复核方法：git 提交/refs 级比对 + 关键源码逐条 grep/精读验证（所有 file:line 均为本次实测，非转抄参考）
-- 一句话结论：**本仓快照与参考基线逐字节相同（参考对代码的描述仍然准确，仅一处 localeCompare 表述过度）；真正发生"演进差异"的有两处——①本机生产设置文件已被重写（遗忘 real-apply 关回、模型分层重排、且存在一个参考从未记载的 `canonicalGitRuntime.enabled=false` 总闸，本机现役 git 发布路径因此是 legacy 而非 canonical）；②上游 alfadb `upstream/main` 已领先本 fork 50 个提交（2026-07-30 之后），核心是 ADR 0046 DCC（daemon-owned canonical convergence，Linux 生产已验收）、worker 端 global_maintenance 七车道、CSJ 会话级合并原语、audit-hmac 物理删除、Windows 原生存储支持。**
+- 一句话结论：**本仓快照与参考基线逐字节相同（参考对代码的描述仍然准确，仅一处 localeCompare 表述过度）；真正发生"演进差异"的有两处——①本机生产设置文件已被重写（遗忘 real-apply 关回、模型分层重排、且存在一个参考从未记载的 `canonicalGitRuntime.enabled=false` 总闸，本机现役 git 发布路径因此是 legacy 而非 canonical）；②上游 alfadb `upstream/main` 已领先本 fork 50 个提交（2026-07-30 之后），核心是 ADR 0046 DCC（daemon-owned canonical convergence，Linux 生产已验收）、worker 端 global_maintenance 七车道、CSJ 会话级合并原语、`audit-hmac.ts` 模块被移除、Windows 原生存储支持。**
+- 一条读者警告：**上游没有任何记忆物理清除机制。** §4.4 说的是 `audit-hmac.ts` 这个源文件被删除，不是 purge 功能；勿据此认为 agentbrain 设计 §19.1（L1 identity × Physical Purge）已有上游答案可抄。
 
 ---
 
@@ -60,12 +61,12 @@
 
 ---
 
-## 3. 生产设置现状 vs 参考 §7.10（`~/.pi/agent/pi-astack-settings.json`，mtime 2026-08-20，非记忆库、任务明确要求的生产设置面）
+## 3. 本地 feature flags 匿名化现状 vs 参考 §7.10（2026-08-20 快照）
 
 | 项 | 参考快照（2026-08-04 记载） | 当前实测 | 判定 |
 |---|---|---|---|
 | `memory.forgetting.executorRealApplyEnabled` | `false -> true`（2026-07-23 起正式全量生产） | **`false`**（`memory.forgetting = {enabled:true, instrumentation:true, executorRealApplyEnabled:false}`；`memory._comment` 明言 "Real forgetting remains disabled"） | **实质差异**：遗忘 real-apply 双门在本机当前未武装。ADR 0031 的代码语义未变（`extensions/memory/settings.ts:185-194` 默认仍 false），变的是本机生产旗标 |
-| LLM 模型分层 | 四处（stage1/stage2/decide/rewriter）同指一个高端模型、无便宜分层（§7.10 漂移注记） | **已重排为真实分层**（cpa/* 网关别名）：检索侧 stage1/stage2/decide/rewriter = `cpa/deepseek-v4-flash-huoshan`；sediment 写路径 extractor/classifier/curator/stagingPromotion = `cpa/glm-latest`；aggregator = `cpa/grok-latest`；ruleContradictionConfirm = `cpa/ikun-opus-5`；multiView `reviewerProviders=[grok,ikun-opus,glm]` + fallbackProviders 四家 | **实质差异**：参考的"无分层"漂移注记已过时（跨厂商评审配置也已成文） |
+| LLM 模型分层 | 四处（stage1/stage2/decide/rewriter）同指一个高端模型、无便宜分层（§7.10 漂移注记） | **已重排为真实角色分层**：检索侧使用低延迟模型，sediment extractor/classifier/curator 使用另一模型族，aggregator、规则矛盾确认和 multi-view reviewer 再按角色分配，并配置跨厂商 fallback；本文不记录本机 provider alias | **实质差异**：参考的“无分层”漂移注记已过时（跨厂商评审配置也已成文） |
 | `canonicalGitRuntime` | 未记载 | `{enabled:false, mode:"local_convergence_v2"}`，注释 "Disabled until Abrain Git storage, recovery and manual memory writes are verified." | **参考缺口**，见 §2.3；本机现役 git 发布=legacy |
 | `sediment.executionOwner` | 未记载（当时无此键？HEAD 代码已有：settings.ts:307,501） | `"foreground"` | 与参考"生产权威仍是本地前台"一致 |
 | `sediment.edgeProtocolShadow.enabled` | 默认关 | `false`（frozenContractAdapter 也 false） | 一致，shadow 仍未开 |
@@ -101,10 +102,11 @@
 - `43fa19b`（2026-08-02）新增 `_shared` 原语族：`csj-eligibility.ts`（596 行）、`csj-prospective-merge.ts`（830）、`csj-artifact-binding.ts`（392）、`csj-blocked-memo.ts`（174）、`csj-closed-reason.ts`（144）、`canonical-ref-move.ts`（442）；`canonical-git-runtime.ts +246`、`git-exact-cohort.ts +74`、`device-join-coordinator.ts +19`。
 - 语义：在 ADR 0020 设备级 deterministic join 之下，增加带 witness mint / 资格判定 / prospective merge / artifact 绑定的会话级合并。参考 §3.3 对设备 join 的描述对 HEAD 成立，但"join 粒度=设备"这一隐含上限已被上游突破。
 
-### 4.4 audit-hmac 物理删除（参考 §3.5 判词被上游证实）
+### 4.4 audit-hmac 模块被上游移除（参考 §3.5 判词被证实）
 
 - `e215e74`（2026-08-11）"refactor(audit): remove local HMAC layer"：`extensions/_shared/audit-hmac.ts` 整文件删除（320 行），新增 58 行 `audit-checksum.ts`；`llm-audit.ts -37`、dispatch/web-search 相应改造。
 - 参考判词"v1 的防篡改靠 git commit 链，不靠 HMAC；audit-hmac 可砍"——上游已照此执行。
+- **不要误读**：这里说的是 `audit-hmac.ts` 这个**源文件**被删除（审计日志的 HMAC 完整性层换成 checksum），与记忆内容的 Physical Purge **无关**。abrain 至今没有记忆物理清除机制：`git grep -in 'purge' upstream/main -- extensions` 全树仅 2 处命中，且都在无关的 `persistent-input-history` 扩展；ADR 0043 更把"终态 cleanup 会退化成物理删除或只保留 digest"明确列为要规避的风险。agentbrain 的 Physical Purge 因此没有上游答案可抄（设计 §19.1）。
 
 ### 4.5 Windows 原生 durable 存储（OFD 锁困局的域内解法，非 macOS）
 
@@ -154,4 +156,9 @@
 - git：`ad6aa8f`（HEAD=基线）；`f5e955e`（upstream/main）；`0/0` vs origin；`3/50` vs upstream；上游关键提交 `62e515d`、`cc22636`、`43fa19b`、`e215e74`、`c83dd4f`、`e370f1d`、`d92ee57`、`e7dc27c`。
 - 代码（本仓 HEAD）：`extensions/_shared/proposition.ts:21-69`；`proposition-evidence-writer.ts:31`；`canonical-l2-reconciler.ts:32,57,62,126,151-152,352-357`；`canonical-git-runtime.ts:452-486`；`extensions/sediment/writer.ts:2339-2348`；`extensions/sediment/settings.ts:241,286,307,495-501`；`extensions/sediment/local-executor-authority.ts:53,145,458-471`；`extensions/memory/search-profiles.ts:18-58`；`extensions/memory/settings.ts:185-194`；`extensions/abrain/rule-injector/index.ts:1-8`。
 - 上游文档：`docs/adr/0046-daemon-owned-canonical-convergence.md`（新增）；`0045`（修订 diff）；`docs/architecture/overview.md`（重写 diff）；`central-sediment-edge.md`/`local-sediment-executor-authority.md`/`sediment.md`（overlay 增补 diff）。
-- 生产设置：`~/.pi/agent/pi-astack-settings.json`（2026-08-20；仅读取结构化旗标子集，未复制任何密钥字段）。
+- 本地 feature flags：2026-08-20 匿名化快照；只记录架构相关开关和角色分层，不记录 provider alias、密钥或其他配置正文。
+
+## 修订记录
+
+- 2026-08-21 v1.1：§4.4 小标题「audit-hmac 物理删除」改为「audit-hmac 模块被上游移除」，并在摘要与该节各加一条读者警告。原措辞被读成"基于 audit-hmac 的物理清除机制"，进而误判 agentbrain 设计 §19.1 已有上游答案可抄；实测 `git grep -in 'purge' upstream/main -- extensions` 全树仅 2 处命中且均在无关的 `persistent-input-history` 扩展，ADR 0043 更把"终态 cleanup 退化成物理删除"列为要规避的风险。结论已回写设计 §19.1。§6.2 提出的 `canonicalGitRuntime` 总闸形态已被设计 §7.4.3 采纳为运行期切换开关的候选形状。
+- 2026-08-21 v1：初版复核。
