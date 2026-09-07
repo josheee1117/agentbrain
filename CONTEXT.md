@@ -66,6 +66,14 @@ User-readable L2 vocabulary for an explicit or carefully inferred tendency belon
 
 User-readable L2 vocabulary for a verifiable descriptive proposition. The L2 contract decides its exact materialization; it is neither a Wiki platform nor a separate canonical ontology.
 
+### Corroboration Count
+
+The number of distinct Sessions in which a proposition was actually used and not contradicted. It counts sessions, not retrievals: being surfaced by a search is not use, and one session cannot corroborate a proposition twice. The count is an input to maturity, never a substitute for authority or evidence quality.
+
+### Unreconciled Proposition
+
+A proposition whose relation to existing memory could not be determined: agentbrain could not identify which proposition, if any, it supersedes. It is recorded and remains readable, but is not projected as a current conclusion. It leaves this state only by a Human confirming what it supersedes; accumulating a Corroboration Count does not resolve it.
+
 ### Policy View
 
 A stable L2 selection of normative propositions relevant to a particular consumer and scope.

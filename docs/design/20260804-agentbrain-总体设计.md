@@ -1,11 +1,11 @@
 # agentbrain 总体设计
 
-- 状态：**v2.1 架构基线，实施受 Design Gates 阻断**
-- 最新修订：2026-08-21
+- 状态：**v2.2 架构基线，实施受 Design Gates 阻断**
+- 最新修订：2026-09-07
 - 实现状态：**未开始**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 首发宿主：Pi；v2 不承诺其他宿主
-- **产品前提：在 Pi 上取代 abrain 现役实现，不长期并存（§2.1）**
+- **产品前提：在 Pi 上取代 abrain 现役实现，不长期并存（§2.1）；动机首先是所有权脱钩，其次是复杂度（§2.2 定量）**
 - 决策地图：[绘制以 abrain 为母体的 agentbrain v2 路线](https://github.com/josheee1117/agentbrain/issues/1)
 - 领域词汇：`CONTEXT.md`
 - 主要证据：
@@ -73,9 +73,34 @@ v2 因此不是增量补丁，而是以当前 abrain 的统一 proposition 模�
 - **场景复杂度**：多平台（Windows 原生 ACL）、双仓 implementation authority、staged rollout、生产验收。以 ADR 0046 DCC 为例，其 status 行塞满 staged install 哈希、D0-D5 切片和跨 pi-astack/pi-router 的权威划分——这些在 agentbrain 的单用户单机边界下天然掉掉大半。
 - **纪律**：event-first、单一 canonical owner、确定性投影、authority 显式化、fail-closed、可逆终态。这些必须留下。
 
-所以"更好"的正确口径是**掉场景复杂度、留纪律**，而不是"概念更少"。
+**替代动机首先是所有权。** abrain 的有效性不是痛点——正因如此它才继续作为架构母体（§1）。驱动替代的是这套系统必须是自己的：能完整读懂、能独立演进、不受上游路线牵引。次要动机是复杂度：abrain 对单用户而言过重。
+
+因此**"更好"是复合判据：所有权脱钩 + 复杂度可量化下降**，两条都要，不是二选一。复杂度下降必须来自**掉场景复杂度**而非**掉纪律**。口径与目标值见 §2.2。
 
 同时要诚实记账：v2 有一处是**真实增量而非简化**——abrain 至今没有 Physical Purge（其路线是内容寻址 + append-only + 可逆终态，ADR 0043 明确把"终态 cleanup 退化成物理删除"列为要规避的风险）。agentbrain 要提供受控物理清除，因此 §19.1 没有上游答案可抄，是原创设计门。
+
+---
+
+### 2.2 复杂度预算（LOCKED 口径与目标，实测基线）
+
+§2.1 的"更好"是复合判据：**所有权脱钩 + 复杂度可量化下降**，两条都要，不是二选一。本节冻结后者的口径与目标值，使 §15.5 判据二可验证。
+
+**口径 = 配置键数 + 迁移期双写门数量。行数不作判据。**
+
+行数是最弱的口径：它会随场景复杂度免费下降，而"光靠掉场景复杂度不算数"正是 §2.1 的要求。配置键才是"太复杂"对单用户的真实痛点——每个键都是一个必须常驻脑中的决定，而复核已实测到**配置与注释都会说谎**（`_comment` 写 "remain disabled" 而值为 `true` 的情况反复出现）。
+
+| 面 | abrain 实测基线 | agentbrain 目标 |
+|---|---|---|
+| 配置键（仅 agentbrain 替代范围） | **162**（sediment 83、memory 59、llmAudit 10、ruleInjector 5、canonicalGitRuntime 3、abrain 2） | **≤ 35** |
+| 迁移期双写门 | **17** | **0** |
+
+基线的分母是诚实的：全栈 341 键中，dispatch(29)、compactionTuner(24)、toolCircuitBreaker(9)、thinkingRepeatBreaker(9) 等域 agentbrain 从不拥有，不计入。
+
+17 个双写门实测清单：`canonicalGitRuntime.mode`；`constraintEvidenceEventWriter.{mode, legacyFallbackOnEventFailure, legacyRuleWriteOnSuccessfulEvent}`；`tier2RulesLegacyWriteGate.mode`；`knowledgeEvidenceEventWriter.{mode, legacyFallbackOnEventFailure, legacyMarkdownWriteOnSuccessfulEvent}`；`knowledgeProjector.projectOnWrite`；`edgeProtocolShadow.{enabled, frozenContractAdapter.enabled}`；`executionOwner`；`daemonWorker.edgeShadowCaptureEnabled`；`forgetting.{demoteShadow, decayShadow, executorRealApplyEnabled}`；`autoLlmWriteEnabled` 三态。
+
+双写门归零是绿地的天然红利，不是成就：这 17 个门全部只因 abrain 必须在活着的系统上增量迁移而存在。**从零开始就不该有任何一个。**
+
+**配置预算怎么花（LOCKED）**：abrain 的 162 键里最大一块是预算类（超时毫秒、重试次数、批大小）。这类**默认写死在代码里**，不给配置键——单用户单机不会去调"第 3 步超时是 8 秒还是 12 秒"，这些数字存在的原因是 abrain 要跨多机多场景运行。代价是改一个数字要改代码并重启，这在"代码是自己的"前提下可接受。**只有少数确实需要按机器或按阶段调整的项留成配置**，§9.4.6 的两级门槛阈值是已知的一例（无真实数据不可能定准）。
 
 ---
 
@@ -294,13 +319,30 @@ Pi 没有公共 subagent/delegation 身份，因此 agentbrain 自己定义 dele
 
 继承理由：0042 的依据是**行为证据**——"multi-layer task restatement produced goal drift"（多层任务复述产生目标漂移）。这条与宿主无关，clean-room 重写同样适用，因此默认继承而非重新裁决。若日后要推翻，必须按 §3 的 LOCKED 规则先进修订记录并重新取得用户确认。
 
-#### 6.3.2 委派血缘是一等字段，不是事后拼接
+#### 6.3.2 委派血缘是接缝的必填输入（LOCKED）
 
-pi-astack 的因果身份是事后拼出来的：Pi 的 jiti 扩展加载器给每个扩展独立模块副本，共享状态只能走 `globalThis[Symbol.for(...)]`；主/子会话靠 `SessionManager` 上的 WeakSet 区分；轮次级 turn id 由扩展自己递增。
+pi-astack 的因果身份是事后拼出来的，代价可量化：`_shared/causal-anchor.ts` 共 **585 行**，存在的唯一目的就是重建本可以直接传入的东西。其头注释自陈两处硬伤——Pi 的 `TurnStartEvent.turnIndex` 每次 `agent_start` 归零（那是工具轮内层计数器），所以必须自建用户级计数器；以及必须把 anchor **注入子代理的 prompt**，子代理才知道自己在调用树的哪个位置。
 
-agentbrain 同时拥有记忆面和执行面时，**委派血缘在 Work Unit 创建时就是一等字段**，不需要事后重建。这把"记忆和执行一起做"从范围扩张变成**架构简化**，是 §6.3 最难的部分（跨扩展因果身份）被消掉的直接来源。
+agentbrain 不拥有执行面（§6.4），因此血缘**在合同上是一等的，在实现上不要求拥有执行器**：
 
-代价在执行拓扑侧，见 §19.3。
+- **委派方必须随 Work Unit 传入血缘**（父 Agent Execution 标识 + 委派关系）。这是接缝的必填输入，不是 agentbrain 事后推断的对象。
+- **传不到就打降级标记**，记为 Delegation Lineage 缺失的 degraded evidence，**不记作"未委派"**。二者必须可区分——否则空血缘与真的没有委派长得一样，失败静默。
+
+这条使 §6.3 最难的部分（跨扩展因果身份重建）被消掉，而不需要 agentbrain 扩张到执行面。
+
+术语见 CONTEXT.md 的 Delegation Lineage。
+
+### 6.4 执行面边界：只留接缝（LOCKED）
+
+**agentbrain 只拥有记忆面。子代理如何创建、调度、传参、超时、回收，全部归 Pi 与 dispatch 所有。**
+
+实测依据表明这个边界比预期便宜：
+
+- **pi-astack 的 `dispatch` 扩展完全不 import 记忆栈**（零行代码依赖）。耦合只有一个工具名字符串：`dispatch/index.ts:173` 的 `DEFAULT_SUBAGENT_TOOLS = "read,grep,find,ls,web_search,web_fetch,memory_search,abrain_get,memory_decide"`。
+- 因此**工具名重叠不是麻烦，它就是委派接缝本身**。agentbrain 注册同名工具即接上委派链，无需 fork 执行面。§7.4.1 那行"工具名重叠"的性质因此反转：切换期它是冲突面，稳态下它是接口。
+- `createAgentSession` 确实是 Pi core 的公开导出（`dist/core/sdk.d.ts:107`），所以"只留接缝"是**本项目的选择，不是 API 限制**。
+
+一条继承而来的硬限制：§6.3.1 禁止嵌套子代理派发，因此**子代理会话内产生的记忆无法再派一个子代理去判断它**——§9.4.5 三层链的第 1 层在该情形下只能退回 agentbrain 自有后台 worker 执行。
 
 ---
 
@@ -401,7 +443,8 @@ Pi lifecycle
 |---|---|
 | 用户显式 remember/correct | 通过安全校验后形成 accepted L1 intent/event |
 | 用户原话、工具输出、代码事实 | Source Observation；不自动扩张成更宽泛结论 |
-| 主 Agent 语义推断 | Proposal |
+| 主 Agent 自行推断 | Proposal |
+| 主 Agent 对后台已备判断的决断 | 可 accepted，见 §9.4.4 |
 | 子代理观察 | Observation |
 | 子代理结论/项目决策 | Proposal，不能直接 accepted |
 | 旧数据导入 | `imported/unverified` proposition 或 Proposal |
@@ -424,7 +467,7 @@ v2 保留 abrain 的 INV-INVISIBILITY：
 2. **上下文澄清模式**：当前任务确实依赖 unresolved Proposal，系统在原对话中询问一次具体歧义；
 3. **自治延后模式**：等待更多证据、reject/expire/defer，不打扰用户。
 
-禁止建立批量记忆审批后台作为正常闭环。进入 stable Policy View 的高影响 Proposal 必须经过独立证据、明确用户 directive 或另行冻结的高影响校准策略；不得仅凭单模型高 confidence 发布。
+禁止建立批量记忆审批后台作为正常闭环。**Unreconciled 集合（§9.4.4）与 Ephemeral 证据（§9.5）都不得做成常驻待办列表**：它们只在检索自然命中、且当前任务确实需要时按上下文澄清模式问一次；总量由 doctor 报告（§14.3）。§9.4 的 Corroboration Count 之所以不违反本条，是因为计数在后台自行排队、不向 Human 呈现列表，只在达到门槛时才可能触发一次询问。进入 stable Policy View 的高影响 Proposal 必须经过独立证据、明确用户 directive 或另行冻结的高影响校准策略；不得仅凭单模型高 confidence 发布。
 
 ### 8.4 晋升不是一个置信度阈值
 
@@ -474,7 +517,7 @@ Accepted proposition semantic state：
 
 ### 9.2 冲突处理
 
-- 新内容不因时间更新就自动覆盖旧内容；
+- 新内容不因时间更新就自动覆盖旧内容（§9.4.4 因此选择"认不出 supersession 就不进 L2"，而非"同主题取最新"——后者会让一条错误的新说法自动盖掉正确的旧说法）；
 - 可能冲突的 propositions 同时保留并显式建立 conflict/counter-evidence；
 - 能由 scope、subject、time 或 qualifier 区分时，细化为不同 proposition；
 - 用户 correction 可以明确 supersede；
@@ -486,6 +529,98 @@ Accepted proposition semantic state：
 L2 proposition 使用不依赖正文、文件路径和 content hash 的稳定逻辑身份。正文改写不自动产生无关记忆；merge/split/supersede 保留 lineage。
 
 L1 event/record 的物理 identity 与 Physical Purge 存在硬设计门，见 §19.1。
+
+### 9.4 Corroboration 与 maturity 升级（LOCKED 机制，参数待定）
+
+#### 9.4.1 记忆没有"过期"这回事
+
+一条 proposition 不因为时间流逝而失效。"这个项目用 React 17"在写入时是真的，升级到 19 之后**两条都是真的证据**——L1 同时保留，L2 只投影当前结论。因此 v2 **不引入有效期字段**：写入时无法知道有效期，标出来的数字必然是猜的。
+
+状态变化通过**向 L1 追加 meta-lifecycle 事件**表达，永不修改既有 L1 记录（§5.1 的 append-only 是整套架构的承重墙：正因为 L1 不可改，"同一份 L1 + 同一 projector version → 同一份 L2"和 purge 可验证才成立）。一条 proposition 的完整历史是 L1 上的一串事件——被断言 → 累积 corroboration → 升级 → 被 Human 否定 → 撤下；**当前状态是这串事件的最后一条**，由 L2 投影。要"在 L1 里看到状态"，看的就是这个尾部，不是去改历史。
+
+#### 9.4.2 计数口径（LOCKED）
+
+Corroboration Count 的口径是：**在多少个不同 Session 里真正被用上且未被 Human 否定。**
+
+三条约束都是 LOCKED：
+
+- **按 Session 计，不按检索次数计**。同一 proposition 在一个 Session 内被翻出五次也只 +1，否则一次话多的会话就能把它顶上去。
+- **"被检索到"不算，"真被用上"才算**。abrain 已用代码给出这个区分：`memory/usage-telemetry.ts` 分别记 `retrieval_hit_count` 与 `cited_count`，头注释明写「「被用」≠「被检索」: citation 是 retrieval 的真子集, 信号更强」。若按检索计数，涨得最快的将是**最容易被检索到的**而非最正确的，且会自我强化：升级 → 注入更多 → 检索更多 → 涨更快。
+- **"未被否定"必须是 Human 显式表示的缺席，不是模型判断**。见 §9.4.3。
+
+`usage-telemetry.ts` 的定位说明：abrain 已经在数这个计数，但明确是"纯观测，零行为"（头注释：不做任何 demote/delete/归档）。agentbrain 的增量不是发明计数，而是**把它接上 maturity**——同时只接上行那一半。
+
+#### 9.4.3 上行自动、下行显式（LOCKED）
+
+| 方向 | 触发 | 是否需要 Human |
+|---|---|---|
+| +1 | Session 结束时，该 Session 内真被用上且无 Human 显式否定 | 否，全自动 |
+| 降级 | Human 表示"这条不太行" | **是，必须显式** |
+| 撤下结论 | Human 表示"这条是错的" | **是，必须显式** |
+
+不对称的理由：自动上行判错，后果是升快了；自动下行判错，后果是丢掉正确知识。后者不可接受。
+
+**因此系统永不从对话里推断否定。** "该 Session 内未被否定"的判定方式是查该 Session 内有无 Human 的显式降级/撤下表示，**不是**让模型判断"用户刚才那句话是否在否定某条记忆"——后者既贵又不准，且失败方向恶劣：把一句技术讨论误判为否定，会静默压低一条正确的知识而用户完全看不见。这与 §9.4.2 第三条约束和 §8.3 的人机校准三模式一致。
+
+"撤下结论"的语义是 **Semantic Forgetting**（§10.1）：检索查不到、不注入，证据保留在 L1。不是 Physical Purge——后者只按 Purge Range 批量执行（§10.2）。同一份证据日后若被其他证据重新印证，可以按 reactivate 路径回来。
+
+#### 9.4.4 主题归属与 Unreconciled 状态（LOCKED）
+
+计数要求判断"这两条讲的是同一件事"，这个判断分两层，难度差距很大：
+
+1. **认出这是关于哪个主题的**（React 版本）——较可靠；
+2. **认出它推翻的是已有的哪一条**——不可靠。
+
+处置：
+
+- **主题归属**：由 agent 提议，但**与已有主题对齐优先**。已存在"React 版本"这一格就必须复用，不许新开近义格（否则同一件事散落三格，L2 又回到多条并排）。主题清单需要偶尔人工合并，这是已知代价。
+- **supersession 归属**：认不出就**不进 L2**。该 proposition 记入 L1 并保持可读，但标记为 **Unreconciled Proposition**（见 CONTEXT.md），不投影为当前结论。这比"读取时取最新"更严，也是唯一能兑现"L2 只有结论"的做法：取最新会让一条错误的新说法自动盖掉正确的旧说法。
+- **转正路径**：Unreconciled 只能由 **Human 确认它推翻了哪一条**而离开该状态。**累积 Corroboration Count 不能使其转正**——否则就绕过了本条门。
+- **不建列表**：Unreconciled 集合不作为常驻待办呈现（§8.3 INV-INVISIBILITY）。只在检索自然命中它、且当前任务确实需要时，在原对话里问一次。Doctor 必须能报告当前有多少条处于该状态（§14.3），这是唯一的可见性入口。
+
+#### 9.4.5 三层判断链（LOCKED 形状，模型分配待定）
+
+判断"主题归属 + supersession 归属"的执行链：
+
+1. **子 agent 用低成本模型先判**（后台，不阻塞主对话）；
+2. **判不动的升级给更强模型复核**（仍在后台）；
+3. **仍判不动的**，由主 agent 在下一轮对话开头就已备好的判断做决断。
+
+主 agent 在第 3 层的决断**可以直接 accepted**（§8.2），这是它与"主 agent 自行推断只能是 Proposal"的区别：它拍的是后台已经准备好的判断，不是自己现编一条记忆。它不违反 §7.3"主交互路径不等待模型抽取"——重活已在后台完成，第 3 层只是读取一个已备结论并拍板。
+
+需要升级到第 2、3 层的情况本应稀少：绝大多数 proposition 落进已存在的主题格，第 1 层即结束。**因此本链的成本随主题清单成熟而下降。**
+
+设计依据是一条外部观察（2026-08-28 记录）：难易分流的可靠做法是先用便宜模型跑、失败再升级，而不是事前分类——分类器判断"这活难不难"的难度不低于原任务。abrain 现役的按角色静态分层模型配置正是"事前分类"的形态。
+
+第 3 层是唯一允许打扰 Human 的一层，落在 §8.3 的"上下文澄清模式"内：当前任务确实依赖这个未决判断时，在原对话里问一次。
+
+#### 9.4.6 两级门槛（LOCKED 两级结构，阈值待定）
+
+| 门槛 | 获得什么 | 错误代价 |
+|---|---|---|
+| 低门槛 | 升为 Maxim View 一类的可复用准则，检索排序靠前 | 你看到了可以忽略 |
+| 高门槛 | 取得 Policy View / Context Brief 的**默认注入资格** | 静默影响所有工作且用户不会注意到它在那里 |
+
+两级而非一级的理由就是右列：一条排序靠前的错知识可被忽略，一条每次会话自动注入的错知识会持续影响全部工作而不被察觉。成本只是多一个数字。
+
+本机制与 §8.5 的高影响发布门是**串联而非替代**：Corroboration Count 达到高门槛只是取得**候选资格**，实际进入 stable Policy View 仍须通过 §8.5 的 deterministic selector/projector。计数不能取代证据质量与 authority（见 CONTEXT.md 的 Corroboration Count 定义）。
+
+**待定参数**（属 §19.6，不得由实现者自选）：
+
+- 两级门槛的具体数值。定低了错知识拿到注入权，定高了好知识永不升级；**无真实数据不可能定准**，因此必须是可调配置项（§2.2 允许的少数配置之一）。
+- "真被用上"的精确判定。abrain 的可用实现是"进入注入块或 decide brief"（`usage-telemetry.ts` 的 `cited`）。**未决**：一条被检索到、模型读过、但明确决定不采用的 proposition 是否计入——abrain 那套会计入，因为它只能观测到"是否进入 prompt"。
+
+### 9.5 Ephemeral Session 的证据（LOCKED）
+
+一次性会话（无持久 session 记录）的证据**记录并标记，不丢弃，默认不投影为结论**。
+
+可检测性依据：`ReadonlySessionManager.getSessionFile()` 是 Pi 的公开 API，返回 `string | undefined`；`SessionManager.inMemory()` 构造出的会话该值为 undefined。因此"无持久 session 文件"是**公开可见的代理信号**。
+
+但它只是代理信号，不是身份：**agentbrain 能观测到一个 Session 是 ephemeral，无法判断为什么**——被委派的子代理执行与用户刻意不留记录的主会话在它看来完全相同。因此不能据此推断"这是子代理"。
+
+处置的理由：丢弃违反"证据永不丢"（§5.1）；直接投影则会让一次性上下文里的临时结论进入长期记忆。默认不投影使二者都避免。术语见 CONTEXT.md 的 Ephemeral Session。
+
+Doctor 必须能报告这类证据的量（§14.3），否则它是完全不可见的沉默积累。
 
 ---
 
@@ -499,7 +634,9 @@ L1 event/record 的物理 identity 与 Physical Purge 存在硬设计门，见 �
 - Semantic Forgetting：保留必要审计关系，但不再检索和注入；
 - Physical Purge：从 agentbrain 控制的内容存储和派生物中清除敏感正文。
 
-非 Purge 的终态应可追溯、尽量可逆；disuse/usage-only 不能单独静默删除长期 Decision、Maxim 或 Preference。
+非 Purge 的终态应可追溯、尽量可逆。
+
+**usage 信号的不对称授权（LOCKED）**：usage 可以单独驱动**上行**（Corroboration Count 累积、maturity 升级，见 §9.4），不能单独驱动**下行**。任何降级、语义遗忘或撤下结论都必须有 Human 的显式表示；disuse 本身永不构成删除长期 Decision、Maxim 或 Preference 的理由。理由见 §9.4.3：自动上行判错只是升快了，自动下行判错是丢掉正确知识，代价不对称。
 
 ### 10.2 Physical Purge 边界
 
@@ -513,26 +650,48 @@ Purge 至少覆盖：
 
 只留下不含原文、秘密、可逆摘要或不必要敏感元数据的最小状态。对远端 Git 历史、外部 clone、第三方备份和 Pi transcript 只报告 best-effort，不承诺全球可验证擦除。
 
-Purge 只能由可信 Human/operator 的显式控制路径发起；普通 transcript、记忆正文、模型输出、Agent Proposal 和外部 Skill 指令都不能触发。操作必须指定精确目标和范围，执行前显示将覆盖的受控存储边界，执行后逐面报告 success/partial/failure。子代理永远没有 Purge capability。
+Purge 只能由可信 Human/operator 的显式控制路径发起；普通 transcript、记忆正文、模型输出、Agent Proposal 和外部 Skill 指令都不能触发。执行前显示将覆盖的受控存储边界，执行后逐面报告 success/partial/failure。子代理永远没有 Purge capability。
 
-具体 event identity/tombstone 模型尚未关闭，不能实施。
+#### 10.2.1 Purge 按范围执行，不支持单条精确删除（LOCKED）
 
-### 10.3 自治遗忘和 Outcome 范围
+**Purge 的操作单位是 Purge Range，永不是单条 proposition 或单个 event。**
+
+范围按写入时不可变的 facet 声明，例如时间窗、Session、原始 Project。允许可变 facet 会使范围含义随后续 rescope 漂移。
+
+日常"删掉这条"的诉求由 **Semantic Forgetting** 承担（§9.4.3）：检索查不到、不注入、证据保留。二者不是粗细粒度之别，而是两种不同操作。
+
+#### 10.2.2 声明是意图，枚举是回执（LOCKED）
+
+一次 purge 必须同时写入两样东西：
+
+- **声明**：这次要删哪个范围。它陈述意图，purge 之后仍然可读，回答"当时要删什么"。
+- **枚举**：purge 实际移除了哪些记录的 ID 集合，作为可重放快照。
+
+两者都要的理由是 meta-lifecycle rescope 的压力测试：一条 proposition 写入时属于 Project A，后被 rescope 到 B。仅有声明时，重放同一份 L1 会算出与当初不同的成员集合，**范围墓碑就不再能证明任何事**；仅有枚举时，无法回答当初的意图，也无法人工审计。
+
+必须承认的代价：purge 事件体积变大，且枚举必须在**同一个 authority frame 内生成**，不能事后补写——事后补的枚举无法证明它与当时实际删除的集合一致。
+
+术语见 CONTEXT.md 的 Purge Range。具体 event identity/tombstone 物理模型仍未关闭，见 §19.1。
+
+### 10.3 自治遗忘出 v2 范围（LOCKED）
 
 v2 必须有 explicit archive/reactivate、supersede/withdraw/expire、forget/purge 分离。
 
-以下能力由 Wayfinder 继续裁决，可只做 shadow instrumentation：
+以下能力**明确不在 v2 范围内**，不是"待裁决"：
 
 - 自动 archive executor；
+- 自动 decay / demote；
 - 自动 reactivate；
-- retrieval/injection outcome；
 - 去自回声；
-- resurrection-rate；
-- kind-distribution；
+- resurrection-rate、kind-distribution 监控；
 - archive recommendation；
 - outcome 驱动 prompt/policy evolution。
 
-没有真实 corpus 和消费方证据时，不默认复制 abrain 全套 aggregator、多模型 reviewer 和自治遗忘执行器。
+理由是 abrain 作者自己的选择：ADR 0031 声称"2026-07-23 起正式全量生产"，而本机现役 `memory.forgetting.executorRealApplyEnabled` 已回退为 `false`，`_comment` 明写 "Real forgetting remains disabled"——**写这套自治执行器的人在自己机器上没有武装它**。它同时贡献 §2.2 所列 17 个双写门中的 3 个（`demoteShadow` / `decayShadow` / `executorRealApplyEnabled`）。在 §2.1 的所有权动机下，"原作者不敢开的代码"是最不该继承的一类。
+
+v2 保留的**唯一** usage 相关机制是 §9.4 的 Corroboration Count，它与自治遗忘的关键差别是方向：只上行，不下行（§10.1）。
+
+与 §15.5 判据一的张力必须在 [#15](https://github.com/josheee1117/agentbrain/issues/15) 逐条验证：若 abrain 现役 P0 场景中有任何一条实际依赖自治遗忘，本条构成场景回退，需要重新裁决。按上述旗标状态，当前判断为不构成。
 
 ---
 
@@ -635,11 +794,40 @@ v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同�
 - 只有派生 Markdown、无法恢复来源的内容标为 imported/unverified；
 - 目标已存在不覆盖；
 - 单向导入，不建设永久兼容层；
-- cutover 前保留只读备份，回退依靠备份而非双主。
+- abrain 的现役 store 作为**只读归档长期保留**，cutover 完成后也不删除；回退依靠该归档而非双主。理由：§12.4 的迁移口径是人工挑选，没有完备性保证，归档是唯一能补挑的来源。
 
 以上纪律本身不变，但**它们的位置改了**：在 §2.1 的替代前提下，cutover 不是 M6 末尾的收尾动作，而是决定 M1-M6 值不值得做的前置条件。因此资产盘点（[#7](https://github.com/josheee1117/agentbrain/issues/7)，当前 open 且被隐私 gate 阻塞）从"迁移里程碑的一个步骤"上升为**关键路径**，见 §18 T0。
 
 另需注意：本条的"回退依靠备份而非双主"只覆盖 store 层。运行期回退（两套扩展同挂 Pi 时如何退回 abrain 且不丢切换期新增记忆）由 §7.4 单独承担。
+
+### 12.4 迁移口径：人工挑选 + 可重放 manifest（LOCKED）
+
+**不做全量迁移。Human 人工挑选一批高价值记忆导入。**
+
+排除全量 L1 迁移的理由：在 §2.1 的所有权动机和 §12.5 的 clean-room 路径下，全量吃 L1 意味着 agentbrain 的新 schema 必须能表达 abrain 的事件形状——把刚脱的钩又挂回去。
+
+导入必须落成**可重放的 import manifest**：
+
+- 源引用清单（挑了哪些）；
+- Human 背书（谁确认的）；
+- 选取理由（为什么留它）。
+
+理由与 §10.2 的"声明是意图、枚举是回执"同源：不记 manifest，则一次 schema 迁移或一次 purge 之后就要重新人工挑一遍，而"当时为什么留这条"三个月后已不可复原。挑选时顺手记接近零成本，事后重建不可能。
+
+导入的 proposition 以 `imported` 落地并保留"来自 abrain"的来源标识（L1 已有 `imports` 事件类型）。必须承认的代价：**人工挑选没有完备性保证**，因此 abrain 现役 store 必须作为只读归档长期保留（§12.3），它是唯一能补挑的来源。
+
+**对 [#7](https://github.com/josheee1117/agentbrain/issues/7) 的直接影响**：本口径下 #7 不再需要 schema 完整盘点，只需要一份**可浏览清单供 Human 自行挑选**。代理侧需要接触的个人内容面因此显著收窄，隐私 gate 基本退出关键路径。#7 的隐私纪律（§12.3）不变，但其工作量与授权面按本条重估。
+
+### 12.5 代码来源：clean-room（LOCKED）
+
+**代码全新编写。abrain 的 ADR、架构文档、复核结论与源码当作规格读，不作代码抄。**
+
+被否决的替代路径与理由：
+
+- **fork-and-strip 整个记忆栈**：MIT 许可（`pi-astack/LICENSE`，Copyright alfadb）已排除法律障碍，因此判别式只剩认知所有权与维护面。继承 88,781 行未曾亲手写过的代码，法律上属你、认知上不属你；且保持上游形状会持续产生合并诱惑（`upstream/main` 已领先本 fork 50 个提交并带着 DCC），恰好治不了 §2.1 要治的脱钩。
+- **只复用 `_shared` 的语义核心**（proposition / jcs / l1-schema-registry / canonical-l2-reconciler）：省得最少而改得最痛。§10.2 的 Purge Range 与 §9.4 的 Corroboration/Unreconciled 都是 abrain L1 **根本没有的词汇**——上游零 purge 机制，ADR 0043 反而把物理删除列为要规避的风险，writer 与 reconciler 全线假设 append-only。这块"语义核心"恰恰是必须改动、且不变量密度最高的代码。
+
+**clean-room 的真实风险**是重新推导那 88,781 行踩出来的行为。挡住它的是两条已有纪律：§19 各 gate 的"先读上游再跑 prototype"，以及 §3 要求 gate 由代码切片而非论证关闭。**当规格读，不当代码抄。**
 
 ---
 
@@ -732,7 +920,9 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 - purge 进度和派生物残留；
 - schema migration readiness；
 - 最近 capture、projection 和 retrieval degradation；
-- **共存态**：本机当前有几套记忆系统在消费 `agent_end`、在注入 prompt、在持有 authority（§7.4；共存期最危险的状态是静默双活）。
+- **共存态**：本机当前有几套记忆系统在消费 `agent_end`、在注入 prompt、在持有 authority（§7.4；共存期最危险的状态是静默双活）；
+- **Unreconciled 积压**：当前有多少条 proposition 处于 Unreconciled 状态（§9.4.4）。因为 INV-INVISIBILITY 禁止把它们做成常驻待办列表，doctor 是唯一的可见性入口——否则积压完全不可见；
+- **Ephemeral 证据量**：有多少证据来自 Ephemeral Session 因而默认不投影（§9.5）。
 
 所有 hook/自动化动作必须有可诊断、可手动触发的等价操作，但具体 CLI/API 名称仍由运行接口 ticket 决定。
 
@@ -761,6 +951,13 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 - 删除 L2/L3 后恢复当前有效记忆；
 - correction/conflict/supersession/archive/reactivate 正确；
 - Purge 后 agentbrain 自身无法从重建、索引或缓存恢复正文；
+- purge 声明与枚举在重放下一致，且 rescope 过的 proposition 归属可判定（§10.2.2）；
+- L1 永不被就地修改：状态变化只表现为追加的 meta-lifecycle 事件（§9.4.1）；
+- Corroboration Count 只上行；任何降级或撤下都可追溯到一次 Human 显式表示（§9.4.3）；
+- 同一 Session 内重复使用同一 proposition 只累计一次（§9.4.2）；
+- Unreconciled proposition 不出现在默认 L2 结论中，且不因计数累积而转正（§9.4.4）；
+- Ephemeral Session 证据被记录且默认不投影（§9.5）；
+- 缺失 Delegation Lineage 的证据被标记为 degraded，与"未委派"可区分（§6.3.2）；
 - 未处理 Proposal 不静默 accepted；
 - Loadout 不创造 capability；
 - 子代理不能越过 delegated scope；
@@ -805,7 +1002,9 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 §15.1-15.4 只测**正确性**。在 §2.1 的替代前提下，全部通过也回答不了唯一真正重要的问题：**它是不是比 abrain 现役实现更好。** 因此增加三条独立判据，任何一条不满足都不构成替代成功：
 
 1. **场景覆盖不回退**：agentbrain 必须覆盖 abrain 在本机现役承担的 P0 场景。前置动作是把这些场景显式列出来——不是从 abrain 的代码或 ADR 反推功能清单，而是从用户实际依赖的行为出发（这与 §1 的七个闭环场景是同一件事，但必须逐条对到 abrain 现役行为上）。
-2. **复杂度可量化下降**：概念数与代码量相对 abrain 现役实现有可测量的下降，且下降来自**掉场景复杂度**（多平台、双仓、staged rollout）而非**掉纪律**（见 §2.1）。声称"更简单"必须给出口径和数字，不接受主观判断。
+2. **复杂度可量化下降 + 所有权脱钩**（复合判据，两条都要）：
+   - 复杂度按 §2.2 冻结的口径衡量：**配置键 162 → ≤35，迁移期双写门 17 → 0**。行数不作判据。下降必须来自掉场景复杂度而非掉纪律。
+   - 脱钩指全部代码为 clean-room 自写（§12.5），且不存在需要跟随 `upstream/main` 合并才能维持正确性的部分。
 3. **领域不变量有测试**：§15.1 的每条不变量都有对应测试，而不是只写在文档里。abrain 的教训是配置和注释都会说谎（本机 `_comment` 写 "remain disabled" 而值为 `true` 的情况反复出现），因此不变量的权威只能是测试。
 
 这三条属于 [#15](https://github.com/josheee1117/agentbrain/issues/15) 的验收门内容，与 §18 M6 的 release gate 绑定。
@@ -886,19 +1085,29 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 - retrieval contract；
 - acceptance gates 与 rollout（含 §15.5 替代判据）。
 
-### P0：Pi lifecycle / worker prototype
+### P1：L1 / Purge state-machine prototype（**先行**）
+
+验证 append-only lineage、合法 range purge、missing/corrupt/purged 区分和 rebuild，以及 §10.2.2 的声明+枚举在重放下可验证。
+
+**P1 与 P0 已换序（LOCKED）。** 理由是 §12.5 的 clean-room 路径把两侧风险对调了：
+
+- L1 的形状是唯一一处"定错就要重写全部下游"的决定，而它恰好是唯一**没有上游答案可读**的地方——§10.2 的 Purge Range、§9.4 的 Corroboration/Unreconciled 都是 abrain L1 不存在的词汇（§19.1）。
+- P0 的七项在 abrain 里全部有现役实现可读，按 §12.5 那正是"当规格读"的标本，风险从"选型"降为"读懂"，不需要用 prototype 去发现。
+
+先做 P0 会导致在还不知道 L1 形状时就定下 capture 的 payload 形状。
+
+**必须承认的代价**：P1 先行意味着头几周没有可 dogfood 的东西，反馈周期变长。
+
+### P0：Pi lifecycle / worker prototype（排在 P1 之后）
 
 - capture seam；
 - branch/compaction；
 - parent 退出后的 worker；
 - duplicate delivery；
-- user-turn/delegation lineage；
+- user-turn/delegation lineage（按 §6.3.2，血缘是必填输入，验证的是缺失时的降级标记）；
 - first-turn model registry；
-- degraded behavior。
-
-### P1：L1 / Purge state-machine prototype
-
-验证 append-only lineage、合法 purge、missing/corrupt/purged 区分和 rebuild。
+- degraded behavior；
+- §9.4.5 三层判断链前两层的承载形态（§19.3）。
 
 ### P2：Retrieval prototype
 
@@ -920,8 +1129,8 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 - correct；
 - conflict/supersede；
 - archive/reactivate；
-- forget；
-- purge。
+- forget（Semantic Forgetting，§9.4.3）；
+- range purge（声明 + 枚举，§10.2）。
 
 ### M3：Pi Read Path
 
@@ -942,8 +1151,12 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 - extraction；
 - Proposal；
 - policy-based promotion；
+- Corroboration Count 与两级门槛（§9.4）；
+- 三层判断链与 Unreconciled 处置（§9.4.4-9.4.5）；
 - bounded retry/defer/expiry；
 - INV-INVISIBILITY。
+
+不含自治遗忘/decay/自动 archive——已出范围（§10.3）。
 
 ### M6：Evaluation、Cutover 与 Rollout
 
@@ -967,6 +1180,8 @@ M6 只负责**执行**替代，不负责**发现**要替代什么——后者在
 > 注意不要把复核文档 §4.4 的「audit-hmac 物理删除」误读为 purge 机制：那说的是 `_shared/audit-hmac.ts` 这个**文件**被上游删除（320 行 HMAC 完整性层换成 58 行 checksum），与记忆内容清除无关。
 >
 > 因此本 gate 是 agentbrain 的**原创设计门**，也是 v2 相对 abrain 的真实增量（§2.1）。P1 prototype 不可省略。
+>
+> **§10.2.1 的范围级口径降低了本 gate 的难度，但没有取消它。** 不支持单条精确删除，意味着不需要为每条 event 设计可独立擦除的身份；问题收窄为"如何定义并证明一个删除范围"（§10.2.2 的声明 + 枚举）。这从"最难的 gate"降为"删除范围的定义问题"，但仍需 P1 prototype 验证 lineage 在范围删除后的可读性。
 
 必须裁决以下一种或形成更好的经过验证方案：
 
@@ -993,11 +1208,13 @@ M6 只负责**执行**替代，不负责**发现**要替代什么——后者在
 - purge journal；
 - 不产生第二语义真相源。
 
-### 19.3 Pi Worker 拓扑 × 子代理执行拓扑（同一个 gate）
+### 19.3 Pi Worker 拓扑（子代理执行拓扑已出 gate）
 
 Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不得只凭 pi-astack 当前实现选择。
 
-**这条与子代理执行拓扑是同一个 gate，不能分开裁决。** §6.3.2 之所以能把委派血缘做成一等字段，前提是 agentbrain 自己拥有执行面；而"自己拥有执行面"落到进程上，就是本 gate 要选的那个形态。两者选不同答案会直接矛盾（例如 worker 选 daemon 而子代理选进程内，委派血缘就又变回跨进程事后拼接）。因此 [#11](https://github.com/josheee1117/agentbrain/issues/11) 与 [#6](https://github.com/josheee1117/agentbrain/issues/6) 必须交叉裁决。
+**子代理执行拓扑不再是本 gate 的一部分，也不再是任何 gate。** §6.4 已定：agentbrain 不拥有执行面，只留接缝。gate 的定义是"agentbrain 实施前必须自己裁决的事"；执行拓扑归 Pi/dispatch 所有，把它留作 gate 会错误暗示 agentbrain 有权选择。委派侧 agentbrain 唯一需要冻结的是 §6.3.2 的血缘必填接缝合同，那属于 §19.5。
+
+本 gate 因此收窄为 agentbrain **自有后台 worker** 的进程形态。§9.4.5 的三层判断链前两层运行在此形态内，是本 gate 的新增输入。
 
 **前置动作不是跑 prototype，是先读上游。** 原文"不得只凭 pi-astack 当前实现选择"没错，但本文 pin 的快照（`ad6aa8f`）是 **pre-DCC** 的——上游 `upstream/main` 已经把这块重做过一轮，且 Linux 生产验收：
 
@@ -1019,9 +1236,16 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 
 冻结 stable project ID、显式本机 binding/registry、多个 checkout 的执行根区分，以及 capability 建立、收窄、过期、审计和子代理回流；禁止 `cwd`/Git remote 隐式授予项目身份。
 
-### 19.6 Sediment Promotion
+### 19.6 Sediment Promotion 与 Corroboration 参数
 
 冻结低风险自动晋升、高影响 Proposal、自治 reject/expire/defer、自然对话校准，以及 accepted proposition → stable Policy/Context Brief 的独立发布门；不建立人工审批 inbox。
+
+§9.4 的机制形状已 LOCKED，本 gate 只冻结其未定参数，**不得由实现者自选**：
+
+- **两级门槛阈值**（§9.4.6）。必须是可调配置项：无真实 corpus 不可能定准，且错误代价不对称（定低了错知识取得注入权，定高了好知识永不升级）。
+- **"真被用上"的精确判定**（§9.4.2）。abrain 的可用形状是 `usage-telemetry.ts` 的 `cited`（进入注入块或 decide brief）。**未决问题**：被检索到、模型读过、但明确决定不采用的 proposition 是否计入——abrain 那套会计入，因为它只能观测"是否进入 prompt"，无法观测"是否被采纳"。
+- **主题清单的维护形态**（§9.4.4）：如何合并近义主题格，由谁触发。
+- **三层判断链的模型分配**（§9.4.5）：第 1、2 层各用什么档位的模型。链的形状是 LOCKED，模型选择不是。
 
 ### 19.7 Retrieval Default Profile
 
@@ -1031,9 +1255,11 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 
 冻结物理布局、backup/export、schema migration，并在另行授权后盘点真实资产。
 
-### 19.9 Forgetting / Outcome 范围
+### 19.9 Forgetting / Outcome 范围（已裁决，保留供追溯）
 
-冻结 v2 只做显式 archive/reactivate + instrumentation，还是纳入自治 archive、reactivation、outcome 和 monitor；任何自动执行器都必须有真实 corpus、消费方和可复现指标支持。
+**本 gate 已由 §10.3 关闭：自治遗忘出 v2 范围。** v2 只做显式 archive/reactivate/forget/purge，加上 §9.4 的 Corroboration Count（只上行）。
+
+保留本条目的目的是追溯：若 [#15](https://github.com/josheee1117/agentbrain/issues/15) 的 P0 场景清单显示某条现役场景实际依赖自治遗忘，本裁决需重开。
 
 ### 19.10 Operations / Recovery
 
@@ -1057,12 +1283,12 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 | Pi Worker × 子代理执行拓扑（同一 gate） | [原型验证 Pi Adapter 与后台 Worker 拓扑](https://github.com/josheee1117/agentbrain/issues/11) **×** [定义身份、作用域、Loadout 与子代理委派合同](https://github.com/josheee1117/agentbrain/issues/6)，交叉裁决 |
 | L2 Contract | [定义 L2 记忆身份、投影与生命周期合同](https://github.com/josheee1117/agentbrain/issues/8) |
 | Identity / Project Binding / Loadout / Delegation | [定义身份、作用域、Loadout 与子代理委派合同](https://github.com/josheee1117/agentbrain/issues/6)（执行拓扑部分见上一行） |
-| Sediment Promotion | [定义自动沉淀、Proposal 晋升与人工校准合同](https://github.com/josheee1117/agentbrain/issues/18) |
+| Sediment Promotion 与 Corroboration 参数（§19.6） | [定义自动沉淀、Proposal 晋升与人工校准合同](https://github.com/josheee1117/agentbrain/issues/18) |
 | Retrieval Contract / Default Profile | [定义检索、Memory Card、交付与评测合同](https://github.com/josheee1117/agentbrain/issues/9) + [原型验证中文检索与 Rerank 取舍](https://github.com/josheee1117/agentbrain/issues/10) |
 | Store / Export / Migration | [定义本地 Canonical Store、同步中立与迁移合同](https://github.com/josheee1117/agentbrain/issues/13) |
 | **T0 迁移源资产盘点（关键路径，当前被隐私 gate 阻塞）** | [盘点现有迁移源资产与 provenance 质量](https://github.com/josheee1117/agentbrain/issues/7) |
 | **运行期共存与 Cutover** | [原型验证 Pi Adapter 与后台 Worker 拓扑](https://github.com/josheee1117/agentbrain/issues/11) + [定义本地 Canonical Store、同步中立与迁移合同](https://github.com/josheee1117/agentbrain/issues/13) |
-| Forgetting / Outcome | [定义自治遗忘、归档、复活与 Outcome 回流合同](https://github.com/josheee1117/agentbrain/issues/19) |
+| Forgetting / Outcome（**已裁决出范围**，§10.3/§19.9） | [定义自治遗忘、归档、复活与 Outcome 回流合同](https://github.com/josheee1117/agentbrain/issues/19)（应关票并记录裁决） |
 | Operations / Recovery | [定义运行接口、降级、诊断与恢复合同](https://github.com/josheee1117/agentbrain/issues/14) |
 | Acceptance / Rollout（含 §15.5 替代判据） | [定义 v2 验收门、里程碑与 rollout 决策](https://github.com/josheee1117/agentbrain/issues/15) |
 | TencentDB 最终 disposition | [裁决 TencentDB 机制的 abrain-native 吸收矩阵](https://github.com/josheee1117/agentbrain/issues/12) |
@@ -1091,6 +1317,43 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 ---
 
 ## 21. 修订记录
+
+- **2026-09-07 v2.2（架构决定收敛：23 条决定入文档）**：一次 grilling 会话（`/grill-with-docs 确定架构设计`）把 v2.1 留在 GATE 状态的多数根决定裁决完毕。本次修订把这些决定写入正文，并解决其中六处与既有条文的直接冲突。
+
+  **新增决定（LOCKED）**
+
+  1. **§2.1 替代动机重写为所有权优先**——原文把动机隐含为复杂度；实际首要动机是**所有权脱钩**（能完整读懂、独立演进、不受上游路线牵引），复杂度是次要动机。有效性不是痛点，因此 abrain 继续作为架构母体（§1）不变。"更好"的口径随之改为**复合判据：脱钩 + 复杂度可量化下降**，两条都要。
+  2. **新增 §2.2 复杂度预算**——冻结口径为**配置键数 + 迁移期双写门数**，行数不作判据（行数会随场景复杂度免费下降）。实测基线：agentbrain 替代范围内配置键 **162**（全栈 341 中扣除 dispatch/compactionTuner 等从不拥有的域），迁移期双写门 **17**。目标 **≤35 / 0**。预算分配：预算类参数默认写死在代码里，只有确需按机器或阶段调整的留成配置。
+  3. **新增 §6.4 执行面边界**——agentbrain 只拥有记忆面，子代理执行归 Pi/dispatch。实测支撑：`dispatch` 扩展**零 import 记忆栈**，唯一耦合是 `dispatch/index.ts:173` 的工具名字符串，因此**工具名重叠就是委派接缝本身**（§7.4.1 该行的性质在稳态下反转）；`createAgentSession` 是 Pi core 公开导出（`dist/core/sdk.d.ts:107`），故"只留接缝"是选择而非 API 限制。
+  4. **§6.3.2 改写为"血缘是接缝的必填输入"**——原文的一等字段论证以"agentbrain 拥有执行面"为前提，与上条冲突。改为：委派方必须随 Work Unit 传入血缘，传不到则标记 degraded，**与"未委派"可区分**。代价量化：`_shared/causal-anchor.ts` 585 行的存在目的就是重建本可直接传入的东西。
+  5. **新增 §9.4 Corroboration 与 maturity 升级**——本次最大的新增机制：
+     - §9.4.1 记忆没有"过期"这回事，不引入有效期字段；状态变化通过向 L1 追加 meta-lifecycle 事件表达，L1 永不就地修改（用户原话："保留 L1 最开始 React 17 以及当前 19 的原始证据，L2/L3 是最终结论"）。
+     - §9.4.2 计数口径：按 **Session** 计、必须**真被用上**、"未被否定"须为 Human 显式表示的缺席。依据 `memory/usage-telemetry.ts` 已用代码区分 `retrieval_hit_count` 与 `cited_count`（「「被用」≠「被检索」」）；按检索计数会使最易检索者而非最正确者上涨，并自我强化。
+     - §9.4.3 **上行自动、下行显式**。不对称理由：自动上行判错只是升快了，自动下行判错是丢掉正确知识。系统永不从对话推断否定。
+     - §9.4.4 主题归属由 agent 提议但对齐已有主题优先；**supersession 归属认不出就不进 L2**（Unreconciled），只能由 Human 确认转正，计数累积不能使其转正。
+     - §9.4.5 三层判断链：便宜模型 → 强模型 → 主 agent 下一轮决断。依据一条外部观察（2026-08-28）：难易分流应"先跑便宜的、失败再升级"，而非事前分类。
+     - §9.4.6 两级门槛：低门槛得准则地位，高门槛才得默认注入资格。理由是错误代价不同——排序靠前的错知识可被忽略，自动注入的错知识静默影响全部工作。与 §8.5 高影响发布门**串联而非替代**。
+  6. **新增 §9.5 Ephemeral Session 证据处置**——记录并标记，默认不投影。可检测性依据 `ReadonlySessionManager.getSessionFile()` 为公开 API；但它只是代理信号，**无法区分被委派的子代理与刻意不留记录的主会话**。
+  7. **§10.2 拆为 10.2.1/10.2.2**——Purge 按 **Purge Range** 执行，不支持单条精确删除；范围按写入时不可变 facet 声明。**声明是意图，枚举是回执**：两者都要，压力测试是 rescope——仅有声明则重放会算出不同成员集合，范围墓碑失去证明力；枚举必须在同一 authority frame 内生成。
+  8. **新增 §12.4 迁移口径**——人工挑选而非全量迁移，落成可重放 import manifest（源引用 + 背书 + 理由）。全量吃 L1 会要求新 schema 表达 abrain 的事件形状，把刚脱的钩挂回去。**对 #7 的影响**：只需一份可浏览清单供人工挑选，代理侧接触的个人内容面显著收窄，隐私 gate 基本退出关键路径。
+  9. **新增 §12.5 代码来源 clean-room**——否决 fork-and-strip（MIT 已排除法律判别式，剩下的判别式是认知所有权；保持上游形状会持续产生合并诱惑，而 `upstream/main` 已领先 50 提交并带 DCC）与"只复用 `_shared` 语义核心"（该核心恰是必须改动、不变量密度最高的部分：Purge Range 与 Corroboration 都是 abrain L1 不存在的词汇）。
+  10. **P0/P1 换序**——P1（L1/Purge 状态机）先行。clean-room 路径把两侧风险对调：L1 是唯一"定错要重写全部下游"且唯一无上游答案可读的地方；P0 七项在 abrain 均有现役实现可当规格读。代价：头几周无可 dogfood 之物。
+
+  **解决的六处冲突（原文写着旧决定，照文档实现会写反）**
+
+  1. **§10.1 的 usage-only 禁令**（原："disuse/usage-only 不能单独静默删除长期 Decision/Maxim/Preference"）——改写为**不对称授权**：usage 可单独驱动上行，不可驱动下行。原句会让实现者直接否掉整套 §9.4。
+  2. **§8.2 "主 Agent 语义推断 → Proposal"**——拆为两行：自行推断仍是 Proposal；**对后台已备判断的决断可 accepted**（§9.4.4）。不违反 §7.3，因为重活已在后台完成。
+  3. **§10.3 自治遗忘从"待裁决"改为明确出范围**——依据是 abrain 作者自己的选择：ADR 0031 声称全量生产，而本机 `executorRealApplyEnabled` 已回退为 `false`、`_comment` 写 "Real forgetting remains disabled"。它另贡献 17 个双写门中的 3 个。§19.9 同步改为已裁决并保留追溯条件。
+  4. **§9.4.6 与 §4/§8.5 的"准则"层级缺口**——两级门槛与 §8.5 高影响发布门显式串联，计数只提供候选资格。
+  5. **§12.3 "cutover 前保留只读备份"**——改为**长期保留、cutover 后也不删**。理由：人工挑选无完备性保证，归档是唯一补挑来源。
+  6. **§19.3 "Pi Worker × 子代理执行拓扑同一 gate"**——子代理执行拓扑**移出 gate 体系**（§6.4 已定不拥有执行面；留作 gate 会错误暗示有权选择）；本 gate 收窄为 agentbrain 自有 worker 形态，并新增 §9.4.5 前两层承载为输入。
+
+  **同步更新**：§8.3（Unreconciled/Ephemeral 不得做成常驻列表）、§9.2（说明为何不选"同主题取最新"）、§14.3（doctor 新增 Unreconciled 积压与 Ephemeral 证据量，因 INV-INVISIBILITY 禁止列表，doctor 是唯一可见性入口）、§15.1（新增 8 条不变量）、§15.5 判据二（改为复合判据并写入数字）、§18 M2/M5、§19.1（范围级口径使本 gate 从"最难"降为"删除范围定义问题"，但 P1 仍不可省）、§19.6（新增四项待定参数）、§19.13 票据表。
+
+  **CONTEXT.md 新增术语**：Corroboration Count、Unreconciled Proposition（另有 v2.1 已加的 Ephemeral Session、Delegation Lineage、Purge Range）。
+
+  **仍未关闭**：§19.6 的四项参数（两级门槛阈值、"真被用上"的精确判定、主题清单维护形态、三层链模型分配）；§19.1 的 event identity/tombstone 物理模型；其余 §19 各 gate 不变。**实施仍未授权。**
+
 
 - **2026-08-21 v2.1（替代前提与共存合同）**：对 v2 baseline 的一次评审修订，七处改动：
   1. **新增 §2.1 替代前提（LOCKED）**——agentbrain 的目标是在 Pi 上取代 abrain 现役实现，Pi-only 是替代前提而非宿主收窄；同时定义"更好"的口径为**掉场景复杂度、留纪律**。理由：§2/§17 原文读起来是一次没有理由的方向替换，而这一句决定 M1-M6 值不值得做。§17 补同向说明。
