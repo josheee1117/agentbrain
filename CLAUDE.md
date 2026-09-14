@@ -6,14 +6,13 @@ agentbrain：以 abrain 为架构母体的本地 Agent 记忆系统。v2 首发�
 
 **产品前提：在 Pi 上取代 abrain 现役实现，不长期并存（设计 §2.1）。** Pi-only 是替代前提而非宿主收窄。替代动机**首先是所有权脱钩**，其次是复杂度；"更好"是复合判据——脱钩 + 复杂度可量化下降（设计 §2.2：配置键 162→≤35、迁移期双写门 17→0，行数不作判据）。代码 clean-room 自写，abrain 只当规格读（§12.5）。
 
-## 当前状态（2026-09-07）
+## 当前状态（2026-09-14）
 
-- `docs/design/20260804-agentbrain-总体设计.md` 已原地升级为 **v2.2 architecture baseline**——任何实现工作开工前必须完整阅读，尤其 §21 修订记录的 v2.2 条目（23 条架构决定 + 六处已解决冲突）。
-- **实现未开始，也尚未授权。** 设计 §19 仍未关闭的 gate：L1×Purge 物理身份/tombstone、Durable Work Store、Pi Worker 拓扑、L2 Contract、Project Binding/Loadout/委派、Sediment Promotion 与 §19.6 四项 Corroboration 参数、检索、Store/迁移、Operations/Recovery、运行期共存/Cutover、Acceptance/Rollout。
-- **已裁决出 gate 体系**：子代理执行拓扑（§6.4 只留接缝）、自治遗忘（§10.3 出 v2 范围）。
-- **P0/P1 已换序**：先做 L1/Purge 状态机 prototype（P1），Pi lifecycle prototype（P0）排后（§18）。
-- **当前关键路径**：迁移源资产盘点（issue #7）。按 §12.4 的人工挑选口径，它已收窄为"提供可浏览清单供人工挑选"，隐私 gate 基本退出关键路径，但 §12.3 隐私纪律不变。
-- 当前路线由 GitHub Wayfinder map 管理：`https://github.com/josheee1117/agentbrain/issues/1`。未指定 ticket 时先处理其 frontier，不跳过依赖直接实施。
+- `docs/design/20260804-agentbrain-总体设计.md` 已升级为 **v2.4 场景基线**——开工前必须完整阅读，尤其 §15.5 的四个真实场景、§18 的切片表与 §21 v2.4 条目。
+- **切片 1 已授权实施**（2026-09-14）。代码在本仓 `extension/`，经 `~/.pi/agent/extensions/agentbrain` 符号链接被 Pi 加载。切片 2-4 各需单独授权（§19.13）。
+- 已裁决的物理形态：`~/.agentbrain/store.db`（L1 + work store）+ `index.db`（FTS5，可删重建）；不透明 event_id + 自增定序；L2 为纯函数；进程内 worker；来源为 Source Pointer 不存摘录。
+- 已关闭或推后：§7.4 共存/切换（abrain 已卸载）、#7 迁移（可选）、Corroboration、三层链第 2/3 层、Delegation Grant、Purge 传递闭包（均在切片 4 之后）。
+- 本机现役子代理宿主是 `pi-subagents`，不是 pi-astack dispatch；其子会话无持久 session 文件，按 Ephemeral 处理。
 
 ## 约定
 

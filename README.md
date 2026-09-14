@@ -8,7 +8,7 @@
 - 核心来源：pi-astack 的 abrain/sediment（event-first、统一 proposition、单 writer、确定性投影、自治纠错）
 - 对照来源：TencentDB Agent Memory（选择性吸收 Loadout、capture 调度、provenance、显式降级等机制，不复制团队 Memory Hub）
 
-**当前状态：v2.2 架构基线，实施尚未开始；Design Gates 关闭并再次获得明确授权后才能编码。**
+**当前状态：v2.4 场景基线，切片 1（显式记忆 + 搜索 + 来源展开 + Brief）实施中；后续切片按 §18 逐个授权。**
 
 - 总体设计：[docs/design/20260804-agentbrain-总体设计.md](docs/design/20260804-agentbrain-总体设计.md)
 - 领域词汇：[CONTEXT.md](CONTEXT.md)

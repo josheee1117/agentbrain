@@ -68,11 +68,21 @@ User-readable L2 vocabulary for a verifiable descriptive proposition. The L2 con
 
 ### Corroboration Count
 
-The number of distinct Sessions in which a proposition was actually used and not contradicted. It counts sessions, not retrievals: being surfaced by a search is not use, and one session cannot corroborate a proposition twice. The count is an input to maturity, never a substitute for authority or evidence quality.
+The number of distinct Sessions in which a proposition was actually used and not contradicted. It counts sessions, not retrievals: being surfaced by a search is not use, and one session cannot corroborate a proposition twice. The count measures usage maturity and may affect ranking among eligible memories; it does not change evidence authority, admission, modality or default injection eligibility.
 
 ### Unreconciled Proposition
 
-A proposition whose relation to existing memory could not be determined: agentbrain could not identify which proposition, if any, it supersedes. It is recorded and remains readable, but is not projected as a current conclusion. It leaves this state only by a Human confirming what it supersedes; accumulating a Corroboration Count does not resolve it.
+A proposition whose relation to existing memory remains unresolved after the automatic decision chain. It is excluded from current conclusions until a Human resolves the relation, including explicitly confirming that nothing needs to be superseded; usage counts cannot resolve it.
+
+### Pitfall
+
+A normative proposition with a trigger: in a stated situation, do not do X, because Y. Pitfalls are rendered under the Maxim View, not as a fifth canonical kind. Unlike other Maxims, Pitfalls are pushed to the Agent proactively, because an Agent does not know to search for a pitfall before stepping into it.
+
+**Alias:** 坑.
+
+### Source Pointer
+
+The default provenance record for evidence captured from a Session: the Pi session file path, the leaf entry id at capture time, and a one-line summary. Reconstructing how a decision was discussed means reading the transcript at that pointer on demand; agentbrain does not store the discussion text itself.
 
 ### Policy View
 
@@ -128,6 +138,10 @@ What subject, project, session or work unit a proposition describes. Scope is no
 
 The explicit right of an Agent Execution to read or perform a bounded memory operation. Capability is not created by semantic similarity or Loadout attachment.
 
+### Delegation Grant
+
+A bounded memory authorization from a parent execution to a named child Work Unit, limited by the parent’s rights and revocable independently of memory content. Its concrete host integration remains a design candidate.
+
 ### Loadout
 
 A persistent selection policy describing which memory views, profiles, budgets and external asset references an Agent Definition normally uses. Loadout neither grants capability nor means all attached content is injected.
@@ -160,7 +174,7 @@ A request or policy that prevents content from normal retrieval and injection wh
 
 ### Physical Purge
 
-A controlled removal of every memory and evidence record falling inside a declared range, together with its derived state. Purge operates on ranges, never on a single proposition or event; it cannot promise deletion of copies outside agentbrain's control.
+A controlled removal of records in a declared range and the content derived from them; all transitively dependent results lose eligibility, while unrelated evidence remains valid. Purge operates on ranges, never on a single proposition or event; it cannot promise deletion of copies outside agentbrain's control.
 
 _Avoid_: Hard delete, wipe.
 
