@@ -82,7 +82,7 @@ A normative proposition with a trigger: in a stated situation, do not do X, beca
 
 ### Source Pointer
 
-The default provenance record for evidence captured from a Session: the Pi session file path, the leaf entry id at capture time, and a one-line summary. Reconstructing how a decision was discussed means reading the transcript at that pointer on demand; agentbrain does not store the discussion text itself.
+The default provenance record for evidence captured from a Session: the host, the session id, the host's transcript path, an anchor into that transcript at capture time (a Pi entry id, a Claude Code message id or a Codex ordinal), and a one-line summary. Reconstructing how a decision was discussed means reading the transcript at that pointer on demand; agentbrain does not store the discussion text itself.
 
 ### Policy View
 
@@ -118,9 +118,21 @@ A stable semantic boundary for engineering or knowledge work. A Project can rela
 
 A code repository identity associated with a Project. Filesystem location alone does not grant Project identity.
 
+### Project Registry
+
+The explicit, human-maintained list of Projects: one `repos/<name>.md` file per Project in the pm repository, whose file name is the Project name and whose path line is the Project's main checkout. `ab` resolves the current directory, with worktrees mapped back to their main checkout, against this list; a directory not on the list gets Global memory only.
+
+### Global Memory
+
+Memory whose Semantic Scope is the Human rather than one Project: rules, decisions, pitfalls and facts that apply across Projects. By default it is delivered to main sessions only; a rule marked for workers is also delivered to delegated sessions.
+
 ### Session
 
-One Pi conversation session. Session is a source and activation boundary, not a durable user identity.
+One conversation session in a supported host: Pi, Claude Code or Codex. Session is a source and activation boundary, not a durable user identity.
+
+### Host Adapter
+
+The per-host code inside `ab` that decides which host is calling (the nearest host ancestor process, because nested hosts inherit each other's environment variables), reads that host's session id, and reads that host's transcript for source expansion. Sessions learn to call `ab` from one line in each host's global rule file or from the dispatch instructions a main session writes; nothing is installed into the host. Host-private types such as environment variable names and transcript formats stay inside the adapter.
 
 ### Ephemeral Session
 
@@ -162,7 +174,7 @@ The recorded relation between a parent Agent Execution and the child execution i
 
 ### Memory Card
 
-A structured retrieval result containing identity, readable view, content, scope, state, provenance, conflicts, score explanation, token estimate and degradation flags. The Pi adapter decides how a Memory Card is rendered.
+A structured retrieval result containing identity, readable view, content, scope, state, provenance, conflicts, score explanation, token estimate and degradation flags. The Host Adapter decides how a Memory Card is rendered; `ab` output is the shared default.
 
 ### Archive
 

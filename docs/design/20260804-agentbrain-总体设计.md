@@ -1,11 +1,11 @@
 # agentbrain 总体设计
 
-- 状态：**v2.4 场景基线，切片 1 已授权实施**
-- 最新修订：2026-09-14
-- 实现状态：**切片 1 进行中**（`extension/`）
+- 状态：**v2.5 宿主无关基线**
+- 最新修订：2026-10-09
+- 实现状态：**切片 1 已实现（仅 Pi，`extension/`）；切片 1.5（宿主无关化）待授权**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
-- 首发宿主：Pi；v2 不承诺其他宿主
-- **产品前提：在 Pi 上取代 abrain 现役实现，不长期并存（§2.1）；动机首先是所有权脱钩，其次是复杂度（§2.2 定量）**
+- 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
+- **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
 - 决策地图：[绘制以 abrain 为母体的 agentbrain v2 路线](https://github.com/josheee1117/agentbrain/issues/1)
 - 领域词汇：`CONTEXT.md`
 - 主要证据：
@@ -15,7 +15,7 @@
   - `docs/research/20260821-current-abrain-sediment-复核.md`
 - 引用基线：pi-astack fork `ad6aa8f`（本机现役，pre-DCC）；alfadb `upstream/main` `f5e955e`（§19.3 要求先读的上游演进）；`earendil-works/pi@5cd93f6`
 
-> 本文是一份完整的 **architecture baseline**：产品边界、领域不变量、权威模型、Pi 边界、读写路径、隐私安全、Loadout/子代理、验证和候选里程碑已经明确。本文不会把尚未验证的物理存储、Purge 身份模型、Worker 进程拓扑或检索算法伪装成已拍板；这些事项列在 §19，关闭前不得开始生产实现。
+> 本文是一份完整的 **architecture baseline**：产品边界、领域不变量、权威模型、宿主边界、读写路径、隐私安全、Loadout/子代理、验证和候选里程碑已经明确。本文不会把尚未验证的物理存储、Purge 身份模型、Worker 进程拓扑或检索算法伪装成已拍板；这些事项列在 §19，关闭前不得开始生产实现。
 
 ---
 
@@ -23,12 +23,12 @@
 
 agentbrain v2 要交付一个以 abrain 为母体的本地记忆系统：
 
-1. 自动从 Pi 的真实工作生命周期捕获工程证据；
+1. 自动从 Pi、Claude Code、Codex 的真实工作生命周期捕获工程证据；
 2. 将来源、推断和生命周期变化写入可追踪的 L1 权威历史；
 3. 以确定性方式投影出当前可读、可纠正的 L2 记忆；
 4. 通过可重建 L3 索引和分层读取，为主 Agent 与子代理提供精准、受控、可解释的上下文；
 5. 支持用户自然纠正、语义遗忘和受控物理清除；
-6. 形成可以复现的中文检索、隔离、重建和 Pi 端到端验证体系；
+6. 形成可以复现的中文检索、隔离、重建和三个宿主的端到端验证体系；
 7. 从 TencentDB Agent Memory 选择性吸收能补强 abrain 的机制，而不复制其团队 Memory Hub、语义 L0-L3 或分散 authority。
 
 最终成功不是“拥有更多记忆对象”，而是以下七个场景稳定闭环：
@@ -58,26 +58,33 @@ v1.2 的核心价值仍成立：L1→L2→L3、结构性 sediment、分层读取
 
 v2 因此不是增量补丁，而是以当前 abrain 的统一 proposition 模型为起点，重新画清产品边界和运行合同。
 
-### 2.1 替代前提（LOCKED）
+### 2.1 产品前提（LOCKED，v2.5 改写）
 
-**agentbrain v2 的目标是在 Pi 上取代 abrain 的现役实现，不是与它长期并存。Pi-only 不是宿主收窄，而是替代前提。**
+**agentbrain 是宿主无关的个人 Agent 记忆。Pi、Claude Code、Codex 任一作为主体会话，都接入同一个本地 store，读写同一份记忆。**
 
-这一句决定 §18 全部里程碑值不值得做：如果 agentbrain 只是"多一个记忆系统"，M1-M6 的成本无法证明；只有当它最终接管 abrain 在本机承担的职责，替代成本才有归宿。三条直接后果：
+v2.0 到 v2.4 的前提是"在 Pi 上取代 abrain 现役实现"，Pi-only 是它的直接推论。这个前提已经失效：
 
-1. **cutover 不是 M6 末尾的收尾动作，而是前置条件轨**（§18 T0、§12.3）；
-2. **运行期共存必须设计**，不能只在 store 层声明单 canonical owner（§7.4）；
-3. **验收必须能回答"是不是比原来好"**，只测正确性不变量不够（§15.5）。
+- 2026-09-14 实测 abrain 已从本机 Pi 卸载（`~/.pi/agent/settings.json` 的 `_comment_pi_astack` 自述 "Uninstalled from Pi"），本机现役子代理宿主是 `npm:pi-subagents`；用户自述 abrain 实际使用不多。
+- 2026-10-09 实测 agentbrain 自己的 Pi 扩展也已停用（符号链接改名为 `~/.pi/agent/extensions-disabled-agentbrain`），`~/.agentbrain/store.db` 为 0 条事件。切换宿主没有数据要迁。
+- 用户日常在三个宿主之间切换。只服务一个宿主的记忆在另外两个宿主里就是断档，场景①"踩过的坑不再踩"一换宿主就失效。
 
-替代不等于功能对等复制。abrain 的复杂度有两个来源，必须分开处理：
+v2.5 因此撤销 Pi-only，四条直接后果：
+
+1. **先把记忆本身做好**（用户 2026-10-09 原话："第一批要完成的应该是 agentbrain 自己本身那个记忆的功能"）。§15.5 的四个场景仍是验收对象。
+2. **首个替代对象是 Pensieve**：pm 等仓库 `.pensieve/` 承担的项目记忆职责（maxims、decisions、knowledge、pipelines、short-term，以及 self-improve、refine、doctor）由 agentbrain 接管，对照清单见 §15.5。用户的长期方向是 agentbrain 取代 pm；但是否接管 pm 的仓库档案、计划等非记忆职责，等记忆核心成熟后再定，不在 v2.5 范围（§20）。
+3. **宿主接入只走公开 seam**：统一入口是 `ab` 命令行；会话靠各宿主全局规则文件里的一句指令、或主会话的派活说明知道要调用它，不靠给每个宿主装插件（§7.1）。回到多宿主不等于回到 v1 的机制（Git canonical、Stop hook 即 M0、四目录即 L2），见 §17。
+4. **全局与项目两级记忆是核心**（§5.3），项目清单以 pm 的 `repos/*.md` 为准（§6.1）。
+
+abrain 仍是架构母体。读它当规格时，它的复杂度有两个来源，必须分开处理：
 
 - **场景复杂度**：多平台（Windows 原生 ACL）、双仓 implementation authority、staged rollout、生产验收。以 ADR 0046 DCC 为例，其 status 行塞满 staged install 哈希、D0-D5 切片和跨 pi-astack/pi-router 的权威划分——这些在 agentbrain 的单用户单机边界下天然掉掉大半。
 - **纪律**：event-first、单一 canonical owner、确定性投影、authority 显式化、fail-closed、可逆终态。这些必须留下。
 
-**替代动机首先是所有权。** abrain 的有效性不是痛点——正因如此它才继续作为架构母体（§1）。驱动替代的是这套系统必须是自己的：能完整读懂、能独立演进、不受上游路线牵引。次要动机是复杂度：abrain 对单用户而言过重。
+**动机首先是所有权。** abrain 的有效性不是痛点，正因如此它才继续作为架构母体（§1）。驱动重写的是这套系统必须是自己的：能完整读懂、能独立演进、不受上游路线牵引。这条对 Pensieve 同样成立。次要动机是复杂度：abrain 对单用户而言过重；Pensieve 是文档式记忆，与 §15.5 记下的三个文档痛点同类。
 
 因此**"更好"是复合判据：所有权脱钩 + 复杂度可量化下降**，两条都要，不是二选一。复杂度下降必须来自**掉场景复杂度**而非**掉纪律**。口径与目标值见 §2.2。
 
-**2026-09-14 实测更正**：abrain 已从本机 Pi 卸载（`~/.pi/agent/settings.json` 的 `_comment_pi_astack` 自述 "Uninstalled from Pi"，`packages` 列表中无 pi-astack），本机现役子代理宿主是 `npm:pi-subagents`，不是 pi-astack 的 dispatch。用户自述 abrain 实际使用不多。替代前提本身保持，但替代**仪式**（运行期共存、灰度、回退、迁移盘点）的价值归零：§7.4/§19.12 按此关闭，#7 降为可选。
+替代**仪式**（运行期共存、灰度、回退、迁移盘点）对 abrain 的价值已归零：§7.4/§19.12 于 v2.4 关闭，#7 降为可选。对 Pensieve 的切换同样不做灰度：某个仓库的 Pensieve 职责由 agentbrain 接手后，停用该仓库的 Pensieve hook 与路由即为切换，`.pensieve/` 目录原地保留作只读归档（§12.3）。
 
 同时要诚实记账：v2 有一处是**真实增量而非简化**——abrain 至今没有 Physical Purge（其路线是内容寻址 + append-only + 可逆终态，ADR 0043 明确把"终态 cleanup 退化成物理删除"列为要规避的风险）。agentbrain 要提供受控物理清除，因此 §19.1 没有上游答案可抄，是原创设计门。
 
@@ -99,6 +106,8 @@ v2 因此不是增量补丁，而是以当前 abrain 的统一 proposition 模�
 基线的分母是诚实的：全栈 341 键中，dispatch(29)、compactionTuner(24)、toolCircuitBreaker(9)、thinkingRepeatBreaker(9) 等域 agentbrain 从不拥有，不计入。
 
 17 个双写门实测清单：`canonicalGitRuntime.mode`；`constraintEvidenceEventWriter.{mode, legacyFallbackOnEventFailure, legacyRuleWriteOnSuccessfulEvent}`；`tier2RulesLegacyWriteGate.mode`；`knowledgeEvidenceEventWriter.{mode, legacyFallbackOnEventFailure, legacyMarkdownWriteOnSuccessfulEvent}`；`knowledgeProjector.projectOnWrite`；`edgeProtocolShadow.{enabled, frozenContractAdapter.enabled}`；`executionOwner`；`daemonWorker.edgeShadowCaptureEnabled`；`forgetting.{demoteShadow, decayShadow, executorRealApplyEnabled}`；`autoLlmWriteEnabled` 三态。
+
+**v2.5**：替代对象改为 Pensieve 后，上表的 abrain 基线只作参照；≤35 / 0 改为与替代对象无关的绝对预算，宿主 adapter 的配置也计入。
 
 双写门归零是绿地的天然红利，不是成就：这 17 个门全部只因 abrain 必须在活着的系统上增量迁移而存在。**从零开始就不该有任何一个。**
 
@@ -143,7 +152,7 @@ v2 不原样复制 abrain 的八区目录，但不能笼统删除八区语义。
 - 显式 remember/correct/archive/reactivate/forget/purge；
 - 自动 sediment、Proposal 与自治校准；
 - Agent Loadout、Session Activation 和子代理委派；
-- Pi capture、读取、注入和工具面；
+- `ab` 命令行，三个宿主的接线（全局规则文件、派活说明）、会话身份判定与 transcript 读取（§7）；
 - 检索、评测、doctor 和故障可见性。
 
 ### 4.2 只保留 seam，不建设完整平台
@@ -238,6 +247,13 @@ Proposition 必须保留正交 facets：
 - `normative`：表达偏好、约束、义务、建议或工作原则；
 - `meta-lifecycle`：修正 proposition 的作用域、有效性或生命周期。
 
+**v2.5：全局与项目两级范围是核心，不是后续增量。** abrain 的出发点正是 Pensieve 只绑单项目、跨项目的偏好与知识无处安放（`docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md` §1.1 演进史）；agentbrain 若只做项目级，替换 Pensieve 等于复刻它的局限。切片 1 的代码只有项目级（`project_id` 必填），切片 1.5 补齐。切片 1.5 实现的最小形态：
+
+- **范围（spatial scope）**：`global` 或 `project:<id>`。abrain 的 domain/session/task 级范围保留在 facet 定义中，出现真实需求再实现。
+- **可读种类**：规则（normative，Maxim/Preference 视图）、决定（Decision）、坑（带 trigger 的 normative，§5.4）、事实（Knowledge Claim）。切片 1 已有后三种（`decision`/`pitfall`/`note`），补 `rule`。Pensieve pipelines 对应的流程类（Procedure，带 trigger）在切片 2.5 加。
+- **范围与种类正交**：规则可以是全局的（"实现交给 Codex"），也可以只属于一个项目（"insuranceagent 基于商业授权，禁止再发行"）。规则不是独立存储，延续 ADR 0040。
+- **给谁看（consumer hints）**：默认全局记忆只进主会话，项目记忆进在该项目里工作的任何会话；个别全局规则可标"子代理也要看"（如代码风格），见 §11.1。
+
 ### 5.4 用户可理解的 L2 读取语言
 
 以下四种用户可理解的名称必须保留，并且只能从 unified proposition/L2 派生或选择，不能成为四个 canonical truth source：
@@ -270,15 +286,24 @@ Proposition 必须保留正交 facets：
 
 v2 区分：
 
-- **Human**：本地记忆服务的人；
+- **Human**：本地记忆服务的人；Human 范围的记忆即 v2.5 的"全局记忆"（§5.3）；
 - **Agent Definition**：稳定角色，如主开发、审查、研究；
 - **Agent Execution**：某次具体运行；
 - **Project**：稳定工程/知识工作边界；
 - **Repository**：Project 关联的代码库身份，不必一一对应；
-- **Session**：一次 Pi 会话；
+- **Session**：一次宿主会话（Pi、Claude Code 或 Codex）；
 - **Work Unit**：一次任务或委派边界，不实现通用 Task 平台。
 
-Project identity 只认稳定 project ID 与显式本机 binding/registry 关系；`cwd`、目录名或 Git remote 只能作为发现候选，不能自行授予项目身份或记忆资格。同一 Project 的多个 checkout 必须可区分本机执行根。具体 binding 形态由 §19.5 冻结。
+Project identity 只认稳定 project ID 与显式本机 binding/registry 关系；`cwd`、目录名或 Git remote 只能作为发现候选，不能自行授予项目身份或记忆资格。同一 Project 的多个 checkout 必须可区分本机执行根。
+
+**v2.5 冻结 registry 形态：项目清单就是 pm 的 `repos/*.md`。** 这是人手维护的显式清单，满足上一条"只认显式 registry"：
+
+- 档案文件名（去掉 `.md`）是项目名；档案里的"路径"行是该项目的主执行根。`README.md` 不是项目。
+- `ab` 拿当前目录查清单：先用 git 找到当前目录所属仓库的主工作树（worktree 归回主仓库），再与清单中的路径比对。对不上就是"未登记目录"，只给全局记忆，不给任何项目记忆，也不允许写项目记忆。
+- store 内部仍以不透明 project ID 为身份、项目名只是 registry 键；档案改名或路径变化时，`ab status` 报告清单与 store 不一致，由 Human 处理，不自动猜测对应关系。
+- 切片 1 的 `/ab bind` 与 `bindings` 表随之删除，不保留兼容路径。
+
+这把 pm 的档案格式变成了 agentbrain 的输入接口。若日后 agentbrain 接管 pm 的档案职责（§2.1、§20），清单随之迁入 `ab`，届时再改。
 
 ### 6.2 六个必须分开的概念
 
@@ -293,7 +318,7 @@ Loadout 不授予权限；scope 不等于 ACL；语义相似不能绕过 capabil
 
 ### 6.3 子代理委派
 
-Pi 没有公共 subagent/delegation 身份，因此 agentbrain 自己定义 delegation contract。父 Agent 不把全部 Loadout 隐式传给子代理，而是为 Work Unit 建立：
+Pi 没有公共 subagent/delegation 身份；Claude Code 与 Codex 有子代理 hook（本机 Codex `hooks.json` 已登记 `SubagentStart`/`SubagentStop`），但能否从中拿到可信委派身份未验证（§19.5）。因此 agentbrain 自己定义 delegation contract。父 Agent 不把全部 Loadout 隐式传给子代理，而是为 Work Unit 建立：
 
 - delegated memory slice；或
 - 有明确范围、预算和有效期的 retrieval capability。
@@ -338,7 +363,7 @@ agentbrain 不拥有执行面（§6.4），因此血缘**在合同上是一等�
 
 ### 6.4 执行面边界：只留接缝（LOCKED）
 
-**agentbrain 只拥有记忆面。子代理如何创建、调度、传参、超时、回收，全部归 Pi 与 dispatch 所有。**
+**agentbrain 只拥有记忆面。子代理如何创建、调度、传参、超时、回收，全部归宿主所有**（Pi 的 pi-subagents、Claude Code 的 Agent 工具、Codex 的子代理）。以下实测均针对 Pi，Claude Code 与 Codex 的对应事实在切片 4 前补齐。
 
 实测依据表明这个边界比预期便宜：
 
@@ -361,8 +386,8 @@ agentbrain 不拥有执行面（§6.4），因此血缘**在合同上是一等�
 | 所有者 | 决策职责 |
 |---|---|
 | Kernel | 校验父 execution 的已有能力，签发/撤销 Grant；每次读取、来源展开和写入检查范围与生命周期 |
-| Pi adapter | 从可信宿主接缝绑定 execution，传递调用者上下文；模型参数不能覆盖调用者身份 |
-| Pi/dispatch | 创建与结束子 execution，在首次工具调用前传入父子关系、Work Unit 和 Grant；不负责决定记忆授权 |
+| 宿主 adapter | 从可信宿主接缝绑定 execution，传递调用者上下文；模型参数不能覆盖调用者身份 |
+| 宿主子代理机制 | 创建与结束子 execution，在首次工具调用前传入父子关系、Work Unit 和 Grant；不负责决定记忆授权 |
 
 Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/记忆切片、操作集、预算、有效期和撤销状态。子权限取父权限与请求范围的交集；Loadout/Activation 只能进一步收窄。默认允许限定范围的 search/get/source expansion 与 Observation/Proposal 提交，不允许 accepted mutation、扩大授权、再次委派或 Purge。
 
@@ -376,46 +401,61 @@ Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/
 
 ---
 
-## 7. 宿主边界：Pi-only，但领域不属于 Pi
+## 7. 宿主边界：三宿主平等，领域不属于任何宿主
 
-### 7.1 Pi adapter 可依赖的公开 seam
+### 7.1 统一入口、接线与会话身份（LOCKED，v2.5）
 
-基于 `earendil-works/pi@5cd93f6`：
+**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`search`、`get`、`archive`、`status`。不再有 `bind`，项目身份见 §6.1。理由：
 
-- `session_start`：恢复、稳定 Brief；
-- `before_agent_start`：逐轮 Memory Card/marker 注入；
-- `agent_end`：快速 durable capture；
-- `session_shutdown`：幂等关闭 session 资源；
-- session v3 JSONL 与 `SessionManager`；
-- branch/compaction 语义；
-- `registerTool` / `registerCommand`；
-- `ctx.modelRegistry` / `ModelRuntime`；
-- AGENTS.md / CLAUDE.md / SYSTEM.md / APPEND_SYSTEM.md。
+- 三个宿主都能执行 shell，CLI 不需要任何协议依赖；
+- Pi 的 MCP 要经过适配器，以 MCP 为唯一入口会让 Pi 多一层；
+- CLI 天然满足 §14.3 "所有 hook/自动化动作必须有可手动触发的等价操作"。
+
+MCP 是 CANDIDATE：只有当 shell 传参（中文、引号、多行）在 dogfood 中成为实际问题时才加，且只包同一核心，不新增能力。
+
+**接线：会话靠一句指令知道要调用 `ab`，不靠安装。** 三种会话分别由三处指令覆盖：
+
+| 会话 | 指令在哪 | 依据 |
+|---|---|---|
+| 用户直接打开的会话（在 pm 或任一仓库，任一宿主） | 三个宿主的全局规则文件各加一句"开工先跑 `ab brief`"：`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md` | 2026-10-09 实测：Codex 与 Pi 在 pm 中开会话都加载了各自的全局规则文件 |
+| pm 里的主会话 | 同上；另外 pm 须有 `AGENTS.md`，否则 Codex 读不到 pm 的规则 | 2026-10-09 实测：Codex 在 pm 中只加载了全局 AGENTS.md，未加载 pm 的 CLAUDE.md；Pi 两者都加载 |
+| 被派活的子代理 | 主会话写进派活说明："先在仓库里跑 `ab brief --worker`"，并附上主会话挑选的全局要点 | pi-subagents 的子代理默认**不**加载全局规则文件（其 `docs/agents.md` 写明 global context 默认排除，源码默认值 `inheritGlobalContext ?? false`）；`codex exec` 会加载全局 AGENTS.md（实测；经 codex-rescue 派出的 Codex 未单独测）；Claude Code 子代理未测。派活说明对三家都成立 |
+
+hook 与 skill 降为后备：只有 dogfood 中发现模型漏跑 `ab brief` 时，才给对应宿主加会话开始 hook。不给 pi-subagents 打开 `inheritGlobalContext`，因为那会把整份全局规则交给子代理，与"全局要点由主会话挑选转述"相反。切片 1 的 Pi 扩展删除，Pi 与另外两家走同一条路。
+
+**会话身份：三家都能从 shell 环境取得，且都能对上 transcript（2026-10-09 实测）。**
+
+| | Claude Code | Codex | Pi |
+|---|---|---|---|
+| shell 环境变量 | `CLAUDE_CODE_SESSION_ID` | `CODEX_THREAD_ID`（与 `CODEX_SESSION_ID` 同值） | `PI_SESSION_ID` |
+| transcript 位置 | `~/.claude/projects/<slug>/<id>.jsonl`，文件名即 id | `~/.codex/sessions/YYYY/MM/DD/rollout-<时间>-<id>.jsonl`，文件名末尾即 id，首行 `session_meta.id` 同值 | `~/.pi/agent/sessions/<cwd 编码>/<时间>_<id>.jsonl`，首行 `session.id` 同值 |
+| 定位点 | 每条消息 `uuid` / `parentUuid` 链 | 每行 `ordinal` | 每条 entry `id` / `parentId` 链（`source.ts` 已实现） |
+| 工具调用前事件（切片 2 之后可选） | `PreToolUse` | `PreToolUse` | `tool_call` |
+
+**宿主判定不能只看环境变量。** 环境变量会被嵌套启动的下一层宿主继承：实测从 Claude Code 里启动 Pi，Pi 的 shell 里同时有 `CLAUDE_CODE_SESSION_ID` 与 `PI_SESSION_ID`。因此 `ab` 沿父进程链向上，找离自己最近的宿主进程，以它决定 host，再取该宿主的变量。会话身份只用于定位来源，不授予 capability（§13.1）。
 
 ### 7.2 只能留在 adapter 的内容
 
-- Pi event payload；
-- session JSONL 路径和格式；
-- compaction entry；
-- pi-astack `isSubAgentSession` WeakSet；
-- pi-astack causal anchor；
-- `createAgentSession()` 签名；
-- jiti `moduleCache:false` 的共享状态技巧；
-- Pi prompt marker 和 UI 文案。
+- 各宿主的 event payload、hook 输入格式和环境变量名；
+- 各宿主 transcript 的路径、格式和定位点形态（Pi entry id、Claude Code 消息 id、Codex `ordinal`）；
+- Pi 的 compaction entry、`createAgentSession()` 签名、jiti `moduleCache:false` 共享状态技巧；
+- pi-astack `isSubAgentSession` WeakSet 与 causal anchor；
+- 各宿主的 prompt marker 和 UI 文案。
 
-agentbrain domain 接收规范化的 Source、Execution、Work Unit 和 Capability，不持久化 Pi 私有类型作为 canonical 领域对象。
+agentbrain domain 接收规范化的 Source、Execution、Work Unit 和 Capability，不持久化任何宿主私有类型作为 canonical 领域对象。Source Pointer 的规范形态是 host + session id + transcript 路径 + 定位点 + 一句摘要。
 
 ### 7.3 进程拓扑
 
 LOCKED：
 
-- Pi 主交互路径不等待模型抽取；
+- 宿主主交互路径不等待模型抽取；
 - adapter 只做轻量 capture、查询和呈现；
-- canonical mutation 只有一个逻辑 Writer；
+- **多个进程会同时打开同一 store**：三个宿主里同时进行的多个会话，各自执行短命的 `ab`。canonical mutation 仍只有一个逻辑 Writer，由 SQLite 事务串行化实现；写入等待有界（代码常量），超时显式失败，不静默丢写（v2.5）；
+- **任何进程读到的投影都必须包含其他进程已提交的写入**：进程内投影缓存和 L3 索引必须以 L1 水位（最大 seq）校验，不能只在本进程写入时失效（v2.5；切片 1 的 `Store` 违反此条，见 §18 切片 1.5）；
 - 已接收 intake 必须可恢复；
-- 优化失败不阻止 Pi 对话继续。
+- 优化失败不阻止宿主对话继续。
 
-GATE：daemon、短命 worker、Pi 进程内 worker、RPC 子进程或混合形态由 Pi prototype 决定，见 §19。
+GATE：后台 worker 形态，见 §19.3（v2.5 重开）。
 
 ### 7.4 与 abrain 现役实现的运行期共存与切换（**已关闭**，2026-09-14）
 
@@ -455,7 +495,7 @@ GATE：daemon、短命 worker、Pi 进程内 worker、RPC 子进程或混合形�
 ### 8.1 总体流水线
 
 ```text
-Pi lifecycle
+宿主会话结束（触发形态见 §19.3）
   → adapter 去除自身注入和 harness 噪声
   → 持久化前 secret/PII/path sanitizer
   → Durable Intake
@@ -657,7 +697,7 @@ v2 不建设通用去自回声平台，但晋升必须保留并检查来源血�
 
 一次性会话（无持久 session 记录）的证据**记录并标记，不丢弃，默认不投影为结论**。
 
-可检测性依据：`ReadonlySessionManager.getSessionFile()` 是 Pi 的公开 API，返回 `string | undefined`；`SessionManager.inMemory()` 构造出的会话该值为 undefined。因此"无持久 session 文件"是**公开可见的代理信号**。
+可检测性依据：ephemeral 信号由各宿主 adapter 提供（§7.1）。Pi：`ReadonlySessionManager.getSessionFile()` 是公开 API，返回 `string | undefined`；`SessionManager.inMemory()` 构造出的会话该值为 undefined，因此"无持久 session 文件"是**公开可见的代理信号**。Claude Code 与 Codex 的对应信号未验证，切片 4 前关闭（§19.5）；拿不到信号的宿主按非 ephemeral 处理并在 doctor 中标明信号缺失。
 
 但它只是代理信号，不是身份：**agentbrain 能观测到一个 Session 是 ephemeral，无法判断为什么**——被委派的子代理执行与用户刻意不留记录的主会话在它看来完全相同。因此不能据此推断"这是子代理"。
 
@@ -691,7 +731,7 @@ Purge 至少覆盖：
 - Durable Work Store 中的相关正文；
 - agentbrain 管理的临时文件和可访问本地副本。
 
-只留下不含原文、秘密、可逆摘要或不必要敏感元数据的最小状态。对远端 Git 历史、外部 clone、第三方备份和 Pi transcript 只报告 best-effort，不承诺全球可验证擦除。
+只留下不含原文、秘密、可逆摘要或不必要敏感元数据的最小状态。对远端 Git 历史、外部 clone、第三方备份和宿主 transcript 只报告 best-effort，不承诺全球可验证擦除。
 
 Purge 只能由可信 Human/operator 的显式控制路径发起；普通 transcript、记忆正文、模型输出、Agent Proposal 和外部 Skill 指令都不能触发。执行前显示将覆盖的受控存储边界，执行后逐面报告 success/partial/failure。子代理永远没有 Purge capability。
 
@@ -725,7 +765,7 @@ Purge 只能由可信 Human/operator 的显式控制路径发起；普通 transc
 1. **先禁止服务和发布**：在同一 authority frame 固定范围声明、直接成员枚举和传递依赖闭包，并持久化 Purge 意图。该切点之后相关结论、来源展开、缓存和待发布结果立即失去服务资格；并发 writer、后台任务和恢复重试必须重验，不能继续发布旧结果。范围内迟到 intake 或导入重放必须被既有 Purge 记录识别和拒绝，不能绕过当时的枚举。
 2. **清除受控正文**：删除直接记录正文，以及依赖它生成的 L1 摘录/模型结果、L2/L3、Durable Work Store 结果、临时文件和受控副本中的相关正文。派生记录可能同时带有其他证据；无法安全拆分时整份派生产物清除，不保留混合正文。仅保留最小无敏感内容的 lineage/tombstone。
 3. **独立来源可以保留，旧结论不得直接保留**：例如 B 同时依赖 A 和独立来源 C，旧 B 整体失效；原本独立的 C 可保留。只允许从 C 重新生成候选并重新执行关系、准入及发布检查，记录新 revision/derivation，不复用旧 B 正文和准入结果，也不自动 reactivate 被清除版本。
-4. **完成是逐面确认**：失效和物理清除分别记录。任何受控面未清干净都报告 partial/failure，且相关结果持续不可读；崩溃重启从 Purge journal 继续。外部 Pi transcript、第三方备份和只读 abrain 源归档按 §10.2 报告外部残留，不能宣称全球擦除。
+4. **完成是逐面确认**：失效和物理清除分别记录。任何受控面未清干净都报告 partial/failure，且相关结果持续不可读；崩溃重启从 Purge journal 继续。外部宿主 transcript、第三方备份和只读 abrain/Pensieve 源归档按 §10.2 报告外部残留，不能宣称全球擦除。
 
 所有可发布派生物必须有完整来源依赖。无法确定闭包时先阻断可能受影响的读取/发布面并报告 failure，不能猜测删除成功。物理 identity、依赖索引的权威来源、清除顺序、缓存失效屏障和迟到写入拦截由 §19.1/§19.2 的 P1 一起证明。
 
@@ -763,7 +803,17 @@ v2 保留的**唯一** usage 相关机制是 §9.4 的 Corroboration Count，它
 
 硬性 Decision/Maxim/Constraint 不能只依赖向量相似度偶然召回。
 
-**坑的主动投递（v2.4）**：Session Brief 只放本项目的坑与 always-show 决定，预算为代码常量（切片 1 定为约 1,500 字符）；超预算时只放最近的坑并提示用 search。切片 2 增加以用户 prompt 为 query 的每轮召回；更精准的"Agent 准备执行某命令前查该命令的坑"走 Pi 的 `tool_call` 事件，列为切片 2 之后的可选项。
+**开工时各会话拿到什么（v2.5）**：
+
+| 会话 | `ab brief` 给的内容 | 能写什么 |
+|---|---|---|
+| pm 里的主会话 | 全局规则 + 各项目概况（每个项目几条坑、最近的变化）；要动某个项目时再 `ab brief <项目>` | 全局与任意已登记项目 |
+| 直接在某仓库打开的会话 | 全局规则 + 该项目的坑与 always-show 决定 | 全局与该项目 |
+| 被派活的子代理（`ab brief --worker`） | 该项目的坑与 always-show 决定 + 标了"子代理也要看"的全局规则；其余全局要点由主会话写进派活说明 | 不写；新坑写进汇报，由主会话决定是否 `remember`（§6.3） |
+
+`ab` 目前分辨不出子代理（§19.5），所以 `--worker` 由派活说明给出；"子代理只读"在切片 1.5 同样靠派活说明约定，切片 4 再做强制。
+
+**坑的主动投递（v2.4）**：Session Brief 只放本项目的坑与 always-show 决定，预算为代码常量（切片 1 定为约 1,500 字符）；超预算时只放最近的坑并提示用 search。切片 2 增加以用户 prompt 为 query 的每轮召回；更精准的"Agent 准备执行某命令前查该命令的坑"走宿主的工具调用前事件（§7.1 表），列为切片 2 之后的可选项。
 
 ### 11.2 检索职责顺序
 
@@ -803,7 +853,7 @@ Eligibility 至少包含：
 - composite-view 标记；
 - degraded/stale/partial/low-confidence 状态。
 
-Pi adapter 决定它被渲染成 marker block、工具结果、摘要还是按需读取入口。
+宿主 adapter 决定它被渲染成 marker block、工具结果、摘要还是按需读取入口；`ab` 的命令行输出是三个宿主共用的默认渲染。
 
 ### 11.4 算法候选，不是已拍板实现
 
@@ -841,7 +891,8 @@ v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同�
 - L1 与 Durable Work Store：同一 SQLite 文件 `store.db`，不同表；L1 表 append-only；
 - L3：独立 SQLite 文件 `index.db`（FTS5 trigram，中文可用），删除即重建；
 - event ID：不透明随机 ID + 自增序号定序；body hash 单独列，随 purge 一起删；不保留 JCS（无跨设备幂等需求）；
-- L2：L1 上的纯函数投影，不落盘；需要人读时再导出 Markdown。
+- L2：L1 上的纯函数投影，不落盘；需要人读时再导出 Markdown；
+- 多进程访问（v2.5）：store.db 与 index.db 会被多个宿主进程和短命 `ab` 进程同时打开；WAL + 有界 busy 等待；index.db 的重建以 L1 水位为准（§7.3）。
 
 仍未冻结：backup/export bundle；schema/projector migration runner（出现第一次 schema 变更时再定）。
 
@@ -874,7 +925,9 @@ v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同�
 
 理由与 §10.2 的"声明是意图、枚举是回执"同源：不记 manifest，则一次 schema 迁移或一次 purge 之后就要重新人工挑一遍，而"当时为什么留这条"三个月后已不可复原。挑选时顺手记接近零成本，事后重建不可能。
 
-导入的 proposition 以 `imported` 落地并保留"来自 abrain"的来源标识（L1 已有 `imports` 事件类型）。必须承认的代价：**人工挑选没有完备性保证**，因此 abrain 现役 store 必须作为只读归档长期保留（§12.3），它是唯一能补挑的来源。
+**v2.5**：首个实际导入源是 pm 等仓库的 `.pensieve/`（maxims、decisions、knowledge、pipelines），口径不变，同样人工挑选并落 manifest；导入后 `.pensieve/` 原地保留作只读归档，不删除。
+
+导入的 proposition 以 `imported` 落地并保留"来自 abrain"或"来自 Pensieve"的来源标识（L1 已有 `imports` 事件类型）。必须承认的代价：**人工挑选没有完备性保证**，因此 abrain 现役 store 必须作为只读归档长期保留（§12.3），它是唯一能补挑的来源。
 
 **对 [#7](https://github.com/josheee1117/agentbrain/issues/7) 的直接影响**：本口径下 #7 不再需要 schema 完整盘点，只需要一份**可浏览清单供 Human 自行挑选**。代理侧需要接触的个人内容面因此显著收窄，隐私 gate 基本退出关键路径。#7 的隐私纪律（§12.3）不变，但其工作量与授权面按本条重估。
 
@@ -899,14 +952,15 @@ v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同�
 
 不可信数据：
 
-- Pi transcript；
+- 宿主 transcript；
+- 宿主 hook 输入与环境变量（只能用于定位来源，不能授予 capability）；
 - 工具输出；
 - 模型产物；
 - 导入资产；
 - 记忆正文；
 - 外部 Skill/Workflow 引用。
 
-Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是 Agent”就自动拥有全部记忆。
+Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因为“是 Agent”就自动拥有全部记忆。
 
 不在 v2 防御范围：已经控制本机 OS/文件系统的恶意进程、恶意管理员、不可信多租户。
 
@@ -925,7 +979,7 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 ### 13.3 数据最小化
 
 - 不默认归档完整 transcript；
-- **来源默认是指针不是摘录（v2.4）**：Source Observation 记录 Pi session 文件路径 + 当时的 leaf entry id + 一句摘要；"还原当时怎么讨论出来的"靠按需读取 transcript 的该位置及其祖先链，agentbrain 自身不存对话原文；transcript 不存在时来源展开显式报告不可用（§15.3）；
+- **来源默认是指针不是摘录（v2.4，v2.5 泛化到三宿主）**：Source Observation 记录 host + session id + transcript 路径 + 当时的定位点（Pi leaf entry id、Claude Code 消息 id、Codex `ordinal`）+ 一句摘要；"还原当时怎么讨论出来的"靠按需读取 transcript 的该位置及其祖先链，agentbrain 自身不存对话原文；transcript 不存在时来源展开显式报告不可用（§15.3）；
 - 明确摘录不是完整上下文；
 - rejected/expired Proposal、临时来源和模型 I/O 采用有限保留策略；
 - prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文。
@@ -982,7 +1036,8 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 - 最近 capture、projection 和 retrieval degradation；
 - **共存态**：本机当前有几套记忆系统在消费 `agent_end`、在注入 prompt、在持有 authority（§7.4；共存期最危险的状态是静默双活）；
 - **Unreconciled 积压**：当前有多少条 proposition 处于 Unreconciled 状态（§9.4.4）。因为 INV-INVISIBILITY 禁止把它们做成常驻待办列表，doctor 是唯一的可见性入口——否则积压完全不可见；
-- **Ephemeral 证据量**：有多少证据来自 Ephemeral Session 因而默认不投影（§9.5）。
+- **Ephemeral 证据量**：有多少证据来自 Ephemeral Session 因而默认不投影（§9.5）；
+- **宿主接线（v2.5）**：三个全局规则文件里"开工先跑 `ab brief`"那一句是否在位；pm 是否有 `AGENTS.md`；当前调用来自哪个宿主、会话身份是否取得；repos 清单中路径不存在或与 store 对不上的项目；同一仓库是否仍有 Pensieve 与 agentbrain 同时生效（静默双注入）。
 
 所有 hook/自动化动作必须有可诊断、可手动触发的等价操作，但具体 CLI/API 名称仍由运行接口 ticket 决定。
 
@@ -1040,10 +1095,16 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 
 隔离泄漏不是普通平均分；定义为禁止读取的内容出现一次即是失败案例。
 
-### 15.3 Pi E2E
+### 15.3 宿主 E2E
+
+下列各项在 Pi、Claude Code、Codex 上**各跑一遍**；某项依赖的宿主信号不存在时，记为该宿主的显式降级，不算通过（v2.5）。切片 1.5 的最小集是：在已登记仓库中 remember → 新会话看到 Brief → search → get 展开来源。另加四条用例：
+  - 跨宿主：在 A 宿主记下的坑，出现在 B 宿主新会话的 Brief 中；
+  - 全局：在仓库甲记下的全局规则，出现在仓库乙的 Brief 中；在未登记目录只出现全局记忆；
+  - 子代理：主会话派活后，子代理在目标仓库执行 `ab brief --worker`，拿到该项目的坑，且拿不到未标"子代理也要看"的全局规则；
+  - 嵌套：从宿主 A 里启动宿主 B 时，B 中记下的来源指向 B 的 transcript，而不是 A 的。
 
 - session capture；
-- branch/compaction 重建；
+- branch/compaction 重建（Pi）；
 - duplicate lifecycle 幂等；
 - remember/correct/archive/reactivate/forget/purge；
 - Context Brief 和 Memory Cards；
@@ -1057,17 +1118,31 @@ Capability-limited actors：Pi 主 Agent 和子代理。它们不会因为“是
 
 Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试。没有可复现证据的“更智能”不算设计改进。
 
-### 15.5 替代成功判据
+### 15.5 成功判据
 
-§15.1-15.4 只测**正确性**。在 §2.1 的替代前提下，全部通过也回答不了唯一真正重要的问题：**它是不是比 abrain 现役实现更好。** 因此增加三条独立判据，任何一条不满足都不构成替代成功：
+§15.1-15.4 只测**正确性**，全部通过也回答不了唯一真正重要的问题：**它是不是比原来好。** 因此增加三条独立判据，任何一条不满足都不构成成功。v2.5 起"原来"指用户现在实际在用的记忆方式，首先是 Pensieve。
 
-1. **场景覆盖不回退**：**清单已由用户于 2026-09-12 给出（#15 输入）**，四个真实场景按优先级：①踩过的坑不再踩；②还原一个决策当时是怎么讨论出来的（要过程不只要结果）；③快速定位记忆；④跟子代理的配合。用户在其他项目用文档记录的三个痛点，是这四个场景的反面：不会及时更新、上下文太多浪费 token、丢失讨论过程只剩结果。abrain 在本机已卸载且实际使用不多，因此"不回退"的比较对象是这四个场景本身，不是 abrain 功能面。
+1. **场景覆盖不回退**（v2.5：四个场景在三个宿主中任一作为主体时都要成立）：**清单已由用户于 2026-09-12 给出（#15 输入）**，四个真实场景按优先级：①踩过的坑不再踩；②还原一个决策当时是怎么讨论出来的（要过程不只要结果）；③快速定位记忆；④跟子代理的配合。用户在其他项目用文档记录的三个痛点，是这四个场景的反面：不会及时更新、上下文太多浪费 token、丢失讨论过程只剩结果。abrain 在本机已卸载且实际使用不多，因此"不回退"的比较对象是这四个场景本身，不是 abrain 功能面。
 2. **复杂度可量化下降 + 所有权脱钩**（复合判据，两条都要）：
    - 复杂度按 §2.2 冻结的口径衡量：**配置键 162 → ≤35，迁移期双写门 17 → 0**。行数不作判据。下降必须来自掉场景复杂度而非掉纪律。
    - 脱钩指全部代码为 clean-room 自写（§12.5），且不存在需要跟随 `upstream/main` 合并才能维持正确性的部分。
 3. **领域不变量有测试**：§15.1 的每条不变量都有对应测试，而不是只写在文档里。abrain 的教训是配置和注释都会说谎（本机 `_comment` 写 "remain disabled" 而值为 `true` 的情况反复出现），因此不变量的权威只能是测试。
 
-这三条属于 [#15](https://github.com/josheee1117/agentbrain/issues/15) 的验收门内容，与 §18 M6 的 release gate 绑定。
+这三条属于 [#15](https://github.com/josheee1117/agentbrain/issues/15) 的验收门内容。
+
+**Pensieve 替代对照清单（v2.5，切片 2.5 的验收）**。一个仓库可以停用 Pensieve，当且仅当下表每一行在 agentbrain 中都有对应且经过 dogfood：
+
+| Pensieve | agentbrain 对应 | 所在切片 |
+|---|---|---|
+| `maxims/` 工程准则 | Maxim 视图（normative，无 trigger） | 2.5 |
+| `decisions/` 架构决策 | Decision 视图（已有 `decision`） | 1 |
+| `knowledge/` 文件位置、模块边界、调用链 | Knowledge Claim 视图（已有 `note`） | 1 |
+| `pipelines/` 按触发词执行的流程 | Procedure 视图，带 trigger，经每轮召回送达 | 2 + 2.5 |
+| `short-term/` 暂存与到期 refine | 不单独对应：显式 remember 直接生效；需要暂存的模型推断走切片 3 的 Proposal（§8.3），不另建暂存区 | — |
+| self-improve | `ab remember`（显式）；自动沉淀在切片 3 | 1 / 3 |
+| refine（triage、compress） | correct / supersede / archive | 2 |
+| doctor | `ab status` / doctor（§14.3） | 1.5 |
+| sync-instructions（把路由写进 CLAUDE.md/AGENTS.md） | Brief 注入与 Procedure trigger，不改写仓库指令文件 | 2 + 2.5 |
 
 ---
 
@@ -1078,8 +1153,8 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | abrain 问题或缺口 | TencentDB 证据 | v2 结论 |
 |---|---|---|
 | 不同 Agent 不应默认共享整脑 | FixedAssetBinding、injection mode、priority | **改造吸收**为 Loadout/Activation seam；不把绑定当授权 |
-| Capture 与 consolidation 需要解耦 | 每 turn L0 capture + scheduler | **改造吸收**：Pi 轻量 capture，批量 semantic processing |
-| Harness/自身注入污染来源 | user-query extractor、originalUserMessageCount | **直接吸收纪律**到 Pi adapter |
+| Capture 与 consolidation 需要解耦 | 每 turn L0 capture + scheduler | **改造吸收**：宿主 adapter 轻量 capture，批量 semantic processing |
+| Harness/自身注入污染来源 | user-query extractor、originalUserMessageCount | **直接吸收纪律**到各宿主 adapter |
 | 模型生成 provenance 不足 | generation input/output refs、prompt/model/hash | **改造吸收**为 canonical L1 producer metadata，不做 best-effort 旁路真值 |
 | 降级与部分成功不可见 | structured error/partial result | **直接吸收**到 Memory Card/diagnostics |
 | 上下文注入成本高 | Persona push、Scene navigation、L0/L1 tool pull | **吸收思想**，用 abrain Policy/Brief + Cards + source expansion 表达 |
@@ -1090,7 +1165,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | 多轨 authority | JSONL/SQLite/TCVDB/COS/Markdown | **反例**；坚持单一 canonical owner |
 | Conversation→Atom→Scenario→Persona | 内容抽象层 | **不作为权威层吸收**；Scenario/Profile 只做组合视图 |
 | Memory Hub/Panel/团队 ACL | 完整团队服务 | **v2 延后** |
-| Proxy wire 逆向识别 | Claude/Codex/dsh adapter | **不作为 Pi-only v2 主路径** |
+| Proxy wire 逆向识别 | Claude/Codex/dsh adapter | **不吸收**：v2.5 起三个宿主经全局规则文件、派活说明与 `ab` 命令行接入，不做 wire 逆向 |
 | README benchmark/E2E | 当前分支不可复现 | **不作为量化设计证据** |
 
 所有引用必须继续区分：已发布实现、feature branch、roadmap、opaque private extension 和不可复现宣称。
@@ -1101,33 +1176,35 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 
 | v1.2 决策 | v2 状态 |
 |---|---|
-| Claude Code / Codex 双首发宿主 | 被 Pi-only 取代 |
+| Claude Code / Codex 双首发宿主 | 被 Pi-only 取代；**v2.5 改为 Pi、Claude Code、Codex 三宿主平等**（§2.1、§7） |
 | `~/.agentbrain/` Git repo 是 canonical 运行前提 | 被 local canonical owner + sync-neutral 取代 |
-| Codex rollout / Claude Stop hook 为 M0 | 被 Pi lifecycle/worker prototype 取代 |
-| `claude -p` / `codex exec` 为主要 sediment 算力 | 被 Pi ModelRuntime 候选 seam 取代，拓扑待原型 |
+| Codex rollout / Claude Stop hook 为 M0 | 被 Pi lifecycle/worker prototype 取代；v2.5 起 Stop hook 重新成为切片 3 capture 触发的候选，但不再是 M0 |
+| `claude -p` / `codex exec` 为主要 sediment 算力 | 被 Pi ModelRuntime 候选 seam 取代；v2.5 起 Pi ModelRuntime 不再通用，三者同列 §19.3 候选 |
 | L1 event ID 必然等于 body hash | 降为 GATE，需与 Physical Purge 一起裁决 |
 | `.state/index.sqlite` 同时承载 jobs/queue | 拆成 L3 rebuildable index 与 Durable Work Store |
 | 四目录即 L2 本体 | 被 unified proposition + readable views 取代 |
 | Tier0→Tier1→Tier2 是最终检索实现 | 降为 prototype 候选矩阵 |
 | Git auto-push 属 M4 | 移出 v2 核心 |
-| dsh/Claude/Codex adapter seam 在首发里程碑 | 移出 v2 范围 |
+| dsh/Claude/Codex adapter seam 在首发里程碑 | 移出 v2 范围；v2.5 起 Claude/Codex adapter 回到范围（切片 1.5），dsh 仍在范围外 |
 
 继续保留：结构性 capture、单 writer、L1→L2→L3、确定性 projector、分层读取、settings 驱动、手动等价操作和显式降级。
 
-上表读起来像一次没有理由的方向替换，理由在 §2.1：v2 的目标是在 Pi 上**取代** abrain 现役实现。Pi-only 因此不是宿主收窄，而是替代前提——只有落在同一个宿主上，替代才可能发生。
+上表读起来像一次没有理由的方向替换，v2.0 到 v2.4 的理由是：目标是在 Pi 上**取代** abrain 现役实现，只有落在同一个宿主上，替代才可能发生。v2.5 撤销了这一前提（§2.1），回到多宿主；但回到的只是"宿主"这一项，表中其他被替代的 v1 机制（Git canonical、四目录即 L2、三级检索栈即实现）维持被替代。
 
 ---
 
-## 18. 里程碑：按场景切片（v2.4 重排）
+## 18. 里程碑：按场景切片（v2.4 重排，v2.5 插入 1.5 与 2.5）
 
-以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。
+以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。v2.5 插入两个切片而不重新编号，以保持正文中"切片 3""切片 4 之后"等引用不变。
 
 | 切片 | 内容 | 覆盖场景 / 痛点 | 关掉的 gate |
 |---|---|---|---|
-| **1**（已授权 2026-09-14） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.3、§19.8 物理布局用代码验证 |
-| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）；correct/supersede/reactivate；Memory Card 冲突暴露 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
-| 3 | `agent_end` durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.6 单层部分 |
-| 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search | 场景④ | §19.5 最小形态 |
+| **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
+| **1.5**（v2.5，待授权） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
+| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
+| **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
+| 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
+| 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
 | 之后 | 检索 prototype（仅当 FTS 不够时）；Corroboration；三层链第 2、3 层；Delegation Grant；Purge 传递闭包；backup/export | — | §19.6/§19.7 其余 |
 
 原 P1 的 L1/Purge 状态机不再是 throwaway：它就是切片 1 的 `store.ts` 及其测试。原 T0 三项：#15 已由用户口述关闭；#7 降为可选（真有值得搬的记忆手动录入）；§7.4 已关闭。
@@ -1175,13 +1252,20 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 - purge journal；
 - 不产生第二语义真相源。
 
-### 19.3 Pi Worker 拓扑（已裁决：进程内后台任务）
+### 19.3 后台 Worker 拓扑（**v2.5 重开**；切片 3 前关闭）
 
-> **v2.4 裁决**：Pi 为常驻 TUI，后台抽取在扩展进程内执行，durable intake 先落 `store.db`，`session_start` 恢复未完成项。daemon/DCC/LSEA 属多进程收敛的场景复杂度，v2 不做。下文"先读上游"仍作为切片 3 的前置阅读。
+> **v2.5 重开**：v2.4 的"进程内后台任务"只对常驻的 Pi 扩展成立；v2.5 删除了 Pi 扩展，三个宿主里都只有短命的 `ab` 进程，会话结束后没有可承载后台抽取的 agentbrain 进程。仍然成立的部分：durable intake 先落 `store.db`（§19.2）；daemon/DCC/LSEA 式多进程收敛仍属场景复杂度，不做。需要裁决的是两件事：
+>
+> 1. **谁来消费 intake**。候选：会话结束 hook 写入 intake 后拉起一个分离的 `ab work` 进程排空队列，用单实例锁保证同一时刻只有一个；或在下一次任意会话执行 `ab brief` 时补跑。会话结束的触发点本身也要定：各宿主的 Stop/`agent_end` hook，或不用 hook、由下次会话补跑。
+> 2. **抽取用什么算力**。Pi `ModelRuntime` 不再通用。候选：`claude -p`、`codex exec`、直接调用模型 API。按 §14.4，代码与 schema 不硬编码 model ID。
+>
+> 下文"先读上游"仍作为切片 3 的前置阅读。
+
+> **v2.4 裁决（已被 v2.5 重开，保留追溯）**：Pi 为常驻 TUI，后台抽取在扩展进程内执行，durable intake 先落 `store.db`，`session_start` 恢复未完成项。daemon/DCC/LSEA 属多进程收敛的场景复杂度，v2 不做。
 
 Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不得只凭 pi-astack 当前实现选择。
 
-**子代理执行拓扑不再是本 gate 的一部分，也不再是任何 gate。** §6.4 已定：agentbrain 不拥有执行面，只留接缝。gate 的定义是"agentbrain 实施前必须自己裁决的事"；执行拓扑归 Pi/dispatch 所有，把它留作 gate 会错误暗示 agentbrain 有权选择。委派侧 agentbrain 唯一需要冻结的是 §6.3.2 的血缘必填接缝合同，那属于 §19.5。
+**子代理执行拓扑不再是本 gate 的一部分，也不再是任何 gate。** §6.4 已定：agentbrain 不拥有执行面，只留接缝。gate 的定义是"agentbrain 实施前必须自己裁决的事"；执行拓扑归宿主所有，把它留作 gate 会错误暗示 agentbrain 有权选择。委派侧 agentbrain 唯一需要冻结的是 §6.3.2 的血缘必填接缝合同，那属于 §19.5。
 
 本 gate 因此收窄为 agentbrain **自有后台 worker** 的进程形态。§9.4.5 的三层判断链前两层运行在此形态内，是本 gate 的新增输入。
 
@@ -1204,6 +1288,11 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 ### 19.5 Identity / Project Binding / Loadout / Delegation
 
 冻结 stable project ID、显式本机 binding/registry、多个 checkout 的执行根区分，以及 capability 建立、收窄、过期、审计和子代理回流；禁止 `cwd`/Git remote 隐式授予项目身份。
+
+**v2.5 新增**：
+- **会话身份（2026-10-09 实测关闭）**：三个宿主在模型执行 shell 时都提供会话 id，且都能对上 transcript 文件，见 §7.1 表。嵌套启动会继承上层宿主的变量，因此按最近的宿主父进程判定 host。会话身份只用于定位来源，不授予 capability（§13.1）。
+- **Project registry（v2.5 冻结）**：pm 的 `repos/*.md`，见 §6.1。
+- **ephemeral/子代理信号（切片 4 关闭）**：三个宿主各用什么信号区分子代理会话，见 §9.5。候选：Claude Code 的 `CLAUDE_CODE_CHILD_SESSION` 环境变量（本机存在，语义未验证）、Codex 的 `SubagentStart` hook、Pi 子会话无持久 session 文件。切片 4 之前，子代理身份由派活说明的 `--worker` 约定承担。
 
 ### 19.6 Sediment Promotion 与 Corroboration 参数
 
@@ -1236,7 +1325,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ### 19.11 Acceptance / Rollout
 
-把领域不变量、Pi E2E、隐私隔离、检索 fixture、迁移和 dogfood 组织成硬验收门，冻结 T0/D0/P0-P2/M1-M6 的最终内容和 rollback 条件；验收门必须包含 §15.5 的三条替代成功判据。
+把领域不变量、宿主 E2E（§15.3）、隐私隔离、检索 fixture、迁移和 dogfood 组织成硬验收门，冻结 T0/D0/P0-P2/M1-M6 的最终内容和 rollback 条件；验收门必须包含 §15.5 的三条替代成功判据。
 
 ### 19.12 运行期共存与 Cutover（**已关闭**，见 §7.4）
 
@@ -1249,7 +1338,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 | Gate | Canonical ticket |
 |---|---|
 | L1 Identity × Purge、Durable Work Store | [定义 L1 证据账本与 durable intake 合同](https://github.com/josheee1117/agentbrain/issues/4) + [定义本地安全、隐私、保留与 Purge 合同](https://github.com/josheee1117/agentbrain/issues/5) |
-| Pi 自有 Worker（执行拓扑不属本项目）；委派接缝需交叉验证 | [原型验证 Pi Adapter 与后台 Worker 拓扑](https://github.com/josheee1117/agentbrain/issues/11) **×** [定义身份、作用域、Loadout 与子代理委派合同](https://github.com/josheee1117/agentbrain/issues/6)，交叉裁决 |
+| 自有后台 Worker（v2.5 重开，执行拓扑不属本项目）；委派接缝需交叉验证 | [原型验证 Pi Adapter 与后台 Worker 拓扑](https://github.com/josheee1117/agentbrain/issues/11) **×** [定义身份、作用域、Loadout 与子代理委派合同](https://github.com/josheee1117/agentbrain/issues/6)，交叉裁决 |
 | L2 Contract | [定义 L2 记忆身份、投影与生命周期合同](https://github.com/josheee1117/agentbrain/issues/8) |
 | Identity / Project Binding / Loadout / Delegation | [定义身份、作用域、Loadout 与子代理委派合同](https://github.com/josheee1117/agentbrain/issues/6)（候选接缝见 §6.5） |
 | Sediment Promotion 与 Corroboration 参数（§19.6） | [定义自动沉淀、Proposal 晋升与人工校准合同](https://github.com/josheee1117/agentbrain/issues/18) |
@@ -1263,14 +1352,15 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 | TencentDB 最终 disposition | [裁决 TencentDB 机制的 abrain-native 吸收矩阵](https://github.com/josheee1117/agentbrain/issues/12) |
 | 最终设计收敛 | [合成 agentbrain v2 总体设计与 TencentDB 吸收附录](https://github.com/josheee1117/agentbrain/issues/16) |
 
-**v2.4 开工规则**：不再要求全部 gate 关闭后才开工。每个切片（§18）单独取得用户明确授权；切片只能使用已裁决的物理形态，触及未裁决 gate 时停下写修订记录再问。切片 1 已于 2026-09-14 授权（用户原话"按你的来"）。
+**v2.4 开工规则**：不再要求全部 gate 关闭后才开工。每个切片（§18）单独取得用户明确授权；切片只能使用已裁决的物理形态，触及未裁决 gate 时停下写修订记录再问。切片 1 已于 2026-09-14 授权（用户原话"按你的来"）。**v2.5**：切片 1.5 与 2.5 同样逐个授权；v2.5 修订本身只授权改文档。
 
 ---
 
 ## 20. 明确 Out of Scope
 
 - 由本文自动授权生产实现；
-- v2 正式支持 dsh、Claude Code、Codex、Memory Proxy；
+- v2 正式支持 dsh、Memory Proxy，或 Pi、Claude Code、Codex 之外的宿主；以 wire 逆向方式接入任何宿主（v2.5 起 Claude Code、Codex 已在范围内）；
+- 接管 pm 的仓库档案、计划、跨仓库调度等非记忆职责（记忆核心成熟后再议，§2.1）；
 - 多用户团队服务、服务端认证、租户 ACL；
 - 完整个人生活 Persona/数字孪生；
 - Skill marketplace/执行平台；
@@ -1278,7 +1368,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 - Wiki/CodeGraph；
 - Vault 密钥管理和 secret release；
 - 远程多 Writer、实时跨设备同步、分布式 merge；
-- 默认归档完整 Pi transcript；
+- 默认归档完整宿主 transcript；
 - 强制所有模型本地运行；
 - 对 agentbrain 无法控制的外部副本承诺完全擦除；
 - 在没有 corpus 和评测证据时复制 abrain 全套自治遗忘/aggregator。
@@ -1286,6 +1376,19 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-09 v2.5（宿主无关基线；只授权改文档）**：经过一轮讨论与实测后定稿。
+  1. **§2.1 撤销 Pi-only**。用户提出 agentbrain 不应指定 Pi、Claude Code 或 Codex，三者都能作为主体接入。理由：Pi-only 唯一的依据是"在 Pi 上取代 abrain"，而 abrain 已卸载；实测 agentbrain 的 Pi 扩展也已停用（`~/.pi/agent/extensions-disabled-agentbrain`），store 为 0 条事件，切换没有数据要迁；用户日常在三个宿主间切换，也会直接在项目仓库里开会话。
+  2. **先做好记忆本身，首个替代对象是 Pensieve**。用户原话："第一批要完成的应该是 agentbrain 自己本身那个记忆的功能……如果完善以后甚至可以反过来不代替 pm，只代替 pm 里面现有的记忆插件 pensieve 了"。长期方向是取代 pm，非记忆职责记入 §20。§15.5 新增 Pensieve 对照清单。
+  3. **全局与项目两级范围提为切片 1.5 的核心**（§5.3）。用户指出 abrain 本就区分全局记忆、规则和项目记忆；参考文档 §1.1 记载 abrain 正是为解决 Pensieve 只绑单项目而生。修订过程中曾把全局记忆排到后续切片，已更正。规则与范围正交，不单独存储。
+  4. **入口与接线（§7.1）**：唯一入口是 `ab` 命令行（用户选定 SQLite 为权威、`ab` 读写）。接线不靠安装：直接打开的会话由三个全局规则文件各一句指令覆盖；被派活的子代理由主会话的派活说明覆盖（`ab brief --worker`）；pm 补 `AGENTS.md`。hook/skill 降为后备，Pi 扩展删除。MCP 降为 CANDIDATE。依据均为 2026-10-09 实测：Codex 在 pm 中只加载全局 AGENTS.md、不加载 pm 的 CLAUDE.md；Pi 两者都加载；pi-subagents 子代理默认不加载全局规则文件。
+  5. **项目清单 = pm 的 `repos/*.md`（§6.1）**，删除 `/ab bind`。worktree 归回主仓库；未登记目录只给全局记忆。
+  6. **会话身份实测关闭（§7.1、§19.5）**：`CLAUDE_CODE_SESSION_ID` / `CODEX_THREAD_ID` / `PI_SESSION_ID` 在 shell 中可得，且与各自 transcript 文件名或首行 id 一致。嵌套启动会继承上层变量（实测从 Claude Code 启动的 Pi 同时看到两家的 id），因此按最近的宿主父进程判定 host。
+  7. **§7.3 补多进程合同**。多个会话的短命 `ab` 进程会同时打开 store：写入等待有界、超时显式失败；投影与 L3 必须按 L1 水位失效。切片 1 的 `Store` 只在本进程写入时失效缓存，且未设写入等待（`openDb` 只设了 WAL 与外键），两处在切片 1.5 修正。实测：同一 store 开两个 `Store` 实例，A 写入一条坑后 B 的 `project()` 仍为 0 条，而 B 的 `search` 已能命中（index.db 共享），即"搜得到、`memory_get` 取不到"。
+  8. **§19.3 重开**。"进程内后台任务"只对常驻 Pi 成立；其余宿主没有常驻进程。消费者形态与抽取算力在切片 3 前裁决，`claude -p` / `codex exec` 回到候选（§17 同步）。
+  9. **§18 插入切片 1.5（宿主无关化 + 两级范围）与 2.5（替代 Pensieve + 合并四处全局规则）**，不重新编号以保持正文引用。
+  10. **泛化 Pi 专属表述**：Session、Source Pointer（host + session id + transcript + 定位点）、§9.5 ephemeral 信号、§11 交付与渲染、§13 信任边界、§14.3 doctor、§15.3 改为三宿主 E2E 并加跨宿主/全局/子代理/嵌套四条用例、§16、§20。§6.3 至 §6.5 的 Pi 实测保留为 Pi 事实。CONTEXT.md、README、CLAUDE.md、AGENTS.md 同步。
+  11. **不变**：L1/L2/L3、物理布局（§12.2）、clean-room、复杂度预算数值、执行面边界（§6.4）、所有 LOCKED 记忆语义。
 
 - **2026-09-14 v2.4（真实场景基线 + 按场景切片；授权切片 1）**：
   1. **§15.5 判据一的输入已由用户给出**（2026-09-12）：四个真实场景（坑不重踩 / 决策讨论过程还原 / 快速定位 / 子代理配合）与文档式记忆三痛点（不及时更新 / token 浪费 / 丢过程）。用户自述 abrain 实际用得不多。
