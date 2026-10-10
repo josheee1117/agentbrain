@@ -1,0 +1,8 @@
+{
+  "name": "agentbrain",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ab": "src/cli.ts"
+  }
+}
