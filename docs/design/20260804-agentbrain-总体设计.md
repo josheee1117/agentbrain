@@ -1,6 +1,6 @@
 # agentbrain 总体设计
 
-- 状态：**v2.5 宿主无关基线**
+- 状态：**v2.6 宿主无关基线**
 - 最新修订：2026-10-10
 - 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
@@ -336,6 +336,8 @@ Pi 没有公共 subagent/delegation 身份；Claude Code 与 Codex 有子代理 
 - 修改 accepted proposition；
 - 扩大自己的 scope 或 activation；
 - 执行 physical purge。
+
+**子代理汇报（v2.6）**：派活说明要求子代理在汇报末尾单列「新坑 / 决定」，每条附证据（文件路径、命令、报错原文）。子代理本身不写记忆。主会话收到后用 `ab remember`（未确认）记下，来源应指向该子代理。切片 2 补 `ab remember --from-worker <宿主>:<会话id>` 之类的来源参数，形态 **CANDIDATE**。切片 3 的自动抽取从主会话 transcript 读取，子代理汇报因此自然进入沉淀输入，不需要读子代理自己的 transcript。
 
 #### 6.3.1 继承 ADR 0042：单层派发与五项结构性拒绝（LOCKED）
 
@@ -811,7 +813,7 @@ v2 保留的**唯一** usage 相关机制是 §9.4 的 Corroboration Count，它
 |---|---|---|
 | pm 里的主会话 | 全局规则 + 各项目概况（每个项目几条坑、最近的变化）；要动某个项目时再 `ab brief <项目>` | 全局与任意已登记项目 |
 | 直接在某仓库打开的会话 | 全局规则 + 该项目的坑与 always-show 决定 | 全局与该项目 |
-| 被派活的子代理（`ab brief --worker`） | 该项目的坑与 always-show 决定 + 标了"子代理也要看"的全局规则；其余全局要点由主会话写进派活说明 | 不写；新坑写进汇报，由主会话决定是否 `remember`（§6.3） |
+| 被派活的子代理（`ab brief --worker`） | 该项目的坑与 always-show 决定 + 标了"子代理也要看"的全局规则；其余全局要点由主会话写进派活说明 | 不写；汇报末尾单列新坑与决定并附证据，主会话用未确认的 `ab remember` 记下（§6.3） |
 
 各类 brief 只放已确认条目（§8.2）。
 
@@ -859,12 +861,15 @@ Eligibility 至少包含：
 
 宿主 adapter 决定它被渲染成 marker block、工具结果、摘要还是按需读取入口；`ab` 的命令行输出是三个宿主共用的默认渲染。
 
-### 11.4 算法候选，不是已拍板实现
+### 11.4 算法（混合检索 LOCKED，其余候选）
 
-Prototype 比较：
+**检索（LOCKED，v2.6）**：FTS5 trigram + 稠密向量混合。向量以二进制 BLOB 存在 `index.db`（属于 L3，可删可重建）。查询时在进程内暴力计算余弦相似度。上限：约一万条以内毫秒级，超过再换 sqlite-vec 扩展。
+
+融合方式（RRF 或加权）与召回门槛仍是 **CANDIDATE**，由切片 2 测试集对比决定（§18）。
+
+其余仍为候选：
 
 - CJK char n-gram vs 分词；
-- lexical-only vs dense hybrid；
 - ordered pooling vs RRF；
 - single-vector vs multi-vector；
 - no-rerank vs LLM rerank；
@@ -897,6 +902,7 @@ v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同�
 - event ID：不透明随机 ID + 自增序号定序；body hash 单独列，随 purge 一起删；不保留 JCS（无跨设备幂等需求）；
 - L2：L1 上的纯函数投影，不落盘；需要人读时再导出 Markdown；
 - 多进程访问（v2.5）：store.db 与 index.db 会被多个宿主进程和短命 `ab` 进程同时打开；WAL + 有界 busy 等待；index.db 的重建以 L1 水位为准（§7.3）。
+- embedding（LOCKED，v2.6）：OpenAI 兼容接口。用户选定阿里云 DashScope `text-embedding-v4`。地址与模型名写在 `~/.agentbrain/embedding.json`，两个配置键，计入 §2.2 的配置键预算。API key 只存 macOS 钥匙串（service `agentbrain-embedding`），不进文件、不进环境变量。理由：Codex 的 `shell_environment_policy inherit = "core"` 会过滤自定义环境变量（2026-10-10 实测）。向量以二进制 BLOB 存在 index.db（§11.4）。index.db 的 meta 记录生成向量所用的模型名；模型变化即视为索引失效，全部重算。embedding 不可用（无 key、网络失败、超时）时显式降级为纯 FTS，`ab status` 报告降级原因，不阻塞 remember/brief（§14.1）。
 
 仍未冻结：backup/export bundle；schema/projector migration runner（出现第一次 schema 变更时再定）。
 
@@ -986,7 +992,8 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 - **来源默认是指针不是摘录（v2.4，v2.5 泛化到三宿主）**：Source Observation 记录 host + session id + transcript 路径 + 当时的定位点（Pi leaf entry id、Claude Code 消息 id、Codex `ordinal`）+ 一句摘要；"还原当时怎么讨论出来的"靠按需读取 transcript 的该位置及其祖先链，agentbrain 自身不存对话原文；transcript 不存在时来源展开显式报告不可用（§15.3）；
 - 明确摘录不是完整上下文；
 - rejected/expired Proposal、临时来源和模型 I/O 采用有限保留策略；
-- prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文。
+- prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文；
+- **向量计算会离开本机（v2.6）**：记忆正文与切片 2 每轮召回的用户 prompt 会发送到阿里云 DashScope 计算向量。这是用户 2026-10-10 的明确选择，用户已知情。sensitivity 高的条目是否跳过向量化留作 **CANDIDATE**。
 
 ### 13.4 数据生命周期类别
 
@@ -1010,7 +1017,7 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 ### 14.1 可以显式降级的优化
 
 - reranker 不可用 → hybrid/lexical；
-- embedding 不可用 → lexical；
+- embedding 不可用（无 key、网络失败、超时）→ 纯 FTS，`ab status` 报告降级原因，不阻塞 remember/brief（§12.2）；
 - 索引 stale → 返回旧 view 并标记 stale；
 - 非关键 telemetry 失败 → 记录 best-effort 诊断。
 
@@ -1058,7 +1065,7 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 - Durable Work Store、audit 和 telemetry 保留容量；
 - archive/purge 单批操作量。
 
-达到上限时必须选择明确的 `deferred / rejected / degraded / operator_action_required`，禁止静默 drop、无界重试或用最新任务覆盖尚未落入 durable authority 的旧任务。模型和 provider 按 extractor、curator、retrieval、review 等角色配置；代码、schema 和 prompt 不硬编码 model ID。
+达到上限时必须选择明确的 `deferred / rejected / degraded / operator_action_required`，禁止静默 drop、无界重试或用最新任务覆盖尚未落入 durable authority 的旧任务。模型和 provider 按 extractor、curator、retrieval、review 等角色配置；代码、schema 和 prompt 不硬编码 model ID。embedding 的地址、模型名与 API key 存放见 §12.2。
 
 ---
 
@@ -1147,6 +1154,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | refine（triage、compress） | correct / supersede / archive | 2 |
 | doctor | `ab status` / doctor（§14.3） | 1.5 |
 | sync-instructions（把路由写进 CLAUDE.md/AGENTS.md） | Brief 注入与 Procedure trigger，不改写仓库指令文件 | 2 + 2.5 |
+| 知识图谱（"基于 / 导致 / 相关"三类链接） | 「相关」由向量近邻替代；「基于」由 Source Pointer 与 why 替代；结论演变由 supersede / conflict / corroboration 关系边替代（§9.4.4）。不建独立图谱视图，`ab get` 展示该条的替代、冲突与近邻 | 2 / 3 |
 
 ---
 
@@ -1199,17 +1207,17 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 
 ## 18. 里程碑：按场景切片（v2.4 重排，v2.5 插入 1.5 与 2.5）
 
-以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。v2.5 插入两个切片而不重新编号，以保持正文中"切片 3""切片 4 之后"等引用不变。
+以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。v2.5 插入两个切片而不重新编号，以保持正文中"切片 3""切片 4 之后"等引用不变。切片顺序为 2 → 2.5 → 3。
 
 | 切片 | 内容 | 覆盖场景 / 痛点 | 关掉的 gate |
 |---|---|---|---|
 | **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
 | **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
-| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
+| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
 | 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
 | 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
-| 之后 | 检索 prototype（仅当 FTS 不够时）；Corroboration；三层链第 2、3 层；Delegation Grant；Purge 传递闭包；backup/export | — | §19.6/§19.7 其余 |
+| 之后 | Corroboration；三层链第 2、3 层；Delegation Grant；Purge 传递闭包；backup/export。使用成熟度计数因缺可靠"真被用上"信号继续后置（§9.4） | — | §19.6/§19.7 其余 |
 
 原 P1 的 L1/Purge 状态机不再是 throwaway：它就是切片 1 的 `store.ts` 及其测试。原 T0 三项：#15 已由用户口述关闭；#7 降为可选（真有值得搬的记忆手动录入）；§7.4 已关闭。
 
@@ -1380,6 +1388,14 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-10 v2.6（检索与子代理汇报；只授权改文档）**：
+  1. **§11.4 检索锁定为 FTS5 trigram + 稠密向量混合**。向量以 BLOB 存 index.db（L3）；进程内暴力余弦；约一万条以内毫秒级，超过再换 sqlite-vec。融合方式与召回门槛仍为 CANDIDATE，由切片 2 测试集对比。分词 / n-gram、rerank 等保持候选。
+  2. **embedding（§12.2，§14.1 / §14.4 引用）**：OpenAI 兼容接口，用户选定阿里云 DashScope `text-embedding-v4`。地址与模型名在 `~/.agentbrain/embedding.json`（两个配置键，计入 §2.2）。API key 只存 macOS 钥匙串（service `agentbrain-embedding`），不进文件、不进环境变量。理由：Codex 的 `shell_environment_policy inherit = "core"` 会过滤自定义环境变量（2026-10-10 实测）。index.db 的 meta 记录模型名，模型变化即索引失效、全部重算。不可用时降为纯 FTS，`ab status` 报告原因，不阻塞 remember/brief。
+  3. **§13.3**：记忆正文与切片 2 每轮召回的用户 prompt 会发到 DashScope 计算向量。用户 2026-10-10 明确选择且已知情。sensitivity 高的条目是否跳过向量化留作 CANDIDATE。
+  4. **§6.3 子代理汇报**：派活说明要求汇报末尾单列「新坑 / 决定」并附证据；子代理不写记忆；主会话用未确认的 `ab remember` 记下，来源指向该子代理。`--from-worker` 形态 CANDIDATE，切片 2。切片 3 抽取读主会话 transcript，不读子代理 transcript。
+  5. **§15.5** 增补 Pensieve 知识图谱一行：相关 → 向量近邻；基于 → Source Pointer 与 why；结论演变 → supersede / conflict / corroboration（§9.4.4）。不建独立图谱视图。切片 2 / 3。
+  6. **§18**：切片 2 加入混合检索，并用 pm `repos/*.md` 的真实坑造测试集，对比纯 FTS 与混合的命中率。顺序为 2 → 2.5 → 3。「之后」去掉检索 prototype（已并入切片 2）。使用成熟度计数继续后置。
 
 - **2026-10-10（切片 1.5 实现）**：
   1. **切片 1.5 实现完成**。pi 实现主体，Codex 只读 review 提出 10 条（高 5 中 5），修 8 条。未修两条：按 ID 跨项目 get/archive（有意，pm 需管理全部项目）；status 的接线语义检查和 Pensieve 共存检查（价值低）。
