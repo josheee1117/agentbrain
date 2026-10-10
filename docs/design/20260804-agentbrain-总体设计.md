@@ -865,7 +865,13 @@ Eligibility 至少包含：
 
 **检索（LOCKED，v2.6）**：FTS5 trigram + 稠密向量混合。向量以二进制 BLOB 存在 `index.db`（属于 L3，可删可重建）。查询时在进程内暴力计算余弦相似度。上限：约一万条以内毫秒级，超过再换 sqlite-vec 扩展。
 
-融合方式（RRF 或加权）与召回门槛仍是 **CANDIDATE**，由切片 2 测试集对比决定（§18）。
+**融合与门槛（切片 2 定，2026-10-10）**：
+
+- 融合用 RRF（k=60），两路各取前 20 条。评测脚本没有对比加权融合，这一项保留 RRF 是因为没有反证，不是因为赢了加权。
+- 向量路的余弦门槛默认 0.45（`ab search`）。依据是 53 条语料、121 条查询的阈值扫描：0.45 时正例召回 93%，负例误报 33%。
+- 每轮召回（`ab recall`）另用 0.55。同一扫描中 0.55 负例误报 0%、召回 63%；0.50 召回 87%、误报 13%。每轮注入宁缺毋滥，所以取更严的一档。
+- 两个门槛都是代码常量（§2.2），不是配置键。
+- 评测脚本是 `scripts/eval-retrieval.ts`，语料在仓库外的 `~/.agentbrain/eval/`。数字取自当时写进代码注释的结果；纯 FTS 与混合的对比表没有留存，复跑需要 DashScope key。
 
 其余仍为候选：
 
@@ -1388,6 +1394,15 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-10（切片 2 收尾）**：
+  1. **授权**。用户 2026-10-10 18:05 SGT 原话："用 pstack 继续完成 brain"，指让 agent 接着把切片 2 做完。在此之前的切片 2 提交（`b5e73bf`、`1ced6e1`、WIP `5c4e6b9`）没有找到授权原话记录，是否追认由用户确认。切片 2.5 与 3 仍需单独授权。
+  2. **§11.4 检索参数定稿**：保留 RRF k=60；`VEC_MIN_SIM` 0.35 → 0.45；每轮召回门槛 0.55。数字与依据见 §11.4。没有做加权融合对比。
+  3. **评测语料不在仓库里**。语料在 `~/.agentbrain/eval/{corpus,queries}.json`，取自 pm `repos/*.md` 的真实坑。§15.2 要求测试集纳入版本控制并默认用合成或匿名 fixture，因此这一条目前不满足。是否把匿名版放进仓库由用户决定。
+  4. **每轮召回接线**（§7.1、§18）：`ab recall --hook` 读 stdin 的 `{prompt, cwd}`，命中时输出 `hookSpecificOutput.additionalContext`。Claude Code 与 Codex 用 `UserPromptSubmit`，Pi 用 `integrations/pi/agentbrain-recall.ts`（`before_agent_start`）。接线样例与安装说明放在 `integrations/`，不改任何全局配置；三个宿主的实测（§15.3）留给用户机器。Codex 的官方文档写明支持这一输出格式，但本机未实测。
+  5. **Memory Card 冲突暴露（§9.2、§11.3）**：切片 2 里唯一能出现的未解决冲突，是未确认的纠正与它要替代的已确认条目并存。投影给被纠正的条目加 `pending_corrections`，`get`、`search`、`recall`、`brief` 都标出"有待确认的纠正"，不再只返回一边。其他关系边（conflict、corroboration）由切片 3 的关系判定产生（§9.4.4），切片 2 不另造写入命令。
+  6. **`ab get` 展示替代、冲突与近邻（§15.5 图谱一行）**：替代链与待确认纠正之外，再列至多 3 条向量近邻。近邻只用 index.db 里已存的向量，不发网络请求；范围限于该条所在项目加全局，只列 active 条目；门槛用 `VEC_MIN_SIM`。没有向量时明说近邻不可用。
+  7. **§19.4 L2 合同以类型冻结（部分）**：L1 事件体、Proposition、Projection 与投影函数移到 `src/l2.ts`，作为唯一的类型来源。冻结的是已实现的部分：stable identity（不透明 event id）、四种可读种类、两级范围、state 轴、替代与待确认纠正关系。未冻结：§5.3 中尚未实现的 facets（temporal horizon、maturity、confidence、sensitivity 等）、组合视图物化、projector version 与 schema migration。这几项设计里没有具体形态，留作开放问题。
 
 - **2026-10-10 v2.6（检索与子代理汇报；只授权改文档）**：
   1. **§11.4 检索锁定为 FTS5 trigram + 稠密向量混合**。向量以 BLOB 存 index.db（L3）；进程内暴力余弦；约一万条以内毫秒级，超过再换 sqlite-vec。融合方式与召回门槛仍为 CANDIDATE，由切片 2 测试集对比。分词 / n-gram、rerank 等保持候选。
