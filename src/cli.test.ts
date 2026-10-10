@@ -303,6 +303,7 @@ test("没有 embedding 配置：search 提示仅全文检索，status 报不可�
   const corrected = ab(["correct", id, "--text", "无配置也纠正", "--summary", "降级"], alpha);
   assert.equal(corrected.code, 0, corrected.err);
   assert.match(corrected.out, /\n向量未更新：.*embedding\.json\n$/);
+  assert.match(ab(["get", id], alpha).out, /\n相关: 近邻不可用，这条还没有向量\n$/);
   assert.equal(existsSync(keyRead), false);
 });
 
@@ -325,10 +326,16 @@ test("假 embedding：remember/correct 同步、search 混合、status 数量、
   assert.match(found.out, /小猫需要照顾/);
   assert.doesNotMatch(found.out, /仅全文检索|猫咪很可爱/);
   assert.match(run(["status"]).out, /向量: fake-one，已向量化 2\/2/);
+  const neighbor = run(["remember", "--confirmed", "--kind", "note", "--text", "猫粮放在柜子里", "--summary", "近邻"]);
+  const neighborId = neighbor.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const correctedId = corrected.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const got = run(["get", correctedId]).out;
+  assert.match(got, new RegExp(`\\n相关（向量近邻）:\\n  \\[${neighborId}\\] alpha 事实: 猫粮放在柜子里（1\\.00）\\n$`));
+  assert.doesNotMatch(got, /猫咪很可爱/, "已被替代的旧条目只出现在替代链，不当近邻");
   config("fake-two");
-  assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/2/);
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/3/);
   assert.equal(run(["search", "喵星人"]).code, 0);
-  assert.match(run(["status"]).out, /向量: fake-two，已向量化 2\/2/);
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 3\/3/);
   config("fail");
   const failed = run(["remember", "--confirmed", "--kind", "note", "--text", "假接口失败也要保存", "--summary", "失败"]);
   assert.equal(failed.code, 0, failed.err);

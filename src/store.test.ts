@@ -551,6 +551,28 @@ test("混合检索：RRF 双路命中优先、去重并截到 limit", async () =
   } finally { s.close(); }
 });
 
+test("近邻：只用已存向量，限本项目加全局、只看 active、过门槛；本条无向量返回 null", async () => {
+  const s = mem();
+  try {
+    const p = s.ensureProject("p");
+    const q = s.ensureProject("q");
+    const body = (text: string) => ({ kind: "note" as const, text, confirmed: true, source: src() });
+    const self = s.remember(p, "s1", false, body("猫要喂"));
+    const same = s.remember(p, "s1", false, body("猫粮在柜子里"));
+    const global = s.remember(null, "s1", false, body("喵星人怕水"));
+    s.remember(q, "s1", false, body("别的项目的猫"));
+    s.remember(p, "s1", false, body("狗要遛"));
+    const archived = s.remember(p, "s1", false, body("旧的猫笔记"));
+    s.lifecycle("archive", archived, "s1");
+    await s.syncVectors(fakeEmbed, "fake");
+    assert.deepEqual(s.neighbors(self)!.map((n) => n.prop.id).sort(), [same, global].sort());
+    assert.equal(s.neighbors(self)![0].similarity, 1);
+    const fresh = s.remember(p, "s1", false, body("刚记的猫"));
+    assert.equal(s.neighbors(fresh), null);
+    assert.equal(s.neighbors(same)!.some((n) => n.prop.id === fresh), false, "没有向量的条目不当近邻");
+  } finally { s.close(); }
+});
+
 test("混合检索：查询 embedding 期间 Purge，返回结果不含旧 FTS 命中", async () => {
   const s = mem();
   try {

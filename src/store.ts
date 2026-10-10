@@ -311,6 +311,25 @@ export class Store {
     return { embedded, pending: this.pendingVectors().length };
   }
 
+  /** 用 index.db 里已存的向量找近邻，不发网络请求。范围限本条所在项目加全局，只看 active。本条没有当前向量时返回 null。 */
+  neighbors(id: string): { prop: Proposition; similarity: number }[] | null {
+    const props = this.project().props;
+    const p = props.get(id);
+    if (!p) return null;
+    const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
+    const own = rows.find((r) => r.id === id);
+    if (!own || own.text_hash !== textHash(indexText(p))) return null;
+    const query = fromBlob(own.vec);
+    return rows.flatMap((r) => {
+      const n = props.get(r.id);
+      if (!n || n.id === id || n.state !== "active") return [];
+      if (n.project_id !== null && n.project_id !== p.project_id) return [];
+      if (r.text_hash !== textHash(indexText(n))) return [];
+      const similarity = cosine(query, fromBlob(r.vec));
+      return similarity >= VEC_MIN_SIM ? [{ prop: n, similarity }] : [];
+    }).sort((a, b) => b.similarity - a.similarity);
+  }
+
   async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; degraded: string | null }> {
     const limit = opts.limit ?? 8;
     const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });

@@ -21,6 +21,7 @@ const RECALL_MAX_CHARS = 600;
 const RECALL_EMBED_TIMEOUT_MS = 3000;
 // 测试集上 0.55 负例误报 0%、召回 63%；0.50 召回 87% 但误报 13%。每轮注入宁缺毋滥。
 const RECALL_MIN_SIM = 0.55;
+const GET_MAX_NEIGHBORS = 3;
 const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
@@ -506,9 +507,10 @@ function cmdGet(argv: string[]): void {
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
+    const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, namesOf(store))} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
       ...p.pending_corrections.map((id) => {
@@ -518,6 +520,14 @@ function cmdGet(argv: string[]): void {
       p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
+    const shown = new Set([p.supersedes, p.superseded_by, ...p.pending_corrections]);
+    const near = store.neighbors(p.id);
+    if (near === null) linesOut.push("相关: 近邻不可用，这条还没有向量");
+    else {
+      const rows = near.filter((n) => !shown.has(n.prop.id)).slice(0, GET_MAX_NEIGHBORS).map(({ prop: n, similarity }) =>
+        `  [${short(n.id)}] ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${n.confirmed ? "" : "[未确认]"}: ${n.text.split("\n")[0]}（${similarity.toFixed(2)}）`);
+      if (rows.length) linesOut.push("相关（向量近邻）:", ...rows);
+    }
     if (values.expand) {
       const disc = expandSource(p.source);
       linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
