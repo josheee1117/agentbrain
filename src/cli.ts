@@ -72,6 +72,10 @@ function short(id: string): string {
   return id.slice(0, 8);
 }
 
+function disputed(p: Proposition): string {
+  return p.pending_corrections.length ? `（有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}）` : "";
+}
+
 function active(store: Store): Proposition[] {
   return [...store.project().props.values()].filter((p) => p.state === "active");
 }
@@ -105,7 +109,7 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number): { text: 
   let text = "";
   let shown = 0;
   for (const p of rows) {
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}\n`;
+    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${disputed(p)}\n`;
     if (text.length + line.length > budget) continue;
     text += line;
     shown++;
@@ -265,7 +269,7 @@ async function recall(store: Store, query: string, cwd: string): Promise<string>
   const rows: string[] = [];
   for (const p of picked) {
     const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
-    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}: ${body}`;
+    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${disputed(p)}: ${body}`;
     const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
     const room = RECALL_MAX_CHARS - used;
     if (room <= 0) break;
@@ -483,7 +487,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p && !p.confirmed ? "[未确认]" : "";
       const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}: ${h.text.split("\n")[0]}`);
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${h.text.split("\n")[0]}`);
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
   } finally {
@@ -507,6 +511,10 @@ function cmdGet(argv: string[]): void {
       `[${short(p.id)}] ${SCOPE_LABEL(p, namesOf(store))} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
+      ...p.pending_corrections.map((id) => {
+        const c = store.project().props.get(id)!;
+        return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
+      }),
       p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);

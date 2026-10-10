@@ -257,8 +257,11 @@ test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 se
   assert.equal(neu.code, 0, neu.err);
   const neuId = neu.out.match(/\[([0-9a-f]{8})\]/)![1];
   const before = run(["brief"]);
-  assert.match(before.out, /锁用全局一把/);
+  assert.match(before.out, new RegExp(`锁用全局一把（有待确认的纠正 \\[${neuId}\\]）`));
   assert.doesNotMatch(before.out, /锁按账户分/);
+  assert.match(run(["get", oldId]).out, new RegExp(`\n待确认的纠正 \\[${neuId}\\]: 锁按账户分（认可用 ab confirm ${neuId}，否决用 ab archive ${neuId}）`));
+  assert.match(run(["search", "全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
+  assert.match(run(["recall", "锁用全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
   assert.equal(run(["confirm", neuId]).code, 0);
   const after = run(["brief"]);
   assert.doesNotMatch(after.out, /锁用全局一把/);

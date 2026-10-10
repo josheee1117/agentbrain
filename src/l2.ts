@@ -45,6 +45,8 @@ export interface Proposition {
   state: PropState;
   supersedes?: string;
   superseded_by?: string;
+  /** 指向本条、仍 active 但未确认的纠正。非空即未解决冲突，读路径必须标出（§9.2）。 */
+  pending_corrections: string[];
 }
 
 export interface Projection {
@@ -99,6 +101,7 @@ export function fold(rows: EventRow[]): Projection {
         confirmed: b.confirmed !== false,
         state: "active",
         supersedes: b.supersedes,
+        pending_corrections: [],
       });
       continue;
     }
@@ -115,8 +118,12 @@ export function fold(rows: EventRow[]): Projection {
   }
   // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
   for (const p of props.values()) {
-    if (!p.confirmed || !p.supersedes || p.state !== "active") continue;
+    if (!p.supersedes || p.state !== "active") continue;
     const target = props.get(p.supersedes);
+    if (!p.confirmed) {
+      target?.pending_corrections.push(p.id);
+      continue;
+    }
     if (!target) {
       orphans++;
       continue;

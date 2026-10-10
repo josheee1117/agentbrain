@@ -266,6 +266,24 @@ test("fold：已确认且带 supersedes 的条目使目标变 superseded，目�
   s.close();
 });
 
+test("fold：未确认的纠正挂在目标的 pending_corrections 上，确认或归档后消失", () => {
+  const s = mem();
+  const pid = s.ensureProject("p");
+  const old = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁用全局一把", confirmed: true, source: src() });
+  const rejected = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁不用加", confirmed: false, supersedes: old, source: src() });
+  const accepted = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁按账户分", confirmed: false, supersedes: old, source: src() });
+  assert.deepEqual(s.project().props.get(old)!.pending_corrections, [rejected, accepted]);
+  assert.equal(s.project().props.get(old)!.state, "active");
+  s.lifecycle("archive", rejected, "s1");
+  assert.deepEqual(s.project().props.get(old)!.pending_corrections, [accepted]);
+  s.lifecycle("confirm", accepted, "s1");
+  const target = s.project().props.get(old)!;
+  assert.equal(target.state, "superseded");
+  assert.equal(target.superseded_by, accepted);
+  assert.deepEqual(target.pending_corrections, []);
+  s.close();
+});
+
 test("fold 处理 project_id 为 null", () => {
   const s = mem();
   const id = s.remember(null, "s1", false, { kind: "note", text: "全局事实", confirmed: true, source: src() });
