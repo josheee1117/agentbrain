@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { fromBlob } from "./embed.ts";
-import { Store, fold, MAX_EMBED_PER_SYNC, type Embedder, type Projection, type RememberBody } from "./store.ts";
+import { Store, MAX_EMBED_PER_SYNC, type Embedder } from "./store.ts";
+import { fold, type Projection, type RememberBody } from "./l2.ts";
 
 function mem() {
   return new Store(":memory:", ":memory:");

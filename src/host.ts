@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { Host } from "./store.ts";
+import type { Host } from "./l2.ts";
 
 const MAX_ANCESTORS = 20;
 
