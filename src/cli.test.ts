@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -443,6 +443,33 @@ test("recall 超过 3 条只出前 3 条", () => {
   const lines = ctx.split("\n").filter((l) => l.startsWith("- ["));
   assert.equal(lines.length, 3);
   assert.match(ctx, /召回限额第 [0-4] 条坑/);
+});
+
+test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPromptSubmit 的 additionalContext", () => {
+  const own = join(dir, "wiring-home");
+  const pit = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "接线样例要能召回这个坑", "--summary", "接线"], alpha, own);
+  assert.equal(pit.code, 0, pit.err);
+  const shim = join(dir, "ab-shim");
+  mkdirSync(shim, { recursive: true });
+  writeFileSync(join(shim, "ab"), `#!/bin/sh\nexec node --import '${networkGuard}' '${CLI}' "$@"\n`);
+  chmodSync(join(shim, "ab"), 0o755);
+  for (const file of ["claude-code/settings.example.json", "codex/hooks.example.json"]) {
+    const config = JSON.parse(readFileSync(join(import.meta.dirname, "../integrations", file), "utf8")) as {
+      hooks: { UserPromptSubmit: { hooks: { type: string; command: string }[] }[] };
+    };
+    const [handler] = config.hooks.UserPromptSubmit[0].hooks;
+    assert.equal(handler.type, "command");
+    const r = spawnSync("sh", ["-c", handler.command], {
+      cwd: alpha,
+      encoding: "utf8",
+      input: JSON.stringify({ session_id: "x", hook_event_name: "UserPromptSubmit", prompt: "接线样例 召回", cwd: alpha }),
+      env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${shim}:${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION },
+    });
+    assert.equal(r.status, 0, file);
+    const out = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit", file);
+    assert.match(out.hookSpecificOutput.additionalContext, /^<agentbrain-recall>\n- \[[0-9a-f]{8}\] 坑: 接线样例要能召回这个坑\n<\/agentbrain-recall>$/, file);
+  }
 });
 
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。
