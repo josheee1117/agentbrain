@@ -10,6 +10,7 @@ agentbrain：以 abrain 为架构母体的本地 Agent 记忆系统。Pi、Claud
 
 - `docs/design/20260804-agentbrain-总体设计.md` 已升级为 **v2.6 宿主无关基线**。开工前必须完整阅读，尤其 §2.1、§7、§15.5、§18 的切片表与 §21 v2.6 条目。切片 2 范围含向量检索。
 - **切片 1 已实现（仅 Pi）**。代码在本仓 `src/`；Pi 侧符号链接目前停用（`~/.pi/agent/extensions-disabled-agentbrain`）。切片 1.5 已于 2026-10-10 实现；之后各切片需单独授权（§19.13）。
+- **切片 2 代码完成（2026-10-10）**：correct、混合检索（RRF，门槛 0.45，召回 0.55）、`ab recall --hook` 每轮召回、Memory Card 冲突暴露（待确认纠正）、`ab get` 近邻、L2 类型集中在 `src/l2.ts`。接线样例在 `integrations/`，三个宿主的全局配置尚未改、§15.3 实测尚未做。评测语料在仓库外 `~/.agentbrain/eval/`。切片 2.5 需单独授权。
 - §19.3 后台 worker 拓扑于 v2.5 重开，切片 3 前裁决。
 - 切片 1.5 已删除 Pi 扩展与 `/ab bind`；宿主接线与会话身份的实测依据见设计 §7.1。
 - 已裁决的物理形态：`~/.agentbrain/store.db`（L1 + work store）+ `index.db`（FTS5，可删重建）；不透明 event_id + 自增定序；L2 为纯函数；来源为 Source Pointer 不存摘录（v2.5 泛化为 host + session id + transcript + 定位点）。

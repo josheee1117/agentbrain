@@ -2,7 +2,7 @@
 
 - 状态：**v2.6 宿主无关基线**
 - 最新修订：2026-10-10
-- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）**
+- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线与实测（§15.3）待做**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
@@ -407,7 +407,7 @@ Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/
 
 ### 7.1 统一入口、接线与会话身份（LOCKED，v2.5）
 
-**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`confirm`、`search`、`get`、`archive`、`status`。不再有 `bind`，项目身份见 §6.1。理由：
+**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`correct`、`confirm`、`recall`、`search`、`get`、`archive`、`status`（`correct`、`recall` 为切片 2 新增）。不再有 `bind`，项目身份见 §6.1。理由：
 
 - 三个宿主都能执行 shell，CLI 不需要任何协议依赖；
 - Pi 的 MCP 要经过适配器，以 MCP 为唯一入口会让 Pi 多一层；
@@ -1219,7 +1219,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 |---|---|---|---|
 | **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
 | **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
-| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
+| **2**（2026-10-10 代码完成，宿主实测待做） | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
 | 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
 | 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
@@ -1300,6 +1300,8 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 参考：另见 §7.4——共存期 agentbrain worker 与 abrain LSEA/DCC holder 互不感知的问题，与本 gate 的形态选择直接相关。
 
 ### 19.4 L2 Contract
+
+**切片 2 部分关闭（2026-10-10）**：已实现的形状以 `src/l2.ts` 的类型冻结，未冻结项见 §21 同日切片 2 条目第 7 条。
 
 冻结 proposition envelope、facets、stable identity、四种 readable views、组合视图物化、projector version 和 schema migration。
 

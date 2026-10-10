@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * agentbrain 命令行（设计 §7.1）：brief / remember / search / get / confirm / archive / status。
+ * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / status。
  * 预算类数字是代码常量（§2.2），零配置键。
  */
 import { parseArgs } from "node:util";
@@ -711,7 +711,7 @@ const USAGE = `用法:
   ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
-  ab get <id 前缀> [--expand]       --expand 展开记下这条时的原始讨论
+  ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab status                         当前项目、宿主、接线自检`;
