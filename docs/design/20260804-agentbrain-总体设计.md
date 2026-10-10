@@ -1,8 +1,8 @@
 # agentbrain 总体设计
 
 - 状态：**v2.5 宿主无关基线**
-- 最新修订：2026-10-09
-- 实现状态：**切片 1 已实现（仅 Pi，`extension/`）；切片 1.5（宿主无关化）待授权**
+- 最新修订：2026-10-10
+- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
@@ -405,7 +405,7 @@ Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/
 
 ### 7.1 统一入口、接线与会话身份（LOCKED，v2.5）
 
-**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`search`、`get`、`archive`、`status`。不再有 `bind`，项目身份见 §6.1。理由：
+**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`confirm`、`search`、`get`、`archive`、`status`。不再有 `bind`，项目身份见 §6.1。理由：
 
 - 三个宿主都能执行 shell，CLI 不需要任何协议依赖；
 - Pi 的 MCP 要经过适配器，以 MCP 为唯一入口会让 Pi 多一层；
@@ -522,6 +522,8 @@ GATE：后台 worker 形态，见 §19.3（v2.5 重开）。
 | 旧数据导入 | `imported/unverified` proposition 或 Proposal |
 | correction/supersession | 用户始终可触发；自动策略限于规则明确的低风险情况 |
 | physical purge | 受控操作，失败必须显式报告 |
+
+**切片 1.5 的落地形态。** `ab remember` 默认记为未确认（agent 自记，对应"主 Agent 自行推断 → Proposal"）。用户明确要求记的加 `--confirmed`。未确认的条目可被 search/get 看到并标"未确认"，但不进任何 brief。用户在对话中认可后由 agent 执行 `ab confirm <id>`，追加 confirm 事件转正。默认未确认时，漏加参数的代价是一条正确记忆暂不进 brief；默认确认时，代价是错误的坑进入之后每个会话的 brief。这不是审批收件箱（§8.3）：不列待办，brief 只提示未确认条数，由主会话在用到时自然询问。
 
 ### 8.3 INV-INVISIBILITY
 
@@ -810,6 +812,8 @@ v2 保留的**唯一** usage 相关机制是 §9.4 的 Corroboration Count，它
 | pm 里的主会话 | 全局规则 + 各项目概况（每个项目几条坑、最近的变化）；要动某个项目时再 `ab brief <项目>` | 全局与任意已登记项目 |
 | 直接在某仓库打开的会话 | 全局规则 + 该项目的坑与 always-show 决定 | 全局与该项目 |
 | 被派活的子代理（`ab brief --worker`） | 该项目的坑与 always-show 决定 + 标了"子代理也要看"的全局规则；其余全局要点由主会话写进派活说明 | 不写；新坑写进汇报，由主会话决定是否 `remember`（§6.3） |
+
+各类 brief 只放已确认条目（§8.2）。
 
 `ab` 目前分辨不出子代理（§19.5），所以 `--worker` 由派活说明给出；"子代理只读"在切片 1.5 同样靠派活说明约定，切片 4 再做强制。
 
@@ -1200,7 +1204,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | 切片 | 内容 | 覆盖场景 / 痛点 | 关掉的 gate |
 |---|---|---|---|
 | **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
-| **1.5**（v2.5，待授权） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
+| **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
 | 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
 | 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
@@ -1376,6 +1380,12 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-10（切片 1.5 实现）**：
+  1. **切片 1.5 实现完成**。pi 实现主体，Codex 只读 review 提出 10 条（高 5 中 5），修 8 条。未修两条：按 ID 跨项目 get/archive（有意，pm 需管理全部项目）；status 的接线语义检查和 Pensieve 共存检查（价值低）。
+  2. **修复要点**：Purge 后 L3 立即同步；范围屏障移入同一事务并拒绝该 session 的迟到写入；index 写入在 BEGIN IMMEDIATE 内重读水位、水位只进不退，index 水位高于 store 时视为 store 被换、旧索引作废；宿主检测失败不再当作 ephemeral（显式 remember 一律非 ephemeral）；Codex transcript 只过滤已知宿主注入标记；anchor 不存在返回来源不可用；brief 多行条目不截断、超预算整条跳过。
+  3. **实测事实**：Claude Desktop 进程 comm 为含空格的完整路径，`ps` 解析须把 comm/args 放最后一列整行取；Codex 的 `shell_environment_policy inherit = "core"` 会过滤 `AB_HOME` 等自定义环境变量；E2E 中 Codex 读到全局规则但未遵守、Pi 遵守。brief 送达不等于遵守。
+  4. **新增 `--confirmed` 与 `ab confirm`**（§8.2）。
 
 - **2026-10-09 v2.5（宿主无关基线；只授权改文档）**：经过一轮讨论与实测后定稿。
   1. **§2.1 撤销 Pi-only**。用户提出 agentbrain 不应指定 Pi、Claude Code 或 Codex，三者都能作为主体接入。理由：Pi-only 唯一的依据是"在 Pi 上取代 abrain"，而 abrain 已卸载；实测 agentbrain 的 Pi 扩展也已停用（`~/.pi/agent/extensions-disabled-agentbrain`），store 为 0 条事件，切换没有数据要迁；用户日常在三个宿主间切换，也会直接在项目仓库里开会话。
