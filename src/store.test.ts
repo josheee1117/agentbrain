@@ -229,6 +229,34 @@ test("fold 对缺 confirmed 的旧 body 视为已确认", () => {
   s.close();
 });
 
+test("fold：已确认且带 supersedes 的条目使目标变 superseded，目标不存在计 orphan", () => {
+  const s = mem();
+  const pid = s.ensureProject("p");
+  const old = s.remember(pid, "s1", false, { kind: "decision", text: "用文件", confirmed: true, source: src() });
+  const neu = s.remember(pid, "s1", false, {
+    kind: "decision",
+    text: "用 SQLite",
+    confirmed: true,
+    supersedes: old,
+    source: src(),
+  });
+  const p = s.project();
+  assert.equal(p.props.get(old)!.state, "superseded");
+  assert.equal(p.props.get(old)!.superseded_by, neu);
+  assert.equal(p.props.get(neu)!.supersedes, old);
+  const before = p.orphans;
+  s.remember(pid, "s1", false, {
+    kind: "note",
+    text: "指向不存在",
+    confirmed: true,
+    supersedes: "missing-id",
+    source: src(),
+  });
+  assert.equal(s.project().orphans, before + 1);
+  assert.equal(s.project().props.get(neu)!.state, "active");
+  s.close();
+});
+
 test("fold 处理 project_id 为 null", () => {
   const s = mem();
   const id = s.remember(null, "s1", false, { kind: "note", text: "全局事实", confirmed: true, source: src() });

@@ -5,11 +5,11 @@
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { Store, type PropKind, type Proposition } from "./store.ts";
+import { Store, type Host, type PropKind, type Proposition, type SourcePointer } from "./store.ts";
 import { expandSource, latestAnchor } from "./source.ts";
-import { detectHost } from "./host.ts";
+import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 
@@ -205,6 +205,35 @@ function cmdBrief(argv: string[]): void {
   }
 }
 
+const HOSTS: Host[] = ["claude", "codex", "pi"];
+
+/** `--from-worker host:session`。host 必须是三个宿主之一。 */
+function parseFromWorker(raw: string): { host: Host; session_id: string } {
+  const i = raw.indexOf(":");
+  const host = raw.slice(0, i);
+  const session_id = raw.slice(i + 1);
+  if (i <= 0 || !HOSTS.includes(host as Host) || !session_id) die(`--from-worker 必须是 claude|codex|pi:<session_id>，收到: ${raw}`);
+  return { host: host as Host, session_id };
+}
+
+/** 当前主会话。检测失败或没有宿主时为 null。 */
+function relayedBy(): { host: Host; session_id: string | null } | null {
+  const found = detectHost();
+  return found.ok && found.detection ? { host: found.detection.host, session_id: found.detection.session_id } : null;
+}
+
+/** 来源指向子代理。找不到它的 transcript 时 transcript 与 anchor 为 null，并提示。 */
+function workerSource(raw: string, summary: string): { source: SourcePointer; missing: boolean } {
+  const w = parseFromWorker(raw);
+  const found = locateTranscript(w.host, w.session_id);
+  const transcript = found ? realpathSync(found) : null;
+  const anchor = transcript ? latestAnchor(w.host, transcript) : null;
+  return {
+    source: { host: w.host, session_id: w.session_id, transcript, anchor, summary, relayed_by: relayedBy() },
+    missing: transcript === null,
+  };
+}
+
 function cmdRemember(argv: string[]): void {
   const { values } = parseArgs({
     args: argv,
@@ -217,6 +246,7 @@ function cmdRemember(argv: string[]): void {
       project: { type: "string" },
       "for-workers": { type: "boolean", default: false },
       confirmed: { type: "boolean", default: false },
+      "from-worker": { type: "string" },
     },
     strict: true,
   });
@@ -242,18 +272,33 @@ function cmdRemember(argv: string[]): void {
     }
     const found = detectHost();
     const det: Detection | null = found.ok ? found.detection : null;
-    const transcript = det?.transcript ?? null;
-    const anchor = det && transcript ? latestAnchor(det.host, transcript) : null;
-    const id = store.remember(projectId, det?.session_id ?? null, false, {
+    let transcript = det?.transcript ?? null;
+    let anchor = det && transcript ? latestAnchor(det.host, transcript) : null;
+    let source: SourcePointer = {
+      host: det?.host ?? null,
+      session_id: det?.session_id ?? null,
+      transcript,
+      anchor,
+      summary: values.summary,
+    };
+    let missingWorker = false;
+    if (values["from-worker"]) {
+      const w = workerSource(values["from-worker"], values.summary);
+      source = w.source;
+      transcript = source.transcript;
+      missingWorker = w.missing;
+    }
+    const id = store.remember(projectId, source.session_id, false, {
       kind,
       text: values.text,
       why: values.why,
       for_workers: values["for-workers"] || undefined,
       confirmed: values.confirmed === true,
-      source: { host: det?.host ?? null, session_id: det?.session_id ?? null, transcript, anchor, summary: values.summary },
+      source,
     });
     let out = `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
-    if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
+    if (missingWorker) out += "\n未找到子代理会话记录";
+    else if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
     if (!values.confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
     console.log(out);
   } finally {
@@ -309,7 +354,8 @@ function cmdSearch(argv: string[]): void {
       const p = props.get(h.id);
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p && !p.confirmed ? "[未确认]" : "";
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}: ${h.text.split("\n")[0]}`);
+      const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}: ${h.text.split("\n")[0]}`);
     }
   } finally {
     store.close();
@@ -327,16 +373,76 @@ function cmdGet(argv: string[]): void {
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
+    const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, namesOf(store))} ${KIND_LABEL[p.kind]}${p.state === "archived" ? "（已归档）" : ""}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, namesOf(store))} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
+      p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
+      p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
       p.why ? `为什么: ${p.why}` : "",
-      `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}  记录于 ${p.ts.slice(0, 10)}`,
+      `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
     if (values.expand) {
       const disc = expandSource(p.source);
       linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
     }
     console.log(linesOut.join("\n"));
+  } finally {
+    store.close();
+  }
+}
+
+function cmdCorrect(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      text: { type: "string" },
+      summary: { type: "string" },
+      why: { type: "string" },
+      confirmed: { type: "boolean", default: false },
+      "from-worker": { type: "string" },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (!positionals[0]) die("用法: ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>");
+  if (!values.text) die("缺少 --text");
+  if (!values.summary) die("缺少 --summary");
+  const store = open();
+  try {
+    const old = findByPrefix(store, positionals[0]);
+    if (old.state !== "active") die(`只能纠正仍有效的记忆，这条是 ${old.state}: ${short(old.id)}`);
+    let source: SourcePointer;
+    let missingWorker = false;
+    if (values["from-worker"]) {
+      const w = workerSource(values["from-worker"], values.summary);
+      source = w.source;
+      missingWorker = w.missing;
+    } else {
+      const found = detectHost();
+      const det: Detection | null = found.ok ? found.detection : null;
+      const transcript = det?.transcript ?? null;
+      source = {
+        host: det?.host ?? null,
+        session_id: det?.session_id ?? null,
+        transcript,
+        anchor: det && transcript ? latestAnchor(det.host, transcript) : null,
+        summary: values.summary,
+      };
+    }
+    const id = store.remember(old.project_id, source.session_id, false, {
+      kind: old.kind,
+      text: values.text,
+      why: values.why,
+      for_workers: old.for_workers || undefined,
+      confirmed: values.confirmed === true,
+      supersedes: old.id,
+      source,
+    });
+    let out = `已纠正 [${short(id)}] 替代 [${short(old.id)}]: ${values.text}`;
+    if (missingWorker) out += "\n未找到子代理会话记录";
+    else if (source.transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
+    if (!values.confirmed) out += `\n未确认：不进 brief，也不替代旧条目，用户认可后 ab confirm ${short(id)}`;
+    console.log(out);
   } finally {
     store.close();
   }
@@ -440,8 +546,13 @@ const USAGE = `用法:
   ab brief [项目名] [--worker]      开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
+              [--from-worker <claude|codex|pi>:<session_id>]
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --confirmed 用户明确要求记的才加；不加则不进 brief
+                                    --from-worker 把来源指回子代理会话，当前主会话记在转记人上
+  ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
+              [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
+                                    追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
   ab get <id 前缀> [--expand]       --expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
@@ -457,6 +568,7 @@ function main(): void {
   try {
     if (cmd === "brief") return cmdBrief(rest);
     if (cmd === "remember") return cmdRemember(rest);
+    if (cmd === "correct") return cmdCorrect(rest);
     if (cmd === "search") return cmdSearch(rest);
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);

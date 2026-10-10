@@ -92,7 +92,7 @@ function findFile(dir: string, pred: (name: string) => boolean, depth: number): 
   return null;
 }
 
-function locateTranscript(host: Host, sessionId: string): string | null {
+export function locateTranscript(host: Host, sessionId: string): string | null {
   const home = homedir();
   if (host === "claude") return findFile(join(home, ".claude/projects"), (n) => n === `${sessionId}.jsonl`, 2);
   if (host === "codex") return findFile(join(home, ".codex/sessions"), (n) => n.startsWith("rollout-") && n.endsWith(`-${sessionId}.jsonl`), 4);

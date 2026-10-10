@@ -24,6 +24,8 @@ export interface SourcePointer {
   transcript: string | null; // transcript 文件；ephemeral 会话为 null
   anchor: string | null; // 记忆时的定位点：pi entry id / claude uuid / codex ordinal
   summary: string; // 一句话：讨论了什么
+  /** 主会话转记子代理汇报时，记录当时的主会话。 */
+  relayed_by?: { host: Host; session_id: string | null } | null;
 }
 
 export interface RememberBody {
@@ -35,6 +37,8 @@ export interface RememberBody {
   for_workers?: boolean;
   /** 用户明确要求记的为 true。旧数据可缺，投影时缺字段按已确认。 */
   confirmed: boolean;
+  /** 这条是对某条已有记忆的纠正。只有本条已确认时才会把目标标成 superseded。 */
+  supersedes?: string;
 }
 
 export interface Proposition {
@@ -49,7 +53,9 @@ export interface Proposition {
   source: SourcePointer;
   for_workers: boolean;
   confirmed: boolean;
-  state: "active" | "archived";
+  state: "active" | "archived" | "superseded";
+  supersedes?: string;
+  superseded_by?: string;
 }
 
 export interface Projection {
@@ -77,7 +83,7 @@ export interface SearchHit {
   project_id: string | null;
   kind: PropKind;
   text: string;
-  state: "active" | "archived";
+  state: "active" | "archived" | "superseded";
 }
 
 export interface SearchOpts {
@@ -361,6 +367,7 @@ export function fold(rows: EventRow[]): Projection {
         for_workers: b.for_workers === true,
         confirmed: b.confirmed !== false,
         state: "active",
+        supersedes: b.supersedes,
       });
       continue;
     }
@@ -374,6 +381,17 @@ export function fold(rows: EventRow[]): Projection {
       continue;
     }
     target.state = r.kind === "archive" ? "archived" : "active";
+  }
+  // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
+  for (const p of props.values()) {
+    if (!p.confirmed || !p.supersedes || p.state !== "active") continue;
+    const target = props.get(p.supersedes);
+    if (!target) {
+      orphans++;
+      continue;
+    }
+    target.state = "superseded";
+    target.superseded_by = p.id;
   }
   return { props, orphans, ephemeral, purged };
 }

@@ -215,6 +215,55 @@ test("search、get、archive 基本流程", () => {
   assert.match(ab(["search", "全局锁"], alpha).out, /全局锁/);
 });
 
+test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 search --archived 标已被替代", () => {
+  const own = join(dir, "correct-home");
+  const run = (args: string[]) => {
+    try {
+      const out = execFileSync("node", [CLI, ...args], {
+        cwd: alpha,
+        encoding: "utf8",
+        env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION },
+      });
+      return { out, err: "", code: 0 };
+    } catch (e) {
+      const err = e as { stdout?: string; stderr?: string; status?: number };
+      return { out: err.stdout ?? "", err: err.stderr ?? "", code: err.status ?? -1 };
+    }
+  };
+  const old = run(["remember", "--confirmed", "--kind", "pitfall", "--text", "锁用全局一把", "--summary", "锁"]);
+  assert.equal(old.code, 0, old.err);
+  const oldId = old.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const neu = run(["correct", oldId, "--text", "锁按账户分", "--summary", "纠正锁"]);
+  assert.equal(neu.code, 0, neu.err);
+  const neuId = neu.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const before = run(["brief"]);
+  assert.match(before.out, /锁用全局一把/);
+  assert.doesNotMatch(before.out, /锁按账户分/);
+  assert.equal(run(["confirm", neuId]).code, 0);
+  const after = run(["brief"]);
+  assert.doesNotMatch(after.out, /锁用全局一把/);
+  assert.match(after.out, /锁按账户分/);
+  assert.match(run(["search", "全局一把", "--archived"]).out, /已被替代/);
+  const again = run(["correct", oldId, "--text", "再改一次", "--summary", "二次"]);
+  assert.notEqual(again.code, 0);
+  assert.match(again.err, /只能纠正仍有效的记忆/);
+});
+
+test("--from-worker 格式错误报错；找不到的子会话仍记下且来源指向 pi", () => {
+  const bad = ab(["remember", "--kind", "note", "--text", "x", "--summary", "s", "--from-worker", "nope:abc"], alpha);
+  assert.notEqual(bad.code, 0);
+  assert.match(bad.err, /--from-worker/);
+  const r = ab(
+    ["remember", "--confirmed", "--kind", "pitfall", "--text", "子代理报的坑", "--summary", "汇报", "--from-worker", "pi:does-not-exist"],
+    alpha,
+  );
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /未找到子代理会话记录/);
+  const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const g = ab(["get", id], alpha);
+  assert.match(g.out, /（pi）（无 transcript）（经 pi 主会话转记）/);
+});
+
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
