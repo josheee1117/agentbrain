@@ -68,6 +68,7 @@ async function embedBatch(
   cfg: EmbedConfig,
   key: string,
   fetchImpl: typeof fetch,
+  timeoutMs: number,
 ): Promise<Float32Array[]> {
   const url = `${cfg.baseUrl.replace(/\/+$/, "")}/embeddings`;
   let res: Response;
@@ -76,7 +77,7 @@ async function embedBatch(
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: cfg.model, input: texts, encoding_format: "float" }),
-      signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
     throw new Error(`embedding 请求失败: ${(e as Error).message}`);
@@ -99,18 +100,19 @@ async function embedBatch(
   return vecs as Float32Array[];
 }
 
-/** 空输入返回 []。opts.fetch 注入测试用的假实现。 */
+/** 空输入返回 []。opts.fetch 注入测试用的假实现。timeoutMs 默认 8000。 */
 export async function embed(
   texts: string[],
   cfg: EmbedConfig,
   key: string,
-  opts?: { fetch?: typeof fetch },
+  opts?: { fetch?: typeof fetch; timeoutMs?: number },
 ): Promise<Float32Array[]> {
   if (texts.length === 0) return [];
   const fetchImpl = opts?.fetch ?? fetch;
+  const timeoutMs = opts?.timeoutMs ?? EMBED_TIMEOUT_MS;
   const out: Float32Array[] = [];
   for (let i = 0; i < texts.length; i += EMBED_BATCH) {
-    out.push(...(await embedBatch(texts.slice(i, i + EMBED_BATCH), cfg, key, fetchImpl)));
+    out.push(...(await embedBatch(texts.slice(i, i + EMBED_BATCH), cfg, key, fetchImpl, timeoutMs)));
   }
   return out;
 }

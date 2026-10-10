@@ -21,7 +21,8 @@ const BUSY_TIMEOUT_MS = 5000;
 export const MAX_EMBED_PER_SYNC = 200;
 const HYBRID_FTS_K = 20;
 const HYBRID_VEC_K = 20;
-const VEC_MIN_SIM = 0.35; // CANDIDATE，切片 2 测试集校准
+// 2026-10-10 测试集（53 条 / 121 查询）校准：0.45 召回 93%、负例误报 33%；每轮召回另用更严的 minSim。
+const VEC_MIN_SIM = 0.45;
 
 export type Embedder = ((texts: string[]) => Promise<Float32Array[]>) & { model?: string };
 
@@ -100,6 +101,10 @@ export interface SearchOpts {
   kind?: PropKind;
   includeArchived?: boolean;
   limit?: number;
+  /** recall 用：向量缺了就降级，不在这次检索里补。 */
+  skipSync?: boolean;
+  /** 向量命中的最低余弦，默认 VEC_MIN_SIM。 */
+  minSim?: number;
 }
 
 const SCHEMA = `
@@ -374,10 +379,12 @@ export class Store {
     if (!embedder) return { hits: ftsHits().slice(0, limit), degraded: "未配置 embedding" };
     const reasons: string[] = [];
     const model = embedder.model ?? this.embeddingModel() ?? "未指定模型";
-    try {
-      await this.syncVectors(embedder, model);
-    } catch (e) {
-      reasons.push(`向量未更新：${e instanceof Error ? e.message : String(e)}`);
+    if (!opts.skipSync) {
+      try {
+        await this.syncVectors(embedder, model);
+      } catch (e) {
+        reasons.push(`向量未更新：${e instanceof Error ? e.message : String(e)}`);
+      }
     }
     try {
       const [queryVec] = await embedder([query]);
@@ -395,7 +402,7 @@ export class Store {
         if (!opts.includeArchived && p.state !== "active") continue;
         if (textHash(indexText(p)) !== row.text_hash) continue;
         const similarity = cosine(queryVec, fromBlob(row.vec));
-        if (similarity >= VEC_MIN_SIM) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });
+        if (similarity >= (opts.minSim ?? VEC_MIN_SIM)) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });
       }
       dense.sort((a, b) => b.similarity - a.similarity);
       // CANDIDATE：RRF k=60，切片 2 测试集校准融合方式。

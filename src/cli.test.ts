@@ -4,7 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -338,6 +338,101 @@ test("假 embedding：remember/correct 同步、search 混合、status 数量、
   const invalid = run(["search", "词", "--not-an-option"]);
   assert.equal(invalid.code, 1);
   assert.match(invalid.err, /Unknown option.*not-an-option[\s\S]*用法:/);
+});
+
+function recall(args: string[], cwd: string, storeHome: string, stdin?: string): { out: string; err: string; code: number } {
+  const r = spawnSync("node", ["--import", networkGuard, CLI, ...args], {
+    cwd,
+    encoding: "utf8",
+    input: stdin,
+    env: {
+      ...process.env,
+      AB_HOME: storeHome,
+      AB_REGISTRY: repos,
+      HOME: fakeHome,
+      PATH: `${bin}:${process.env.PATH}`,
+      CLAUDE_CODE_SESSION_ID: "",
+      CODEX_THREAD_ID: "",
+      PI_SESSION_ID: SESSION,
+    },
+  });
+  return { out: r.stdout ?? "", err: r.stderr ?? "", code: r.status ?? -1 };
+}
+
+test("recall --hook 命中项目坑，排除未确认、归档、事实和未标 for_workers 的全局规则", () => {
+  const own = join(dir, "recall-home");
+  const remember = (args: string[], cwd = alpha) => ab(["remember", ...args], cwd, own);
+  const pit = remember(["--confirmed", "--kind", "pitfall", "--text", "别在 alpha 召回里用全局锁", "--summary", "召回"]);
+  assert.equal(pit.code, 0, pit.err);
+  assert.equal(remember(["--kind", "pitfall", "--text", "未确认的召回坑不该出现", "--summary", "召回"]).code, 0);
+  const archived = remember(["--confirmed", "--kind", "decision", "--text", "已归档的召回决定不该出现", "--summary", "召回"]);
+  assert.equal(archived.code, 0, archived.err);
+  const archivedId = archived.out.match(/\[([0-9a-f]{8})\]/)![1];
+  assert.equal(ab(["archive", archivedId], alpha, own).code, 0);
+  assert.equal(remember(["--confirmed", "--kind", "note", "--text", "召回事实不该出现", "--summary", "召回"]).code, 0);
+  assert.equal(
+    remember(["--confirmed", "--global", "--kind", "rule", "--text", "未标 for_workers 的全局规则不该出现", "--summary", "召回"]).code,
+    0,
+  );
+  const marked = remember([
+    "--confirmed",
+    "--global",
+    "--for-workers",
+    "--kind",
+    "rule",
+    "--text",
+    "子代理也要看的召回规则",
+    "--summary",
+    "召回",
+  ]);
+  assert.equal(marked.code, 0, marked.err);
+
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "召回 全局锁 子代理", cwd: alpha, extra: 1 }));
+  assert.equal(hit.code, 0, hit.err);
+  assert.equal(hit.err, "");
+  const json = JSON.parse(hit.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+  assert.equal(json.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  const ctx = json.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /<agentbrain-recall>[\s\S]*别在 alpha 召回里用全局锁[\s\S]*<\/agentbrain-recall>/);
+  assert.match(ctx, /\[[0-9a-f]{8}\] 坑:/);
+  assert.match(ctx, /子代理也要看的召回规则/);
+  assert.match(ctx, /\[[0-9a-f]{8}\] 规则:/);
+  assert.doesNotMatch(ctx, /未确认的召回坑|已归档的召回决定|召回事实|未标 for_workers/);
+
+  const plain = recall(["recall", "子代理也要看的召回规则"], alpha, own);
+  assert.equal(plain.code, 0, plain.err);
+  assert.match(plain.out, /^<agentbrain-recall>\n/);
+  assert.doesNotMatch(plain.out, /hookSpecificOutput/);
+
+  const short = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "  召  ", cwd: alpha }));
+  const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 召回", cwd: alpha }));
+  const bad = recall(["recall", "--hook"], alpha, own, "not json");
+  assert.equal(short.code, 0);
+  assert.equal(short.out, "");
+  assert.equal(short.err, "");
+  assert.equal(slash.code, 0);
+  assert.equal(slash.out, "");
+  assert.equal(bad.code, 0);
+  assert.equal(bad.out, "");
+  assert.equal(bad.err, "");
+});
+
+test("recall 超过 3 条只出前 3 条", () => {
+  const own = join(dir, "recall-limit");
+  for (let i = 0; i < 5; i++) {
+    const r = ab(
+      ["remember", "--confirmed", "--kind", "pitfall", "--text", `召回限额第 ${i} 条坑`, "--summary", "限额"],
+      alpha,
+      own,
+    );
+    assert.equal(r.code, 0, r.err);
+  }
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "召回限额", cwd: alpha }));
+  assert.equal(hit.code, 0, hit.err);
+  const ctx = (JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
+  const lines = ctx.split("\n").filter((l) => l.startsWith("- ["));
+  assert.equal(lines.length, 3);
+  assert.match(ctx, /召回限额第 [0-4] 条坑/);
 });
 
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。

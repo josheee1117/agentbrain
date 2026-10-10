@@ -553,11 +553,13 @@ test("混合检索：余弦门槛排除低相似候选", async () => {
     s.remember(null, "s", false, { kind: "note", text: "远", confirmed: true, source: src() });
     const embedder: Embedder = async (texts) => texts.map((text) => {
       if (text === "查询") return Float32Array.from([1, 0]);
-      const similarity = text === "近" ? 0.36 : 0.34;
+      const similarity = text === "近" ? 0.46 : 0.44;
       return Float32Array.from([similarity, Math.sqrt(1 - similarity * similarity)]);
     });
     const result = await s.searchHybrid("查询", { projects: [], includeGlobal: true }, embedder);
     assert.deepEqual(result.hits.map((p) => p.id), [pass]);
+    const strict = await s.searchHybrid("查询", { projects: [], includeGlobal: true, minSim: 0.5 }, embedder);
+    assert.deepEqual(strict.hits, []);
   } finally { s.close(); }
 });
 

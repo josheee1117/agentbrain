@@ -15,6 +15,12 @@ import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 
 const BRIEF_MAX_CHARS = 2000;
+const RECALL_MAX_ITEMS = 3;
+const RECALL_MAX_CHARS = 600;
+const RECALL_EMBED_TIMEOUT_MS = 3000;
+// 测试集上 0.55 负例误报 0%、召回 63%；0.50 召回 87% 但误报 13%。每轮注入宁缺毋滥。
+const RECALL_MIN_SIM = 0.55;
+const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
@@ -34,13 +40,16 @@ function open(): Store {
   return new Store(join(root, "store.db"), join(root, "index.db"));
 }
 
-function createEmbedder(): { embedder: Embedder | null; reason: string | null } {
+function createEmbedder(timeoutMs?: number): { embedder: Embedder | null; reason: string | null } {
   try {
     const config = loadEmbedConfig(home());
     if ("error" in config) return { embedder: null, reason: config.error };
     const key = readKey();
     if (typeof key !== "string") return { embedder: null, reason: key.error };
-    const embedder = Object.assign((texts: string[]) => embed(texts, config, key), { model: config.model });
+    const embedder = Object.assign(
+      (texts: string[]) => embed(texts, config, key, timeoutMs === undefined ? undefined : { timeoutMs }),
+      { model: config.model },
+    );
     return { embedder, reason: null };
   } catch (e) {
     return { embedder: null, reason: e instanceof Error ? e.message : String(e) };
@@ -214,6 +223,97 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
 }
 
 // ---------- 子命令 ----------
+
+// ---------- recall ----------
+
+function readStdin(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    process.stdin.on("data", (c) => chunks.push(c));
+    process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    process.stdin.on("error", reject);
+  });
+}
+
+/** 命中时返回 <agentbrain-recall> 块；跳过或没有命中返回空串。 */
+async function recall(store: Store, query: string, cwd: string): Promise<string> {
+  const prompt = query.trim();
+  if (prompt.length < 4 || prompt.startsWith("/")) return "";
+  const here = resolveProject(cwd);
+  const projects = here ? [projectIdByName(store, here.name)] : [];
+  const { embedder } = createEmbedder(RECALL_EMBED_TIMEOUT_MS);
+  const { hits } = await store.searchHybrid(prompt, {
+    projects,
+    includeGlobal: true,
+    includeArchived: true,
+    limit: 20,
+    skipSync: true,
+    minSim: RECALL_MIN_SIM,
+  }, embedder);
+  const props = store.project().props;
+  const picked = hits.flatMap((h) => {
+    const p = props.get(h.id);
+    if (!p || p.state !== "active" || !p.confirmed || !RECALL_KINDS.includes(p.kind)) return [];
+    if (p.project_id === null && !p.for_workers) return [];
+    if (p.project_id !== null && (!here || p.project_id !== projects[0])) return [];
+    return [p];
+  }).slice(0, RECALL_MAX_ITEMS);
+  if (!picked.length) return "";
+  const head = "<agentbrain-recall>\n";
+  const tail = "\n</agentbrain-recall>\n";
+  const rows: string[] = [];
+  for (const p of picked) {
+    const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
+    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}: ${body}`;
+    const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
+    const room = RECALL_MAX_CHARS - used;
+    if (room <= 0) break;
+    if (line.length > room) {
+      if (room < 2) break;
+      line = line.slice(0, room - 1) + "…";
+      rows.push(line);
+      break;
+    }
+    rows.push(line);
+  }
+  if (!rows.length) return "";
+  return head + rows.join("\n") + tail;
+}
+
+async function cmdRecall(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { hook: { type: "boolean", default: false } },
+    strict: true,
+    allowPositionals: true,
+  });
+  let query: string;
+  let cwd: string;
+  if (values.hook) {
+    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown };
+    if (typeof raw.prompt !== "string") return;
+    query = raw.prompt;
+    cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
+  } else {
+    query = positionals.join(" ");
+    cwd = process.cwd();
+    if (!query.trim()) return;
+  }
+  const store = open();
+  try {
+    const block = await recall(store, query, cwd);
+    if (!block) return;
+    if (values.hook) {
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
+      }) + "\n");
+    } else {
+      process.stdout.write(block);
+    }
+  } finally {
+    store.close();
+  }
+}
 
 function cmdBrief(argv: string[]): void {
   const { values, positionals } = parseArgs({
@@ -589,6 +689,8 @@ const USAGE = `用法:
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
+  ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆
+                                    --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
   ab get <id 前缀> [--expand]       --expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
@@ -603,6 +705,14 @@ async function main(): Promise<void> {
   }
   try {
     if (cmd === "brief") return cmdBrief(rest);
+    if (cmd === "recall") {
+      try {
+        await cmdRecall(rest);
+      } catch {
+        // 召回失败不能让宿主这一轮失败，也不写 stderr。
+      }
+      return;
+    }
     if (cmd === "remember") return await cmdRemember(rest);
     if (cmd === "correct") return await cmdCorrect(rest);
     if (cmd === "search") return await cmdSearch(rest);
