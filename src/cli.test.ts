@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,6 +22,26 @@ mkdirSync(bin);
 // CLI 的父进程就是本测试进程；ps -A -o pid=,ppid=,<col>= 都报它为 pi。
 writeFileSync(join(bin, "ps"), `#!/bin/sh\necho '${process.pid} 1 pi'\n`);
 chmodSync(join(bin, "ps"), 0o755);
+const keyRead = join(dir, "fake-key-read");
+writeFileSync(join(bin, "security"), `#!/bin/sh\ntouch '${keyRead}'\necho fixture-key\n`);
+chmodSync(join(bin, "security"), 0o755);
+const networkGuard = join(dir, "offline.mjs");
+writeFileSync(networkGuard, `
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import { syncBuiltinESMExports } from 'node:module';
+const blocked = () => { throw new Error('测试禁止真实网络请求'); };
+http.request = http.get = https.request = https.get = net.connect = net.createConnection = blocked;
+net.Socket.prototype.connect = blocked;
+syncBuiltinESMExports();
+globalThis.fetch = async (url, init) => {
+  if (String(url) !== 'https://embedding.invalid/v1/embeddings') blocked();
+  const body = JSON.parse(init.body);
+  if (body.model === 'fail') return new Response(JSON.stringify({ error: { message: '假接口故障' } }), { status: 503 });
+  return new Response(JSON.stringify({ data: body.input.map((text, index) => ({ index, embedding: [1, 0, 0] })) }));
+};
+`);
 const transcriptDir = join(fakeHome, ".pi/agent/sessions/x");
 mkdirSync(transcriptDir, { recursive: true });
 writeFileSync(
@@ -47,14 +67,14 @@ mkdirSync(nowhere);
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-function ab(args: string[], cwd: string): { out: string; err: string; code: number } {
+function ab(args: string[], cwd: string, storeHome = home): { out: string; err: string; code: number } {
   try {
-    const out = execFileSync("node", [CLI, ...args], {
+    const out = execFileSync("node", ["--import", networkGuard, CLI, ...args], {
       cwd,
       encoding: "utf8",
       env: {
         ...process.env,
-        AB_HOME: home,
+        AB_HOME: storeHome,
         AB_REGISTRY: repos,
         HOME: fakeHome,
         PATH: `${bin}:${process.env.PATH}`,
@@ -219,7 +239,7 @@ test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 se
   const own = join(dir, "correct-home");
   const run = (args: string[]) => {
     try {
-      const out = execFileSync("node", [CLI, ...args], {
+      const out = execFileSync("node", ["--import", networkGuard, CLI, ...args], {
         cwd: alpha,
         encoding: "utf8",
         env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION },
@@ -264,6 +284,62 @@ test("--from-worker 格式错误报错；找不到的子会话仍记下且来源
   assert.match(g.out, /（pi）（无 transcript）（经 pi 主会话转记）/);
 });
 
+test("没有 embedding 配置：search 提示仅全文检索，status 报不可用，不读 key", () => {
+  rmSync(keyRead, { force: true });
+  assert.equal(existsSync(join(home, "embedding.json")), false);
+  const result = ab(["search", "不存在的搜索关键词"], alpha);
+  assert.equal(result.code, 0, result.err);
+  assert.match(result.out, /没有匹配的记忆。\n（仅全文检索：/);
+  const status = ab(["status"], alpha);
+  assert.equal(status.code, 0, status.err);
+  assert.match(status.out, /向量: 不可用（.*embedding\.json/);
+  const remembered = ab(["remember", "--kind", "note", "--text", "无配置也记下", "--summary", "降级"], alpha);
+  assert.equal(remembered.code, 0, remembered.err);
+  assert.match(remembered.out, /\n向量未更新：.*embedding\.json\n$/);
+  const id = remembered.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const corrected = ab(["correct", id, "--text", "无配置也纠正", "--summary", "降级"], alpha);
+  assert.equal(corrected.code, 0, corrected.err);
+  assert.match(corrected.out, /\n向量未更新：.*embedding\.json\n$/);
+  assert.equal(existsSync(keyRead), false);
+});
+
+test("假 embedding：remember/correct 同步、search 混合、status 数量、模型切换与失败降级", () => {
+  const own = join(dir, "vector-home");
+  mkdirSync(own);
+  const config = (model: string) => writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model }));
+  const run = (args: string[]) => ab(args, alpha, own);
+  config("fake-one");
+  const old = run(["remember", "--confirmed", "--kind", "note", "--text", "猫咪很可爱", "--summary", "假向量"]);
+  assert.equal(old.code, 0, old.err);
+  assert.doesNotMatch(old.out, /向量未更新/);
+  assert.match(run(["status"]).out, /向量: fake-one，已向量化 1\/1/);
+  const id = old.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const corrected = run(["correct", id, "--confirmed", "--text", "小猫需要照顾", "--summary", "纠正"]);
+  assert.equal(corrected.code, 0, corrected.err);
+  assert.doesNotMatch(corrected.out, /向量未更新/);
+  const found = run(["search", "喵星人"]);
+  assert.equal(found.code, 0, found.err);
+  assert.match(found.out, /小猫需要照顾/);
+  assert.doesNotMatch(found.out, /仅全文检索|猫咪很可爱/);
+  assert.match(run(["status"]).out, /向量: fake-one，已向量化 2\/2/);
+  config("fake-two");
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/2/);
+  assert.equal(run(["search", "喵星人"]).code, 0);
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 2\/2/);
+  config("fail");
+  const failed = run(["remember", "--confirmed", "--kind", "note", "--text", "假接口失败也要保存", "--summary", "失败"]);
+  assert.equal(failed.code, 0, failed.err);
+  assert.match(failed.out, /向量未更新：.*HTTP 503.*假接口故障/);
+  const fallback = run(["search", "接口失败"]);
+  assert.equal(fallback.code, 0, fallback.err);
+  assert.match(fallback.out, /假接口失败也要保存/);
+  assert.match(fallback.out, /仅全文检索：.*假接口故障/);
+  assert.doesNotMatch(failed.out + fallback.out, /fixture-key/);
+  const invalid = run(["search", "词", "--not-an-option"]);
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.err, /Unknown option.*not-an-option[\s\S]*用法:/);
+});
+
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
@@ -271,7 +347,7 @@ test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const pit = (i: number) => `第${i}条长坑专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
   const run = (args: string[], cwd: string) => {
     try {
-      const out = execFileSync("node", [CLI, ...args], {
+      const out = execFileSync("node", ["--import", networkGuard, CLI, ...args], {
         cwd,
         encoding: "utf8",
         env: {

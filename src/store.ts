@@ -11,12 +11,19 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { cosine, fromBlob, toBlob } from "./embed.ts";
 
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge";
 export type Host = "claude" | "codex" | "pi";
 
 const BUSY_TIMEOUT_MS = 5000;
+export const MAX_EMBED_PER_SYNC = 200;
+const HYBRID_FTS_K = 20;
+const HYBRID_VEC_K = 20;
+const VEC_MIN_SIM = 0.35; // CANDIDATE，切片 2 测试集校准
+
+export type Embedder = ((texts: string[]) => Promise<Float32Array[]>) & { model?: string };
 
 export interface SourcePointer {
   host: Host | null;
@@ -115,6 +122,7 @@ CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
 
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, text_hash TEXT NOT NULL, vec BLOB NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS props USING fts5(
   id UNINDEXED, project_id UNINDEXED, kind UNINDEXED, state UNINDEXED, text,
   tokenize='trigram');
@@ -126,6 +134,14 @@ function openDb(path: string): DatabaseSync {
   db.exec(`PRAGMA busy_timeout=${BUSY_TIMEOUT_MS}`);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
   return db;
+}
+
+function indexText(p: Proposition): string {
+  return p.why ? `${p.text}\n${p.why}` : p.text;
+}
+
+function textHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 export class Store {
@@ -283,14 +299,119 @@ export class Store {
       this.fts.exec("DELETE FROM props");
       const ins = this.fts.prepare("INSERT INTO props(id,project_id,kind,state,text) VALUES(?,?,?,?,?)");
       for (const p of projection.props.values()) {
-        ins.run(p.id, p.project_id ?? "", p.kind, p.state, p.why ? `${p.text}\n${p.why}` : p.text);
+        ins.run(p.id, p.project_id ?? "", p.kind, p.state, indexText(p));
       }
+      this.fts.exec("DELETE FROM vecs WHERE id NOT IN (SELECT id FROM props)");
       this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('seq',?)").run(String(seq));
       this.fts.exec("COMMIT");
       return true;
     } catch (e) {
       if (this.fts.isTransaction) this.fts.exec("ROLLBACK");
       throw e;
+    }
+  }
+
+  private embeddingModel(): string | null {
+    const row = this.fts.prepare("SELECT value FROM meta WHERE key='embed_model'").get() as { value: string } | undefined;
+    return row?.value ?? null;
+  }
+
+  vectorStatus(): { model: string | null; embedded: number; total: number } {
+    const total = this.project().props.size;
+    return { model: this.embeddingModel(), embedded: total - this.pendingVectors().length, total };
+  }
+
+  private pendingVectors(): { id: string; text: string; text_hash: string }[] {
+    const hashes = new Map(
+      (this.fts.prepare("SELECT id,text_hash FROM vecs").all() as { id: string; text_hash: string }[])
+        .map((r) => [r.id, r.text_hash]),
+    );
+    return [...this.project().props.values()].map((p) => {
+      const text = indexText(p);
+      return { id: p.id, text, text_hash: textHash(text) };
+    }).filter((p) => hashes.get(p.id) !== p.text_hash);
+  }
+
+  async syncVectors(embedder: Embedder, model: string): Promise<{ embedded: number; pending: number }> {
+    this.fts.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.embeddingModel() !== model) {
+        this.fts.exec("DELETE FROM vecs");
+        this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('embed_model',?)").run(model);
+      }
+      this.fts.exec("COMMIT");
+    } catch (e) {
+      if (this.fts.isTransaction) this.fts.exec("ROLLBACK");
+      throw e;
+    }
+    const batch = this.pendingVectors().slice(0, MAX_EMBED_PER_SYNC);
+    if (!batch.length) return { embedded: 0, pending: 0 };
+    const vectors = await embedder(batch.map((p) => p.text));
+    if (vectors.length !== batch.length) throw new Error("embedding 返回的条数不一致");
+    let embedded = 0;
+    this.fts.exec("BEGIN IMMEDIATE");
+    try {
+      if (this.embeddingModel() !== model) throw new Error("embedding 模型在请求期间已变化");
+      const current = this.project().props;
+      const ins = this.fts.prepare("INSERT OR REPLACE INTO vecs(id,text_hash,vec) VALUES(?,?,?)");
+      for (let i = 0; i < batch.length; i++) {
+        const p = current.get(batch[i].id);
+        if (!p || textHash(indexText(p)) !== batch[i].text_hash) continue;
+        ins.run(p.id, batch[i].text_hash, toBlob(vectors[i]));
+        embedded++;
+      }
+      this.fts.exec("COMMIT");
+    } catch (e) {
+      if (this.fts.isTransaction) this.fts.exec("ROLLBACK");
+      throw e;
+    }
+    return { embedded, pending: this.pendingVectors().length };
+  }
+
+  async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; degraded: string | null }> {
+    const limit = opts.limit ?? 8;
+    const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });
+    if (!embedder) return { hits: ftsHits().slice(0, limit), degraded: "未配置 embedding" };
+    const reasons: string[] = [];
+    const model = embedder.model ?? this.embeddingModel() ?? "未指定模型";
+    try {
+      await this.syncVectors(embedder, model);
+    } catch (e) {
+      reasons.push(`向量未更新：${e instanceof Error ? e.message : String(e)}`);
+    }
+    try {
+      const [queryVec] = await embedder([query]);
+      if (!queryVec) throw new Error("embedding 未返回查询向量");
+      if (this.embeddingModel() !== model) throw new Error("embedding 模型在请求期间已变化");
+      const lexical = ftsHits();
+      const props = this.project().props;
+      const dense: { hit: SearchHit; similarity: number }[] = [];
+      const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
+      for (const row of rows) {
+        const p = props.get(row.id);
+        if (!p) continue;
+        if (p.project_id === null ? !opts.includeGlobal : opts.projects !== "all" && !opts.projects.includes(p.project_id)) continue;
+        if (opts.kind && p.kind !== opts.kind) continue;
+        if (!opts.includeArchived && p.state !== "active") continue;
+        if (textHash(indexText(p)) !== row.text_hash) continue;
+        const similarity = cosine(queryVec, fromBlob(row.vec));
+        if (similarity >= VEC_MIN_SIM) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });
+      }
+      dense.sort((a, b) => b.similarity - a.similarity);
+      // CANDIDATE：RRF k=60，切片 2 测试集校准融合方式。
+      const fused = new Map<string, { hit: SearchHit; score: number }>();
+      for (const list of [lexical, dense.slice(0, HYBRID_VEC_K).map((p) => p.hit)]) {
+        list.forEach((hit, i) => {
+          const entry = fused.get(hit.id) ?? { hit, score: 0 };
+          entry.score += 1 / (60 + i + 1);
+          fused.set(hit.id, entry);
+        });
+      }
+      const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => p.hit);
+      return { hits, degraded: reasons.length ? reasons.join("；") : null };
+    } catch (e) {
+      reasons.push(`向量检索不可用：${e instanceof Error ? e.message : String(e)}`);
+      return { hits: ftsHits().slice(0, limit), degraded: reasons.join("；") };
     }
   }
 

@@ -8,7 +8,9 @@ import { mkdtempSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Store, fold, type Projection, type RememberBody } from "./store.ts";
+import { createHash } from "node:crypto";
+import { fromBlob } from "./embed.ts";
+import { Store, fold, MAX_EMBED_PER_SYNC, type Embedder, type Projection, type RememberBody } from "./store.ts";
 
 function mem() {
   return new Store(":memory:", ":memory:");
@@ -20,6 +22,12 @@ const src = (summary = "讨论"): RememberBody["source"] => ({
   anchor: null,
   summary,
 });
+
+const fakeEmbed: Embedder = async (texts) => texts.map((text) => Float32Array.from([
+  /[猫喵]/.test(text) ? 1 : 0,
+  /[狗犬]/.test(text) ? 1 : 0,
+  /[雨湿]/.test(text) ? 1 : 0,
+]));
 
 test("相同 L1 → 相同 L2（纯函数，重复 fold 结果相同）", () => {
   const s = mem();
@@ -322,4 +330,249 @@ test("另一个进程持有写锁时打开 Store 不抛错", async () => {
     if (child.exitCode === null) child.kill();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("混合检索：无字面重叠、FTS 搜不到时向量能召回", async () => {
+  const s = mem();
+  try {
+    const id = s.remember(null, "cat", false, { kind: "note", text: "猫咪很可爱", confirmed: true, source: src() });
+    s.remember(null, "dog", false, { kind: "note", text: "狗喜欢散步", confirmed: true, source: src() });
+    const opts = { projects: [], includeGlobal: true };
+    assert.deepEqual(s.search("喵星人", opts), []);
+    let queries = 0;
+    const result = await s.searchHybrid("喵星人", opts, async (texts) => {
+      if (texts.includes("喵星人")) { queries++; assert.deepEqual(texts, ["喵星人"]); }
+      return fakeEmbed(texts);
+    });
+    assert.equal(result.degraded, null);
+    assert.deepEqual(result.hits.map((p) => p.id), [id]);
+    assert.equal(queries, 1);
+  } finally { s.close(); }
+});
+
+test("向量 Purge：提交后立即删除 vecs，无需再次 syncVectors", async () => {
+  const s = mem();
+  try {
+    const gone = s.remember(null, "gone", false, { kind: "note", text: "猫咪", confirmed: true, source: src() });
+    const keep = s.remember(null, "keep", false, { kind: "note", text: "狗狗", confirmed: true, source: src() });
+    await s.syncVectors(fakeEmbed, "fake");
+    s.purgeSession("gone");
+    const rows = (s as any).fts.prepare("SELECT id FROM vecs").all();
+    assert.deepEqual(rows.map((p: { id: string }) => p.id), [keep]);
+    assert.equal(s.project().props.has(gone), false);
+  } finally { s.close(); }
+});
+
+test("向量写回：embedding 无写锁，期间另一实例 Purge 不会复活向量", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-vec-purge-"));
+  const a = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const b = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  try {
+    a.remember(null, "gone", false, { kind: "note", text: "猫咪", confirmed: true, source: src() });
+    const keep = a.remember(null, "keep", false, { kind: "note", text: "狗狗", confirmed: true, source: src() });
+    const result = await a.syncVectors(async (texts) => {
+      assert.equal((a as any).fts.isTransaction, false);
+      assert.equal((a as any).db.isTransaction, false);
+      b.purgeSession("gone");
+      return fakeEmbed(texts);
+    }, "fake");
+    assert.deepEqual(result, { embedded: 1, pending: 0 });
+    assert.deepEqual((a as any).fts.prepare("SELECT id FROM vecs").all().map((p: { id: string }) => p.id), [keep]);
+  } finally {
+    a.close(); b.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("向量同步：全部 state 均向量化，文本相同不重复请求，模型变化清空重算", async () => {
+  const s = mem();
+  try {
+    const old = s.remember(null, "s", false, { kind: "note", text: "猫", why: "狗", confirmed: true, source: src() });
+    const archived = s.remember(null, "s", false, { kind: "note", text: "雨", confirmed: false, source: src() });
+    s.lifecycle("archive", archived, "s");
+    s.remember(null, "s", false, { kind: "note", text: "喵", confirmed: true, supersedes: old, source: src() });
+    let calls = 0;
+    const embedder: Embedder = async (texts) => {
+      calls++;
+      assert.deepEqual(texts, ["猫\n狗", "雨", "喵"]);
+      return fakeEmbed(texts);
+    };
+    assert.deepEqual(await s.syncVectors(embedder, "one"), { embedded: 3, pending: 0 });
+    assert.deepEqual(await s.syncVectors(embedder, "one"), { embedded: 0, pending: 0 });
+    assert.equal(calls, 1);
+    assert.deepEqual(s.vectorStatus(), { model: "one", embedded: 3, total: 3 });
+    const row = (s as any).fts.prepare("SELECT text_hash,vec FROM vecs WHERE id=?").get(old);
+    assert.equal(row.text_hash, createHash("sha256").update("猫\n狗").digest("hex"));
+    assert.deepEqual(fromBlob(row.vec), Float32Array.from([1, 1, 0]));
+    assert.deepEqual(await s.syncVectors(async (texts) => {
+      assert.equal((s as any).fts.prepare("SELECT count(*) AS n FROM vecs").get().n, 0);
+      assert.equal(s.vectorStatus().model, "two");
+      return embedder(texts);
+    }, "two"), { embedded: 3, pending: 0 });
+    assert.equal(calls, 2);
+  } finally { s.close(); }
+});
+
+test("向量同步：每次最多 200 条，返回剩余数量", async () => {
+  const s = mem();
+  try {
+    for (let i = 0; i < MAX_EMBED_PER_SYNC + 5; i++) {
+      s.remember(null, null, false, { kind: "note", text: `猫${i}`, confirmed: true, source: src() });
+    }
+    const sizes: number[] = [];
+    const embedder: Embedder = async (texts) => { sizes.push(texts.length); return fakeEmbed(texts); };
+    assert.deepEqual(await s.syncVectors(embedder, "fake"), { embedded: 200, pending: 5 });
+    assert.deepEqual(await s.syncVectors(embedder, "fake"), { embedded: 5, pending: 0 });
+    assert.deepEqual(sizes, [200, 5]);
+  } finally { s.close(); }
+});
+
+test("向量同步：hash 变化重新请求，embedding 期间正文变化不写回旧向量", async () => {
+  const s = mem();
+  try {
+    const id = s.remember(null, "s", false, { kind: "note", text: "猫", confirmed: true, source: src() });
+    await s.syncVectors(fakeEmbed, "fake");
+    const replaceText = (text: string) => {
+      (s as any).db.prepare("UPDATE events SET body=? WHERE id=?").run(
+        JSON.stringify({ kind: "note", text, confirmed: true, source: src() }), id,
+      );
+      (s as any).cache = null;
+    };
+    replaceText("狗");
+    assert.equal(s.vectorStatus().embedded, 0);
+    assert.deepEqual(await s.syncVectors(async (texts) => {
+      assert.deepEqual(texts, ["狗"]);
+      replaceText("雨");
+      return fakeEmbed(texts);
+    }, "fake"), { embedded: 0, pending: 1 });
+    assert.deepEqual(await s.syncVectors(fakeEmbed, "fake"), { embedded: 1, pending: 0 });
+    const row = (s as any).fts.prepare("SELECT vec FROM vecs WHERE id=?").get(id);
+    assert.deepEqual(fromBlob(row.vec), Float32Array.from([0, 0, 1]));
+  } finally { s.close(); }
+});
+
+test("向量同步：并发模型切换拒绝旧模型写回", async () => {
+  const s = mem();
+  try {
+    const id = s.remember(null, "s", false, { kind: "note", text: "猫", confirmed: true, source: src() });
+    await assert.rejects(s.syncVectors(async (texts) => {
+      await s.syncVectors(async (input) => input.map(() => Float32Array.from([0, 1, 0])), "new");
+      return fakeEmbed(texts);
+    }, "old"), /模型在请求期间已变化/);
+    assert.equal(s.vectorStatus().model, "new");
+    assert.deepEqual(fromBlob((s as any).fts.prepare("SELECT vec FROM vecs WHERE id=?").get(id).vec), Float32Array.from([0, 1, 0]));
+  } finally { s.close(); }
+});
+
+test("混合检索：embedding 抛错或未配置时返回纯 FTS 和降级原因", async () => {
+  const s = mem();
+  try {
+    s.remember(null, "s", false, { kind: "note", text: "猫咪很可爱", confirmed: true, source: src() });
+    const opts = { projects: [], includeGlobal: true };
+    const expected = s.search("猫咪很可爱", opts);
+    const failed = await s.searchHybrid("猫咪很可爱", opts, async () => { throw new Error("假接口超时"); });
+    assert.deepEqual(failed.hits, expected);
+    assert.match(failed.degraded!, /假接口超时/);
+    assert.deepEqual(await s.searchHybrid("猫咪很可爱", opts, null), { hits: expected, degraded: "未配置 embedding" });
+  } finally { s.close(); }
+});
+
+test("混合检索：同步失败只报告降级，已缓存向量仍可用于搜索", async () => {
+  const s = mem();
+  try {
+    const id = s.remember(null, "s", false, { kind: "note", text: "猫咪很可爱", confirmed: true, source: src() });
+    await s.syncVectors(fakeEmbed, "fake");
+    s.remember(null, "s", false, { kind: "note", text: "狗狗", confirmed: true, source: src() });
+    const result = await s.searchHybrid("喵星人", { projects: [], includeGlobal: true }, async (texts) => {
+      if (texts[0] !== "喵星人") throw new Error("假同步失败");
+      return fakeEmbed(texts);
+    });
+    assert.deepEqual(result.hits.map((p) => p.id), [id]);
+    assert.match(result.degraded!, /向量未更新.*假同步失败/);
+  } finally { s.close(); }
+});
+
+test("混合检索：范围、kind、state 在向量 top-N 前过滤", async () => {
+  const s = mem();
+  try {
+    const a = s.ensureProject("a");
+    const b = s.ensureProject("b");
+    const body = (text: string, kind: RememberBody["kind"] = "note"): RememberBody => ({ kind, text, confirmed: true, source: src() });
+    for (let i = 0; i < 25; i++) s.remember(b, "b", false, body(`猫${i}`));
+    const target = s.remember(a, "a", false, body("猫狗"));
+    const archived = s.remember(a, "a", false, body("猫旧"));
+    s.lifecycle("archive", archived, "a");
+    const superseded = s.remember(a, "a", false, body("猫前"));
+    s.remember(a, "a", false, { ...body("狗后"), supersedes: superseded });
+    s.remember(a, "a", false, body("猫规则", "rule"));
+    const global = s.remember(null, "g", false, body("猫全局"));
+    const opts = { projects: [a], includeGlobal: false, kind: "note" as const };
+    const result = await s.searchHybrid("喵", opts, fakeEmbed);
+    assert.deepEqual(result.hits.map((p) => p.id), [target], "25 条更相似的外项目条目不会挤掉本项目候选");
+    const history = await s.searchHybrid("喵", { ...opts, includeArchived: true }, fakeEmbed);
+    assert.deepEqual(new Set(history.hits.map((p) => p.id)), new Set([target, archived, superseded]));
+    const withGlobal = await s.searchHybrid("喵", { ...opts, includeGlobal: true }, fakeEmbed);
+    assert.deepEqual(new Set(withGlobal.hits.map((p) => p.id)), new Set([target, global]));
+    const globalOnly = await s.searchHybrid("喵", { projects: [], includeGlobal: true }, fakeEmbed);
+    assert.deepEqual(globalOnly.hits.map((p) => p.id), [global]);
+    const all = await s.searchHybrid("喵", { projects: "all", includeGlobal: false, limit: 20 }, fakeEmbed);
+    assert.equal(all.hits.length, 20);
+    assert.ok(all.hits.every((p) => p.project_id !== null));
+  } finally { s.close(); }
+});
+
+test("混合检索：RRF 双路命中优先、去重并截到 limit", async () => {
+  const s = mem();
+  try {
+    const both = s.remember(null, "s", false, { kind: "note", text: "猫喵", confirmed: true, source: src() });
+    s.remember(null, "s", false, { kind: "note", text: "猫", confirmed: true, source: src() });
+    s.remember(null, "s", false, { kind: "note", text: "喵字面", confirmed: true, source: src() });
+    const embedder: Embedder = async (texts) => texts.map((t) => Float32Array.from(t === "喵字面" ? [0, 1] : [1, 0]));
+    const result = await s.searchHybrid("喵", { projects: [], includeGlobal: true, limit: 1 }, embedder);
+    assert.deepEqual(result.hits.map((p) => p.id), [both]);
+  } finally { s.close(); }
+});
+
+test("混合检索：查询 embedding 期间 Purge，返回结果不含旧 FTS 命中", async () => {
+  const s = mem();
+  try {
+    s.remember(null, "gone", false, { kind: "note", text: "猫咪", confirmed: true, source: src() });
+    await s.syncVectors(fakeEmbed, "fake");
+    const result = await s.searchHybrid("猫咪", { projects: [], includeGlobal: true }, async (texts) => {
+      s.purgeSession("gone");
+      return fakeEmbed(texts);
+    });
+    assert.deepEqual(result, { hits: [], degraded: null });
+    assert.equal(s.vectorStatus().embedded, 0);
+  } finally { s.close(); }
+});
+
+test("混合检索：余弦门槛排除低相似候选", async () => {
+  const s = mem();
+  try {
+    const pass = s.remember(null, "s", false, { kind: "note", text: "近", confirmed: true, source: src() });
+    s.remember(null, "s", false, { kind: "note", text: "远", confirmed: true, source: src() });
+    const embedder: Embedder = async (texts) => texts.map((text) => {
+      if (text === "查询") return Float32Array.from([1, 0]);
+      const similarity = text === "近" ? 0.36 : 0.34;
+      return Float32Array.from([similarity, Math.sqrt(1 - similarity * similarity)]);
+    });
+    const result = await s.searchHybrid("查询", { projects: [], includeGlobal: true }, embedder);
+    assert.deepEqual(result.hits.map((p) => p.id), [pass]);
+  } finally { s.close(); }
+});
+
+test("混合检索：两路各取 20 条，融合 limit 可超过 20", async () => {
+  const s = mem();
+  try {
+    for (let i = 0; i < 25; i++) {
+      s.remember(null, "s", false, { kind: "note", text: `查询字面${i}`, confirmed: true, source: src() });
+      s.remember(null, "s", false, { kind: "note", text: `语义${i}`, confirmed: true, source: src() });
+    }
+    const embedder: Embedder = async (texts) => texts.map((text) => Float32Array.from(text.startsWith("查询字面") ? [0, 1] : [1, 0]));
+    const result = await s.searchHybrid("查询", { projects: [], includeGlobal: true, limit: 30 }, embedder);
+    assert.equal(result.hits.length, 30);
+    assert.equal(new Set(result.hits.map((p) => p.id)).size, 30);
+    const all = await s.searchHybrid("查询", { projects: [], includeGlobal: true, limit: 100 }, embedder);
+    assert.equal(all.hits.length, 40);
+  } finally { s.close(); }
 });

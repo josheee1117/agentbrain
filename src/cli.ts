@@ -7,7 +7,8 @@ import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { Store, type Host, type PropKind, type Proposition, type SourcePointer } from "./store.ts";
+import { Store, type Embedder, type Host, type PropKind, type Proposition, type SourcePointer } from "./store.ts";
+import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandSource, latestAnchor } from "./source.ts";
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
@@ -31,6 +32,30 @@ function home(): string {
 function open(): Store {
   const root = home();
   return new Store(join(root, "store.db"), join(root, "index.db"));
+}
+
+function createEmbedder(): { embedder: Embedder | null; reason: string | null } {
+  try {
+    const config = loadEmbedConfig(home());
+    if ("error" in config) return { embedder: null, reason: config.error };
+    const key = readKey();
+    if (typeof key !== "string") return { embedder: null, reason: key.error };
+    const embedder = Object.assign((texts: string[]) => embed(texts, config, key), { model: config.model });
+    return { embedder, reason: null };
+  } catch (e) {
+    return { embedder: null, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function updateVectors(store: Store): Promise<string | null> {
+  const { embedder, reason } = createEmbedder();
+  if (!embedder) return reason;
+  try {
+    await store.syncVectors(embedder, embedder.model!);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
 }
 
 function short(id: string): string {
@@ -234,7 +259,7 @@ function workerSource(raw: string, summary: string): { source: SourcePointer; mi
   };
 }
 
-function cmdRemember(argv: string[]): void {
+async function cmdRemember(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
     options: {
@@ -300,13 +325,15 @@ function cmdRemember(argv: string[]): void {
     if (missingWorker) out += "\n未找到子代理会话记录";
     else if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
     if (!values.confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
+    const reason = await updateVectors(store);
+    if (reason) out += `\n向量未更新：${reason}`;
     console.log(out);
   } finally {
     store.close();
   }
 }
 
-function cmdSearch(argv: string[]): void {
+async function cmdSearch(argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
@@ -339,15 +366,15 @@ function cmdSearch(argv: string[]): void {
       if (!here) includeGlobal = true;
     }
     const names = namesOf(store);
-    const hits = store.search(query, {
+    const { embedder, reason } = createEmbedder();
+    const { hits, degraded } = await store.searchHybrid(query, {
       projects,
       includeGlobal,
       kind: values.kind as PropKind | undefined,
       includeArchived: values.archived,
-    });
+    }, embedder);
     if (!hits.length) {
       console.log("没有匹配的记忆。");
-      return;
     }
     const props = store.project().props;
     for (const h of hits) {
@@ -357,6 +384,7 @@ function cmdSearch(argv: string[]): void {
       const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
       console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}: ${h.text.split("\n")[0]}`);
     }
+    if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
   } finally {
     store.close();
   }
@@ -391,7 +419,7 @@ function cmdGet(argv: string[]): void {
   }
 }
 
-function cmdCorrect(argv: string[]): void {
+async function cmdCorrect(argv: string[]): Promise<void> {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
@@ -442,6 +470,8 @@ function cmdCorrect(argv: string[]): void {
     if (missingWorker) out += "\n未找到子代理会话记录";
     else if (source.transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
     if (!values.confirmed) out += `\n未确认：不进 brief，也不替代旧条目，用户认可后 ab confirm ${short(id)}`;
+    const reason = await updateVectors(store);
+    if (reason) out += `\n向量未更新：${reason}`;
     console.log(out);
   } finally {
     store.close();
@@ -524,12 +554,18 @@ function cmdStatus(): void {
       ["~/.pi/agent/AGENTS.md", join(userHome, ".pi/agent/AGENTS.md")],
       ["pm 仓库根 AGENTS.md", join(registryDir(), "..", "AGENTS.md")],
     ].map(([label, file]) => `${label}: ${containsBrief(file) ? "含 ab brief" : "没有 ab brief"}`);
+    const { embedder, reason } = createEmbedder();
+    const vectors = store.vectorStatus();
+    const vectorLine = embedder
+      ? `向量: ${embedder.model}，已向量化 ${vectors.model === embedder.model ? vectors.embedded : 0}/${vectors.total}`
+      : `向量: 不可用（${reason}）`;
 
     console.log(
       [
         `目录: ${where}`,
         `宿主: ${!found.ok ? `宿主检测失败: ${found.error}` : found.detection ? `${found.detection.host}  会话 ${found.detection.session_id ?? "（未取得）"}  transcript ${found.detection.transcript ? "已找到" : "未找到"}` : "未检测到宿主"}`,
         `active: ${scopeLines.join("、") || "无"}`,
+        vectorLine,
         `doctor: orphan 事件 ${proj.orphans}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
@@ -559,7 +595,7 @@ const USAGE = `用法:
   ab archive <id 前缀> [--reactivate]
   ab status                         当前项目、宿主、接线自检`;
 
-function main(): void {
+async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   if (!cmd || cmd === "help" || rest.includes("--help") || rest.includes("-h") || cmd === "--help" || cmd === "-h") {
     console.log(USAGE);
@@ -567,9 +603,9 @@ function main(): void {
   }
   try {
     if (cmd === "brief") return cmdBrief(rest);
-    if (cmd === "remember") return cmdRemember(rest);
-    if (cmd === "correct") return cmdCorrect(rest);
-    if (cmd === "search") return cmdSearch(rest);
+    if (cmd === "remember") return await cmdRemember(rest);
+    if (cmd === "correct") return await cmdCorrect(rest);
+    if (cmd === "search") return await cmdSearch(rest);
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "archive") return cmdArchive(rest);
@@ -581,4 +617,4 @@ function main(): void {
   die(`未知子命令: ${cmd}\n${USAGE}`);
 }
 
-main();
+await main();
