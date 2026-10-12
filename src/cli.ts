@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 /**
- * agentbrain 命令行（设计 §7.1）：brief / remember / search / get / confirm / archive / status。
+ * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / status。
  * 预算类数字是代码常量（§2.2），零配置键。
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { Store, type Embedder, type Host, type PropKind, type Proposition, type SourcePointer } from "./store.ts";
+import { Store, type Embedder } from "./store.ts";
+import type { Host, PropKind, Proposition, SourcePointer } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandSource, latestAnchor } from "./source.ts";
 import { detectHost, locateTranscript } from "./host.ts";
@@ -20,6 +21,7 @@ const RECALL_MAX_CHARS = 600;
 const RECALL_EMBED_TIMEOUT_MS = 3000;
 // 测试集上 0.55 负例误报 0%、召回 63%；0.50 召回 87% 但误报 13%。每轮注入宁缺毋滥。
 const RECALL_MIN_SIM = 0.55;
+const GET_MAX_NEIGHBORS = 3;
 const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
@@ -71,6 +73,10 @@ function short(id: string): string {
   return id.slice(0, 8);
 }
 
+function disputed(p: Proposition): string {
+  return p.pending_corrections.length ? `（有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}）` : "";
+}
+
 function active(store: Store): Proposition[] {
   return [...store.project().props.values()].filter((p) => p.state === "active");
 }
@@ -104,7 +110,7 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number): { text: 
   let text = "";
   let shown = 0;
   for (const p of rows) {
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}\n`;
+    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${disputed(p)}\n`;
     if (text.length + line.length > budget) continue;
     text += line;
     shown++;
@@ -264,7 +270,7 @@ async function recall(store: Store, query: string, cwd: string): Promise<string>
   const rows: string[] = [];
   for (const p of picked) {
     const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
-    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}: ${body}`;
+    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${disputed(p)}: ${body}`;
     const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
     const room = RECALL_MAX_CHARS - used;
     if (room <= 0) break;
@@ -482,7 +488,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p && !p.confirmed ? "[未确认]" : "";
       const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}: ${h.text.split("\n")[0]}`);
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${h.text.split("\n")[0]}`);
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
   } finally {
@@ -501,14 +507,27 @@ function cmdGet(argv: string[]): void {
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
+    const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, namesOf(store))} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
+      ...p.pending_corrections.map((id) => {
+        const c = store.project().props.get(id)!;
+        return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
+      }),
       p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
+    const shown = new Set([p.supersedes, p.superseded_by, ...p.pending_corrections]);
+    const near = store.neighbors(p.id);
+    if (near === null) linesOut.push("相关: 近邻不可用，这条还没有向量");
+    else {
+      const rows = near.filter((n) => !shown.has(n.prop.id)).slice(0, GET_MAX_NEIGHBORS).map(({ prop: n, similarity }) =>
+        `  [${short(n.id)}] ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${n.confirmed ? "" : "[未确认]"}: ${n.text.split("\n")[0]}（${similarity.toFixed(2)}）`);
+      if (rows.length) linesOut.push("相关（向量近邻）:", ...rows);
+    }
     if (values.expand) {
       const disc = expandSource(p.source);
       linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
@@ -692,7 +711,7 @@ const USAGE = `用法:
   ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
-  ab get <id 前缀> [--expand]       --expand 展开记下这条时的原始讨论
+  ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab status                         当前项目、宿主、接线自检`;

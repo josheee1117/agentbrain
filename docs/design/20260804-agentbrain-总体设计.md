@@ -1,8 +1,8 @@
 # agentbrain 总体设计
 
 - 状态：**v2.6 宿主无关基线**
-- 最新修订：2026-10-10
-- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）**
+- 最新修订：2026-10-12
+- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验（§21）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
@@ -407,7 +407,7 @@ Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/
 
 ### 7.1 统一入口、接线与会话身份（LOCKED，v2.5）
 
-**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`confirm`、`search`、`get`、`archive`、`status`。不再有 `bind`，项目身份见 §6.1。理由：
+**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`correct`、`confirm`、`recall`、`search`、`get`、`archive`、`status`（`correct`、`recall` 为切片 2 新增）。不再有 `bind`，项目身份见 §6.1。理由：
 
 - 三个宿主都能执行 shell，CLI 不需要任何协议依赖；
 - Pi 的 MCP 要经过适配器，以 MCP 为唯一入口会让 Pi 多一层；
@@ -865,7 +865,13 @@ Eligibility 至少包含：
 
 **检索（LOCKED，v2.6）**：FTS5 trigram + 稠密向量混合。向量以二进制 BLOB 存在 `index.db`（属于 L3，可删可重建）。查询时在进程内暴力计算余弦相似度。上限：约一万条以内毫秒级，超过再换 sqlite-vec 扩展。
 
-融合方式（RRF 或加权）与召回门槛仍是 **CANDIDATE**，由切片 2 测试集对比决定（§18）。
+**融合与门槛（切片 2 定，2026-10-10）**：
+
+- 融合用 RRF（k=60），两路各取前 20 条。评测脚本没有对比加权融合，这一项保留 RRF 是因为没有反证，不是因为赢了加权。
+- 向量路的余弦门槛默认 0.45（`ab search`）。依据是 53 条语料、121 条查询的阈值扫描：0.45 时正例召回 93%，负例误报 33%。
+- 每轮召回（`ab recall`）另用 0.55。同一扫描中 0.55 负例误报 0%、召回 63%；0.50 召回 87%、误报 13%。每轮注入宁缺毋滥，所以取更严的一档。
+- 两个门槛都是代码常量（§2.2），不是配置键。
+- 评测脚本是 `scripts/eval-retrieval.ts`，语料在仓库外的 `~/.agentbrain/eval/`。数字取自当时写进代码注释的结果；纯 FTS 与混合的对比表没有留存，复跑需要 DashScope key。
 
 其余仍为候选：
 
@@ -1213,7 +1219,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 |---|---|---|---|
 | **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
 | **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
-| 2 | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
+| **2**（2026-10-10 代码完成，2026-10-12 三宿主接线，Claude Code 模型侧待复验） | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
 | 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
 | 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
@@ -1294,6 +1300,8 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 参考：另见 §7.4——共存期 agentbrain worker 与 abrain LSEA/DCC holder 互不感知的问题，与本 gate 的形态选择直接相关。
 
 ### 19.4 L2 Contract
+
+**切片 2 部分关闭（2026-10-10）**：已实现的形状以 `src/l2.ts` 的类型冻结，未冻结项见 §21 同日切片 2 条目第 7 条。
 
 冻结 proposition envelope、facets、stable identity、四种 readable views、组合视图物化、projector version 和 schema migration。
 
@@ -1388,6 +1396,17 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-12（切片 2 接线实测；只记事实，无新决策）**：用户授权后在用户机器上追加 hook，原有 hook 保留。Claude Code（`~/.claude/settings.json`）和 Codex（`~/.codex/hooks.json`）的 `UserPromptSubmit` 命令都是 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab recall --hook`，超时 5 秒。用绝对路径是因为宿主的 PATH 不一定能找到 `ab` 和 Node ≥ 24。Pi 链接了 `~/.pi/agent/extensions/agentbrain-recall.ts`。§15.3 实测：Codex、Pi 的模型收到并引用了召回；Claude Code 的 hook 执行并输出了召回块，但模型那一轮被网关返回 400 拒绝，需要复验。Codex 日常会话要先在 `/hooks` 里信任这条 hook。因为 agentbrain 项目里还没有记忆，实测用的是 ai-data 项目里一条已确认的坑。
+
+- **2026-10-10（切片 2 收尾）**：
+  1. **授权**。用户 2026-10-10 18:05 SGT 原话："用 pstack 继续完成 brain"，指让 agent 接着把切片 2 做完。在此之前的切片 2 提交（`b5e73bf`、`1ced6e1`、WIP `5c4e6b9`）没有找到授权原话记录，是否追认由用户确认。切片 2.5 与 3 仍需单独授权。
+  2. **§11.4 检索参数定稿**：保留 RRF k=60；`VEC_MIN_SIM` 0.35 → 0.45；每轮召回门槛 0.55。数字与依据见 §11.4。没有做加权融合对比。
+  3. **评测语料不在仓库里**。语料在 `~/.agentbrain/eval/{corpus,queries}.json`，取自 pm `repos/*.md` 的真实坑。§15.2 要求测试集纳入版本控制并默认用合成或匿名 fixture，因此这一条目前不满足。是否把匿名版放进仓库由用户决定。
+  4. **每轮召回接线**（§7.1、§18）：`ab recall --hook` 读 stdin 的 `{prompt, cwd}`，命中时输出 `hookSpecificOutput.additionalContext`。Claude Code 与 Codex 用 `UserPromptSubmit`，Pi 用 `integrations/pi/agentbrain-recall.ts`（`before_agent_start`）。接线样例与安装说明放在 `integrations/`，不改任何全局配置；三个宿主的实测（§15.3）留给用户机器。Codex 的官方文档写明支持这一输出格式，但本机未实测。
+  5. **Memory Card 冲突暴露（§9.2、§11.3）**：切片 2 里唯一能出现的未解决冲突，是未确认的纠正与它要替代的已确认条目并存。投影给被纠正的条目加 `pending_corrections`，`get`、`search`、`recall`、`brief` 都标出"有待确认的纠正"，不再只返回一边。其他关系边（conflict、corroboration）由切片 3 的关系判定产生（§9.4.4），切片 2 不另造写入命令。
+  6. **`ab get` 展示替代、冲突与近邻（§15.5 图谱一行）**：替代链与待确认纠正之外，再列至多 3 条向量近邻。近邻只用 index.db 里已存的向量，不发网络请求；范围限于该条所在项目加全局，只列 active 条目；门槛用 `VEC_MIN_SIM`。没有向量时明说近邻不可用。
+  7. **§19.4 L2 合同以类型冻结（部分）**：L1 事件体、Proposition、Projection 与投影函数移到 `src/l2.ts`，作为唯一的类型来源。冻结的是已实现的部分：stable identity（不透明 event id）、四种可读种类、两级范围、state 轴、替代与待确认纠正关系。未冻结：§5.3 中尚未实现的 facets（temporal horizon、maturity、confidence、sensitivity 等）、组合视图物化、projector version 与 schema migration。这几项设计里没有具体形态，留作开放问题。
 
 - **2026-10-10 v2.6（检索与子代理汇报；只授权改文档）**：
   1. **§11.4 检索锁定为 FTS5 trigram + 稠密向量混合**。向量以 BLOB 存 index.db（L3）；进程内暴力余弦；约一万条以内毫秒级，超过再换 sqlite-vec。融合方式与召回门槛仍为 CANDIDATE，由切片 2 测试集对比。分词 / n-gram、rerank 等保持候选。

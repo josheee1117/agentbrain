@@ -4,7 +4,7 @@
  * agentbrain 自身不存对话原文。
  */
 import { readFileSync, existsSync } from "node:fs";
-import type { SourcePointer, Host } from "./store.ts";
+import type { SourcePointer, Host } from "./l2.ts";
 
 const MAX_ENTRIES = 30;
 const MAX_CHARS_PER_ENTRY = 600;

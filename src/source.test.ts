@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandSource, latestAnchor } from "./source.ts";
-import type { SourcePointer } from "./store.ts";
+import type { SourcePointer } from "./l2.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "ab-src-"));
 const ptr = (over: Partial<SourcePointer>): SourcePointer => ({

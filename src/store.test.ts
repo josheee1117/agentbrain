@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { fromBlob } from "./embed.ts";
-import { Store, fold, MAX_EMBED_PER_SYNC, type Embedder, type Projection, type RememberBody } from "./store.ts";
+import { Store, MAX_EMBED_PER_SYNC, type Embedder } from "./store.ts";
+import { fold, type Projection, type RememberBody } from "./l2.ts";
 
 function mem() {
   return new Store(":memory:", ":memory:");
@@ -262,6 +263,24 @@ test("fold：已确认且带 supersedes 的条目使目标变 superseded，目�
   });
   assert.equal(s.project().orphans, before + 1);
   assert.equal(s.project().props.get(neu)!.state, "active");
+  s.close();
+});
+
+test("fold：未确认的纠正挂在目标的 pending_corrections 上，确认或归档后消失", () => {
+  const s = mem();
+  const pid = s.ensureProject("p");
+  const old = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁用全局一把", confirmed: true, source: src() });
+  const rejected = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁不用加", confirmed: false, supersedes: old, source: src() });
+  const accepted = s.remember(pid, "s1", false, { kind: "pitfall", text: "锁按账户分", confirmed: false, supersedes: old, source: src() });
+  assert.deepEqual(s.project().props.get(old)!.pending_corrections, [rejected, accepted]);
+  assert.equal(s.project().props.get(old)!.state, "active");
+  s.lifecycle("archive", rejected, "s1");
+  assert.deepEqual(s.project().props.get(old)!.pending_corrections, [accepted]);
+  s.lifecycle("confirm", accepted, "s1");
+  const target = s.project().props.get(old)!;
+  assert.equal(target.state, "superseded");
+  assert.equal(target.superseded_by, accepted);
+  assert.deepEqual(target.pending_corrections, []);
   s.close();
 });
 
@@ -529,6 +548,28 @@ test("混合检索：RRF 双路命中优先、去重并截到 limit", async () =
     const embedder: Embedder = async (texts) => texts.map((t) => Float32Array.from(t === "喵字面" ? [0, 1] : [1, 0]));
     const result = await s.searchHybrid("喵", { projects: [], includeGlobal: true, limit: 1 }, embedder);
     assert.deepEqual(result.hits.map((p) => p.id), [both]);
+  } finally { s.close(); }
+});
+
+test("近邻：只用已存向量，限本项目加全局、只看 active、过门槛；本条无向量返回 null", async () => {
+  const s = mem();
+  try {
+    const p = s.ensureProject("p");
+    const q = s.ensureProject("q");
+    const body = (text: string) => ({ kind: "note" as const, text, confirmed: true, source: src() });
+    const self = s.remember(p, "s1", false, body("猫要喂"));
+    const same = s.remember(p, "s1", false, body("猫粮在柜子里"));
+    const global = s.remember(null, "s1", false, body("喵星人怕水"));
+    s.remember(q, "s1", false, body("别的项目的猫"));
+    s.remember(p, "s1", false, body("狗要遛"));
+    const archived = s.remember(p, "s1", false, body("旧的猫笔记"));
+    s.lifecycle("archive", archived, "s1");
+    await s.syncVectors(fakeEmbed, "fake");
+    assert.deepEqual(s.neighbors(self)!.map((n) => n.prop.id).sort(), [same, global].sort());
+    assert.equal(s.neighbors(self)![0].similarity, 1);
+    const fresh = s.remember(p, "s1", false, body("刚记的猫"));
+    assert.equal(s.neighbors(fresh), null);
+    assert.equal(s.neighbors(same)!.some((n) => n.prop.id === fresh), false, "没有向量的条目不当近邻");
   } finally { s.close(); }
 });
 

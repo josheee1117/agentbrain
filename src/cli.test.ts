@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -257,8 +257,11 @@ test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 se
   assert.equal(neu.code, 0, neu.err);
   const neuId = neu.out.match(/\[([0-9a-f]{8})\]/)![1];
   const before = run(["brief"]);
-  assert.match(before.out, /锁用全局一把/);
+  assert.match(before.out, new RegExp(`锁用全局一把（有待确认的纠正 \\[${neuId}\\]）`));
   assert.doesNotMatch(before.out, /锁按账户分/);
+  assert.match(run(["get", oldId]).out, new RegExp(`\n待确认的纠正 \\[${neuId}\\]: 锁按账户分（认可用 ab confirm ${neuId}，否决用 ab archive ${neuId}）`));
+  assert.match(run(["search", "全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
+  assert.match(run(["recall", "锁用全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
   assert.equal(run(["confirm", neuId]).code, 0);
   const after = run(["brief"]);
   assert.doesNotMatch(after.out, /锁用全局一把/);
@@ -300,6 +303,7 @@ test("没有 embedding 配置：search 提示仅全文检索，status 报不可�
   const corrected = ab(["correct", id, "--text", "无配置也纠正", "--summary", "降级"], alpha);
   assert.equal(corrected.code, 0, corrected.err);
   assert.match(corrected.out, /\n向量未更新：.*embedding\.json\n$/);
+  assert.match(ab(["get", id], alpha).out, /\n相关: 近邻不可用，这条还没有向量\n$/);
   assert.equal(existsSync(keyRead), false);
 });
 
@@ -322,10 +326,16 @@ test("假 embedding：remember/correct 同步、search 混合、status 数量、
   assert.match(found.out, /小猫需要照顾/);
   assert.doesNotMatch(found.out, /仅全文检索|猫咪很可爱/);
   assert.match(run(["status"]).out, /向量: fake-one，已向量化 2\/2/);
+  const neighbor = run(["remember", "--confirmed", "--kind", "note", "--text", "猫粮放在柜子里", "--summary", "近邻"]);
+  const neighborId = neighbor.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const correctedId = corrected.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const got = run(["get", correctedId]).out;
+  assert.match(got, new RegExp(`\\n相关（向量近邻）:\\n  \\[${neighborId}\\] alpha 事实: 猫粮放在柜子里（1\\.00）\\n$`));
+  assert.doesNotMatch(got, /猫咪很可爱/, "已被替代的旧条目只出现在替代链，不当近邻");
   config("fake-two");
-  assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/2/);
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/3/);
   assert.equal(run(["search", "喵星人"]).code, 0);
-  assert.match(run(["status"]).out, /向量: fake-two，已向量化 2\/2/);
+  assert.match(run(["status"]).out, /向量: fake-two，已向量化 3\/3/);
   config("fail");
   const failed = run(["remember", "--confirmed", "--kind", "note", "--text", "假接口失败也要保存", "--summary", "失败"]);
   assert.equal(failed.code, 0, failed.err);
@@ -433,6 +443,33 @@ test("recall 超过 3 条只出前 3 条", () => {
   const lines = ctx.split("\n").filter((l) => l.startsWith("- ["));
   assert.equal(lines.length, 3);
   assert.match(ctx, /召回限额第 [0-4] 条坑/);
+});
+
+test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPromptSubmit 的 additionalContext", () => {
+  const own = join(dir, "wiring-home");
+  const pit = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "接线样例要能召回这个坑", "--summary", "接线"], alpha, own);
+  assert.equal(pit.code, 0, pit.err);
+  const shim = join(dir, "ab-shim");
+  mkdirSync(shim, { recursive: true });
+  writeFileSync(join(shim, "ab"), `#!/bin/sh\nexec node --import '${networkGuard}' '${CLI}' "$@"\n`);
+  chmodSync(join(shim, "ab"), 0o755);
+  for (const file of ["claude-code/settings.example.json", "codex/hooks.example.json"]) {
+    const config = JSON.parse(readFileSync(join(import.meta.dirname, "../integrations", file), "utf8")) as {
+      hooks: { UserPromptSubmit: { hooks: { type: string; command: string }[] }[] };
+    };
+    const [handler] = config.hooks.UserPromptSubmit[0].hooks;
+    assert.equal(handler.type, "command");
+    const r = spawnSync("sh", ["-c", handler.command], {
+      cwd: alpha,
+      encoding: "utf8",
+      input: JSON.stringify({ session_id: "x", hook_event_name: "UserPromptSubmit", prompt: "接线样例 召回", cwd: alpha }),
+      env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${shim}:${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION },
+    });
+    assert.equal(r.status, 0, file);
+    const out = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+    assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit", file);
+    assert.match(out.hookSpecificOutput.additionalContext, /^<agentbrain-recall>\n- \[[0-9a-f]{8}\] 坑: 接线样例要能召回这个坑\n<\/agentbrain-recall>$/, file);
+  }
 });
 
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。
