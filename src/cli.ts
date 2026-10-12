@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / status。
+ * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / status(doctor) / capture / work。
  * 预算类数字是代码常量（§2.2），零配置键。
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
 import type { Host, PropKind, Proposition, SourcePointer } from "./l2.ts";
@@ -14,6 +15,9 @@ import { expandSource, latestAnchor } from "./source.ts";
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
+import { chatClient, loadChatConfig } from "./llm.ts";
+import { allowedTranscript, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
+import * as intake from "./intake.ts";
 
 const BRIEF_MAX_CHARS = 2000;
 const RECALL_MAX_ITEMS = 3;
@@ -23,6 +27,7 @@ const RECALL_EMBED_TIMEOUT_MS = 3000;
 const RECALL_MIN_SIM = 0.55;
 const GET_MAX_NEIGHBORS = 3;
 const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
+const EXTRACT_TIMEOUT_MS = 90_000;
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
@@ -75,6 +80,26 @@ function short(id: string): string {
 
 function disputed(p: Proposition): string {
   return p.pending_corrections.length ? `（有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}）` : "";
+}
+
+/** 读路径标记：未确认、自动沉淀、关系未判定（§9.4.4）、与代码不符。 */
+function marks(p: Proposition): string {
+  return [
+    p.confirmed ? "" : p.origin === "extract" ? "[未确认·自动沉淀]" : "[未确认]",
+    p.unreconciled ? "[关系未判定]" : "",
+    p.stale ? "[与代码不符]" : "",
+  ].join("");
+}
+
+const BASIS_LABEL: Record<string, string> = {
+  user_directive: "用户原话",
+  user_confirmed: "用户认可",
+  observed_failure: "工具报错",
+  agent_inference: "agent 推断",
+};
+
+function codeRef(r: import("./l2.ts").CodeRef): string {
+  return "commit" in r ? `commit ${r.commit.slice(0, 10)}「${r.quote}」` : `${r.path}:${r.line_start}${r.line_end !== r.line_start ? `-${r.line_end}` : ""}「${r.quote}」`;
 }
 
 function active(store: Store): Proposition[] {
@@ -136,7 +161,7 @@ function contentBudgets(fixed: string[], titles: string[]): number[] {
 function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean): string {
   const all = active(store);
   const global = all.filter((p) => p.project_id === null);
-  let pending = 0;
+  const pending: Proposition[] = [];
 
   const named = projectName ? loadRegistry().find((e) => e.name === projectName) : undefined;
   if (projectName && !named) die(`清单里没有项目: ${projectName}`);
@@ -156,8 +181,8 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
     const mine = all.filter((p) => p.project_id === pid);
     head = `<agentbrain project="${project.name}" worker>`;
     const rules = global.filter((p) => p.kind === "rule" && p.for_workers);
-    pending += rules.filter((p) => !p.confirmed).length;
-    pending += mine.filter((p) => (p.kind === "pitfall" || p.kind === "rule") && !p.confirmed).length;
+    pending.push(...rules.filter((p) => !p.confirmed));
+    pending.push(...mine.filter((p) => (p.kind === "pitfall" || p.kind === "rule") && !p.confirmed));
     sections.push(
       { title: "全局规则（子代理也要看）：", rows: rules.filter((p) => p.confirmed), kinds: ["rule"] },
       {
@@ -168,14 +193,14 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
     );
   } else if ((inPm && !projectName) || (!project && !projectName && inPm)) {
     head = '<agentbrain scope="pm">';
-    pending += global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed).length;
+    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
     sections.push({ title: "全局规则与坑（最近在前）：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] });
     const idByName = new Map(store.listProjects().map((p) => [p.name, p.id]));
     const overview = loadRegistry()
       .filter((e) => e.path)
       .map((e) => {
         const mine = all.filter((x) => x.project_id === idByName.get(e.name));
-        pending += mine.filter((x) => !x.confirmed).length;
+        pending.push(...mine.filter((x) => !x.confirmed));
         return `- ${e.name}：${counts(mine.filter((x) => x.confirmed))}`;
       });
     if (overview.length) after.push("各项目概况：\n" + overview.join("\n"));
@@ -184,8 +209,8 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
     const pid = projectIdByName(store, project.name);
     const mine = all.filter((p) => p.project_id === pid);
     head = `<agentbrain project="${project.name}">`;
-    pending += global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed).length;
-    pending += mine.filter((p) => !p.confirmed).length;
+    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
+    pending.push(...mine.filter((p) => !p.confirmed));
     sections.push(
       { title: "全局规则与坑：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] },
       {
@@ -200,7 +225,7 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
   } else {
     head = '<agentbrain scope="unregistered">';
     before.push("当前目录不是已登记项目，只给出全局记忆。");
-    pending += global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed).length;
+    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
     sections.push({ title: "全局规则与坑：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] });
   }
 
@@ -209,7 +234,13 @@ function brief(store: Store, cwd: string, projectName: string | undefined, worke
       ? "你是被派活的子代理：不写记忆，新坑写进汇报，由主会话决定是否记下。搜索用 ab search，看一条用 ab get。"
       : "记住用 ab remember，搜索用 ab search，看一条用 ab get。",
   ];
-  if (pending && !worker) tails.push(`另有 ${pending} 条 agent 自记未确认（ab search 可见），用户认可后 ab confirm <id>。`);
+  const auto = pending.filter((p) => p.origin === "extract").length;
+  if (pending.length && !worker)
+    tails.push(
+      auto
+        ? `另有 ${pending.length} 条未确认（其中自动沉淀 ${auto} 条，ab search 可见），用户认可后 ab confirm <id>。`
+        : `另有 ${pending.length} 条 agent 自记未确认（ab search 可见），用户认可后 ab confirm <id>。`,
+    );
 
   const candidates = sections.reduce((n, s) => n + s.rows.filter((p) => s.kinds.includes(p.kind)).length, 0);
   const noteReserve = candidates > 0 ? noteFor(candidates) : "";
@@ -486,7 +517,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
     for (const h of hits) {
       const p = props.get(h.id);
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
-      const mark = p && !p.confirmed ? "[未确认]" : "";
+      const mark = p ? marks(p) : "";
       const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
       console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${h.text.split("\n")[0]}`);
     }
@@ -510,7 +541,15 @@ function cmdGet(argv: string[]): void {
     const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : " 未确认（agent 自记）"}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
+      p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
+      p.confirmed && p.confirmed_by === "corroboration" ? "已由跨会话印证转正（两个以上会话里用户都这样说过）" : "",
+      p.expired ? `自动沉淀后 ${PROPOSAL_EXPIRE_DAYS} 天未确认，已归档` : "",
+      p.trigger ? `触发: ${p.trigger}` : "",
+      p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
+      p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
+      p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
+      p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
       ...p.pending_corrections.map((id) => {
@@ -525,7 +564,7 @@ function cmdGet(argv: string[]): void {
     if (near === null) linesOut.push("相关: 近邻不可用，这条还没有向量");
     else {
       const rows = near.filter((n) => !shown.has(n.prop.id)).slice(0, GET_MAX_NEIGHBORS).map(({ prop: n, similarity }) =>
-        `  [${short(n.id)}] ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${n.confirmed ? "" : "[未确认]"}: ${n.text.split("\n")[0]}（${similarity.toFixed(2)}）`);
+        `  [${short(n.id)}] ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${marks(n)}: ${n.text.split("\n")[0]}（${similarity.toFixed(2)}）`);
       if (rows.length) linesOut.push("相关（向量近邻）:", ...rows);
     }
     if (values.expand) {
@@ -634,6 +673,195 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
+// ---------- capture / work（切片 3） ----------
+
+function parseSessionKey(raw: string): { host: Host; session_id: string } {
+  const i = raw.indexOf(":");
+  const host = raw.slice(0, i) as Host;
+  const session_id = raw.slice(i + 1);
+  if (i <= 0 || !HOSTS.includes(host) || !session_id) die(`会话必须写成 claude|codex|pi:<session_id>，收到: ${raw}`);
+  return { host, session_id };
+}
+
+/** SessionEnd 后拉起分离的 ab work，只处理这一个会话。宿主等不到它，它自己有租约。 */
+function spawnWork(key: string): void {
+  const child = spawn(process.execPath, [...process.execArgv, process.argv[1], "work", "--session", key], {
+    detached: true,
+    stdio: "ignore",
+    env: process.env,
+  });
+  child.unref();
+}
+
+/**
+ * hook 热路径：只登记坐标（不读 transcript），任何错误都吞掉、不写 stdout/stderr，宿主这一轮照常进行。
+ * stdin 是宿主给的 JSON：session_id、transcript_path、cwd、hook_event_name；Pi 扩展额外可给 ephemeral。
+ */
+async function captureHook(host: Host): Promise<void> {
+  const raw = JSON.parse(await readStdin()) as Record<string, unknown>;
+  const given = typeof raw.transcript_path === "string" && raw.transcript_path ? raw.transcript_path : null;
+  const ephemeral = raw.ephemeral === true;
+  let sessionId = typeof raw.session_id === "string" && raw.session_id ? raw.session_id : null;
+  if (!sessionId && host === "pi" && given) sessionId = piSessionId(given);
+  if (!sessionId) return;
+  let transcript: string | null = null;
+  if (given) {
+    transcript = allowedTranscript(host, given);
+    if (!transcript) return; // 不在宿主会话目录里的路径一律不登记
+  } else if (!ephemeral) {
+    const found = locateTranscript(host, sessionId);
+    transcript = found ? allowedTranscript(host, found) : null;
+  }
+  const cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null;
+  const ended = raw.hook_event_name === "SessionEnd";
+  const store = open();
+  let project: string | null = null;
+  try {
+    intake.upsertSession(store.workDb, { host, session_id: sessionId, transcript, cwd, ended, ephemeral, via: "hook" }, () => {
+      project = cwd ? (resolveProject(cwd)?.name ?? null) : null;
+      return project;
+    }, new Date());
+    if (ended) {
+      const row = intake.sessions(store.workDb, { host, session_id: sessionId })[0];
+      project = row?.project ?? null;
+    }
+  } finally {
+    store.close();
+  }
+  if (ended && project && !ephemeral) spawnWork(`${host}:${sessionId}`);
+}
+
+async function cmdCapture(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      hook: { type: "boolean", default: false },
+      host: { type: "string" },
+      transcript: { type: "string" },
+      cwd: { type: "string" },
+      end: { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (values.hook) {
+    if (!values.host || !HOSTS.includes(values.host as Host)) return;
+    try {
+      await captureHook(values.host as Host);
+    } catch {
+      // 登记失败不能让宿主这一轮失败；ab work --sweep 的扫描会补上
+    }
+    return;
+  }
+  if (!positionals[0]) die("用法: ab capture <claude|codex|pi>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
+  const key = parseSessionKey(positionals[0]);
+  const found = values.transcript ?? locateTranscript(key.host, key.session_id);
+  if (!found) die("找不到这个会话的 transcript，用 --transcript 指定");
+  const transcript = allowedTranscript(key.host, found);
+  if (!transcript) die(`transcript 必须在 ${key.host} 的会话目录下: ${found}`);
+  const cwd = values.cwd ?? process.cwd();
+  const store = open();
+  try {
+    const project = resolveProject(cwd)?.name ?? null;
+    const r = intake.upsertSession(store.workDb, { ...key, transcript, cwd, ended: values.end === true, ephemeral: false, via: "manual" }, () => project, new Date());
+    console.log(`${r === "new" ? "已登记" : "已刷新"} ${key.host}:${key.session_id}${project ? `（项目 ${project}）` : "（cwd 不是已登记项目，不会抽取）"}`);
+  } finally {
+    store.close();
+  }
+}
+
+function workDeps(store: Store): WorkDeps {
+  const cfg = loadChatConfig(home());
+  let chat: WorkDeps["chat"];
+  if ("error" in cfg) chat = { error: "no_config", message: cfg.error };
+  else {
+    const key = readKey(cfg.keyService);
+    chat = typeof key === "string" ? { chat: chatClient(cfg, key, EXTRACT_TIMEOUT_MS), model: cfg.model } : { error: "no_key", message: key.error };
+  }
+  return {
+    store,
+    now: () => new Date(),
+    chat,
+    embedder: createEmbedder().embedder,
+    registry: loadRegistry(),
+    registryDir: registryDir(),
+    resolveProject: (cwd) => resolveProject(cwd),
+    projectId: (name) => projectIdByName(store, name),
+  };
+}
+
+async function cmdWork(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      session: { type: "string" },
+      sweep: { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+    },
+    strict: true,
+  });
+  const store = open();
+  try {
+    const r = await runWork(workDeps(store), {
+      session: values.session ? parseSessionKey(values.session) : undefined,
+      sweep: values.sweep === true,
+      dryRun: values["dry-run"] === true,
+    });
+    if (r.busy) {
+      console.log("另一个 ab work 正在运行，本次跳过。");
+      return;
+    }
+    if (values["dry-run"]) {
+      console.log(r.dry.length ? r.dry.map((d) => `${d.session}: 待处理窗口 ${d.windows}，${d.chars} 字`).join("\n") : "没有待处理的会话。");
+      return;
+    }
+    const x = r.receipt;
+    console.log(
+      [
+        `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : ""}`,
+        `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}`,
+        `产出: 提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，丢弃 ${Object.values(x.dropped).reduce((a, b) => a + b, 0)}`,
+        values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}；过期归档 ${r.expired}` : "",
+      ].filter(Boolean).join("\n"),
+    );
+  } finally {
+    store.close();
+  }
+}
+
+function fmtCounts(o: Record<string, number>): string {
+  const parts = Object.entries(o).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
+  return parts.length ? parts.join("、") : "无";
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function sedimentLines(store: Store): string[] {
+  const now = new Date();
+  const st = intake.stats(store.workDb, now);
+  const props = [...store.project().props.values()];
+  const auto = props.filter((p) => p.origin === "extract");
+  const cfg = loadChatConfig(home());
+  const r = st.receipts7d;
+  const lastRetry = st.windows.nextRetry ? `，最早 ${new Date(st.windows.nextRetry).toLocaleString("zh-CN", { hour12: false })} 重试` : "";
+  return [
+    "沉淀（切片 3）:",
+    `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；近 7 天靠扫描补登记 ${st.sessions.scanned}${st.sessions.scanned ? "（hook 可能没生效，Codex 要在 /hooks 里信任）" : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
+    `  窗口: 完成 ${st.windows.done}，延后 ${st.windows.deferred}${lastRetry}，失败 ${st.windows.failed}；未完成原因 ${fmtCounts(st.windows.errors)}`,
+    `  今日预算: 调用 ${st.budget.calls}/${intake.DAILY_MAX_CALLS}，token ${st.budget.tokens}/${intake.DAILY_MAX_TOKENS}`,
+    `  近 7 天: 提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}；丢弃 ${fmtCounts(r.dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
+    `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，过期归档 ${auto.filter((p) => p.expired).length}`,
+    `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
+    `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : `${cfg.model} @ ${hostOf(cfg.baseUrl)}（key: 钥匙串 ${cfg.keyService}）`}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
+  ];
+}
+
 function containsBrief(file: string): boolean {
   try {
     return readFileSync(file, "utf8").includes("ab brief");
@@ -688,6 +916,7 @@ function cmdStatus(): void {
         `doctor: orphan 事件 ${proj.orphans}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
+        ...sedimentLines(store),
         ...(orphans.length ? [orphans.join("\n")] : []),
         `store: ${home()}`,
       ].join("\n"),
@@ -714,7 +943,14 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab status                         当前项目、宿主、接线自检`;
+  ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
+  ab capture --hook --host <claude|codex|pi>
+                                    宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
+  ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
+                                    手动登记一个会话（hook 没生效时）
+  ab work [--session <host>:<id>] [--sweep] [--dry-run]
+                                    处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
+                                    --sweep 另扫描漏登记的会话、按代码核验未确认的坑、归档过期提议（launchd 每 30 分钟）`;
 
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -738,7 +974,9 @@ async function main(): Promise<void> {
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "archive") return cmdArchive(rest);
-    if (cmd === "status") return cmdStatus();
+    if (cmd === "status" || cmd === "doctor") return cmdStatus();
+    if (cmd === "capture") return await cmdCapture(rest);
+    if (cmd === "work") return await cmdWork(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;

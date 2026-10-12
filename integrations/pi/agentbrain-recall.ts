@@ -1,24 +1,47 @@
 /**
- * Pi 每轮召回。只调用 ab，不读记忆库。
+ * Pi 接线：每轮召回（before_agent_start）+ 切片 3 会话登记（before_agent_start / session_shutdown）。
+ * 只调用 ab，不读记忆库。文件名沿用切片 2，已有的符号链接不用改。
  */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { BeforeAgentStartEventResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const TIMEOUT_MS = 5000;
+const SHUTDOWN_TIMEOUT_MS = 3000;
+// 宿主 PATH 不一定有 ab 和 Node ≥ 24（integrations/README.md）。本机装法存在时用绝对路径，否则退回 PATH。
+const NODE = "/opt/homebrew/bin/node";
+const AB = "/Users/hejiayuan/.local/bin/ab";
+const CMD: [string, string[]] = existsSync(NODE) && existsSync(AB) ? [NODE, [AB]] : ["ab", []];
 
-function recall(prompt: string): Promise<string> {
+/** Pi 的会话管理器。getSessionFile 为空即 inMemory 会话（子代理），按 ephemeral 登记（§9.5）。 */
+type SessionCtx = { sessionManager?: { getSessionFile?(): string | undefined; getSessionId?(): string | undefined } };
+
+function ab(args: string[], input: object, timeout: number): Promise<string> {
   return new Promise((resolve) => {
-    const child = execFile("ab", ["recall", "--hook"], { timeout: TIMEOUT_MS, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    const child = execFile(CMD[0], [...CMD[1], ...args], { timeout, maxBuffer: 1024 * 1024 }, (err, stdout) => {
       resolve(err ? "" : stdout);
     });
-    child.stdin?.end(JSON.stringify({ prompt, cwd: process.cwd() }));
+    child.stdin?.end(JSON.stringify(input));
   });
 }
 
+function capture(event: "UserPromptSubmit" | "SessionEnd", ctx: unknown, timeout: number): Promise<string> {
+  const sm = (ctx as SessionCtx | undefined)?.sessionManager;
+  const file = sm?.getSessionFile?.();
+  return ab(["capture", "--hook", "--host", "pi"], {
+    session_id: sm?.getSessionId?.() ?? null,
+    transcript_path: file ?? null,
+    ephemeral: !file,
+    cwd: process.cwd(),
+    hook_event_name: event,
+  }, timeout);
+}
+
 export default function (pi: ExtensionAPI) {
-  pi.on("before_agent_start", async (e): Promise<BeforeAgentStartEventResult | undefined> => {
+  pi.on("before_agent_start", async (e, ctx): Promise<BeforeAgentStartEventResult | undefined> => {
+    void capture("UserPromptSubmit", ctx, TIMEOUT_MS);
     try {
-      const raw = await recall(e.prompt);
+      const raw = await ab(["recall", "--hook"], { prompt: e.prompt, cwd: process.cwd() }, TIMEOUT_MS);
       if (!raw.trim()) return undefined;
       const parsed = JSON.parse(raw) as { hookSpecificOutput?: { additionalContext?: unknown } };
       const content = parsed.hookSpecificOutput?.additionalContext;
@@ -27,5 +50,8 @@ export default function (pi: ExtensionAPI) {
     } catch {
       return undefined;
     }
+  });
+  pi.on("session_shutdown", async (_e, ctx) => {
+    await capture("SessionEnd", ctx, SHUTDOWN_TIMEOUT_MS);
   });
 }

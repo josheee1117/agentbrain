@@ -15,6 +15,8 @@ export interface EmbedConfig {
 export const EMBED_BATCH = 10;
 export const EMBED_TIMEOUT_MS = 8000;
 export const KEYCHAIN_SERVICE = "agentbrain-embedding";
+/** 钥匙串锁着时 security 会一直等；宿主 hook 只有 5 秒，launchd 也不该卡住。 */
+const KEYCHAIN_TIMEOUT_MS = 3000;
 
 function bad(error: string): { error: string } {
   return { error };
@@ -42,17 +44,18 @@ export function loadEmbedConfig(home: string): EmbedConfig | { error: string } {
 }
 
 /** 不读环境变量。钥匙串没有或 security 失败时返回错误，不抛。 */
-export function readKey(): string | { error: string } {
+export function readKey(service: string = KEYCHAIN_SERVICE): string | { error: string } {
   try {
-    const out = execFileSync("security", ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"], {
+    const out = execFileSync("security", ["find-generic-password", "-s", service, "-w"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      timeout: KEYCHAIN_TIMEOUT_MS,
     });
     const key = out.trim();
-    if (!key) return bad(`钥匙串里没有 ${KEYCHAIN_SERVICE}`);
+    if (!key) return bad(`钥匙串里没有 ${service}`);
     return key;
   } catch {
-    return bad(`钥匙串里没有 ${KEYCHAIN_SERVICE}`);
+    return bad(`钥匙串里没有 ${service}`);
   }
 }
 

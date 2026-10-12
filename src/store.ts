@@ -19,7 +19,7 @@ export const MAX_EMBED_PER_SYNC = 200;
 const HYBRID_FTS_K = 20;
 const HYBRID_VEC_K = 20;
 // 2026-10-10 测试集（53 条 / 121 查询）校准：0.45 召回 93%、负例误报 33%；每轮召回另用更严的 minSim。
-const VEC_MIN_SIM = 0.45;
+export const VEC_MIN_SIM = 0.45;
 
 export type Embedder = ((texts: string[]) => Promise<Float32Array[]>) & { model?: string };
 
@@ -61,7 +61,29 @@ CREATE TABLE IF NOT EXISTS events(
   body TEXT,
   body_hash TEXT);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
+CREATE TABLE IF NOT EXISTS capture_sessions(
+  host TEXT NOT NULL, session_id TEXT NOT NULL, transcript TEXT, cwd TEXT, project TEXT,
+  first_seen TEXT NOT NULL, last_touch TEXT NOT NULL, ended_at TEXT,
+  ephemeral INTEGER NOT NULL DEFAULT 0, processed_anchor TEXT, via TEXT NOT NULL, error_code TEXT,
+  PRIMARY KEY(host, session_id));
+CREATE TABLE IF NOT EXISTS capture_windows(
+  window_id TEXT PRIMARY KEY, host TEXT NOT NULL, session_id TEXT NOT NULL,
+  from_anchor TEXT, to_anchor TEXT NOT NULL, state TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT, error_code TEXT, receipt TEXT, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS capture_candidates(candidate_key TEXT PRIMARY KEY, event_id TEXT NOT NULL, window_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS work_lease(name TEXT PRIMARY KEY, holder TEXT NOT NULL, pid INTEGER NOT NULL, expires_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS work_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL, tokens INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS verify_attempts(prop_id TEXT PRIMARY KEY, head TEXT NOT NULL, outcome TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS work_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 `;
+
+export interface PendingAppend {
+  kind: EventKind;
+  project_id: string | null;
+  session_id: string | null;
+  target_id: string | null;
+  body: unknown;
+}
 
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -134,10 +156,63 @@ export class Store {
   }
 
   /** archive/reactivate/confirm：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
-  lifecycle(kind: "archive" | "reactivate" | "confirm", targetId: string, sessionId: string | null): string {
+  lifecycle(kind: "archive" | "reactivate" | "confirm", targetId: string, sessionId: string | null, body: object = {}): string {
     const p = this.project().props.get(targetId);
     if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
-    return this.append(kind, p.project_id, sessionId, false, targetId, {}); // body 非 null；null 一律表示已 purge
+    return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
+  }
+
+  /** 该会话已被 purge。 */
+  sessionPurged(sessionId: string): boolean {
+    return !!this.db
+      .prepare("SELECT 1 AS x FROM events WHERE kind='purge' AND json_extract(body,'$.range.session_id')=? LIMIT 1")
+      .get(sessionId);
+  }
+
+  /** 已存向量的最近邻（不发请求）。query 由调用方算好。只看 active，范围为给定项目加全局，余弦 ≥ minSim。 */
+  nearestByVector(query: Float32Array, projectId: string | null, limit: number, minSim: number): { prop: Proposition; similarity: number }[] {
+    const props = this.project().props;
+    const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
+    return rows.flatMap((r) => {
+      const p = props.get(r.id);
+      if (!p || p.state !== "active") return [];
+      if (p.project_id !== null && p.project_id !== projectId) return [];
+      if (r.text_hash !== textHash(indexText(p))) return [];
+      const v = fromBlob(r.vec);
+      if (v.length !== query.length) return [];
+      const similarity = cosine(query, v);
+      return similarity >= minSim ? [{ prop: p, similarity }] : [];
+    }).sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+  }
+
+  /** work store（§19.2）与 L1 同库。只给 intake.ts 用。 */
+  get workDb(): DatabaseSync {
+    return this.db;
+  }
+
+  /**
+   * 一个事务里追加若干 L1 事件，并执行 work store 的写入（§19.2：L1 追加、窗口完成、checkpoint 推进同生共死）。
+   * work 抛错时整体回滚。返回各事件 id。
+   */
+  commit(appends: PendingAppend[], work: (db: DatabaseSync, ids: string[]) => void): string[] {
+    const ids = appends.map(() => randomUUID());
+    const ins = this.db.prepare(
+      "INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)",
+    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      appends.forEach((a, i) => {
+        this.assertSessionOpen(a.session_id);
+        const json = JSON.stringify(a.body);
+        ins.run(ids[i], new Date().toISOString(), a.kind, a.project_id, a.session_id, 0, a.target_id, json, createHash("sha256").update(json).digest("hex"));
+      });
+      work(this.db, ids);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+    return ids;
   }
 
   private append(

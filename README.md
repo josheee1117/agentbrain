@@ -9,7 +9,7 @@
 - 核心来源：pi-astack 的 abrain/sediment（event-first、统一 proposition、单 writer、确定性投影、自治纠错）
 - 对照来源：TencentDB Agent Memory（选择性吸收 Loadout、capture 调度、provenance、显式降级等机制，不复制团队 Memory Hub）
 
-**当前状态：v2.6 宿主无关基线。切片 1（显式记忆 + 搜索 + 来源展开 + Brief）已在 Pi 上实现；切片 1.5（宿主无关化）2026-10-10 已实现；切片 2（纠正、混合检索、每轮召回、冲突暴露、近邻）2026-10-10 代码完成，三宿主接线见 `integrations/`，2026-10-12 已在用户机器接入，Claude Code 模型侧待复验；后续切片按 §18 逐个授权。**
+**当前状态：v2.6 宿主无关基线。切片 1（显式记忆 + 搜索 + 来源展开 + Brief）已在 Pi 上实现；切片 1.5（宿主无关化）2026-10-10 已实现；切片 2（纠正、混合检索、每轮召回、冲突暴露、近邻）2026-10-10 代码完成，三宿主接线见 `integrations/`，2026-10-12 已在用户机器接入，Claude Code 模型侧待复验；切片 3（自动沉淀：会话登记、`ab work` 抽取、按代码核验转正、`ab doctor`）2026-10-12 代码完成，先于 2.5，接线样例含 launchd，尚未装到用户机器；后续切片按 §18 逐个授权。**
 
 - 总体设计：[docs/design/20260804-agentbrain-总体设计.md](docs/design/20260804-agentbrain-总体设计.md)
 - 领域词汇：[CONTEXT.md](CONTEXT.md)

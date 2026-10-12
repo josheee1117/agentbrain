@@ -23,7 +23,7 @@ function textOf(content: unknown): string {
     .join("\n");
 }
 
-function linesOf(file: string): unknown[] {
+export function linesOf(file: string): unknown[] {
   const out: unknown[] = [];
   for (const line of readFileSync(file, "utf8").split("\n")) {
     if (!line.trim()) continue;
@@ -102,7 +102,7 @@ interface CodexLine {
 }
 
 /** 只丢这些已知宿主注入；"<" 开头的真实用户输入（如 "<task>"）要保留。 */
-const CODEX_INJECTED = [
+export const CODEX_INJECTED = [
   "<environment_context>",
   "<user_instructions>",
   "<heartbeat>",

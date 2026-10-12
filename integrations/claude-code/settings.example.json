@@ -7,6 +7,22 @@
             "type": "command",
             "command": "ab recall --hook",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "ab capture --hook --host claude",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ab capture --hook --host claude",
+            "timeout": 1
           }
         ]
       }
