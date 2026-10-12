@@ -12,7 +12,7 @@ import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody,
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, type Turn } from "./transcript.ts";
-import { buildMessages, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { buildMessages, KIND_FOR_BASIS, MAX_EVIDENCE, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
@@ -21,7 +21,12 @@ export const SETTLE_IDLE_MS = 30 * 60_000;
 export const WINDOW_MAX_CHARS = 48_000;
 export const CONTEXT_OVERLAP_TURNS = 4;
 export const MAX_WINDOWS_PER_SESSION_RUN = 6;
+/** 候选与已有条目的近重复门槛。2026-10-12 用 17 条真实提议复核后维持 0.80（数字见设计 §21）。 */
 export const DUP_CHECK_SIM = 0.8;
+/** 同一窗口内两条候选余弦 ≥ 此值视为同一件事，只留一条（§21 2026-10-12）。 */
+export const SAME_WINDOW_DUP_SIM = 0.8;
+/** 每次 sweep 最多给扫描/补登记来的会话处理的窗口数；hook 登记的会话不受限（§21 2026-10-12）。 */
+export const BACKLOG_WINDOWS_PER_SWEEP = 10;
 const NEIGHBOR_QUERIES = 8;
 const NEIGHBOR_QUERY_CHARS = 500;
 const NEIGHBORS_PER_QUERY = 4;
@@ -56,12 +61,16 @@ export interface WorkOptions {
   session?: { host: Host; session_id: string };
   sweep: boolean;
   dryRun: boolean;
+  /** 只配合 session：清掉该会话的处理进度从头重跑。 */
+  redo?: boolean;
 }
 
 export interface WorkReport {
   busy: boolean;
   scanned: number;
   windows: { done: number; deferred: number; failed: number; skipped: number };
+  /** 本次 sweep 因补登记上限留到下次的会话数。 */
+  backlogLeft: number;
   receipt: intake.Receipt;
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
   expired: number;
@@ -126,6 +135,21 @@ function headLines(file: string): any[] {
   });
 }
 
+/** 会话开始时间：头部第一条带 timestamp 的记录；没有就用文件创建时间。 */
+export function sessionStart(file: string, head: any[] = headLines(file)): number | null {
+  for (const e of head) {
+    const t = typeof e?.timestamp === "string" ? e.timestamp : typeof e?.payload?.timestamp === "string" ? e.payload.timestamp : null;
+    const ms = t ? Date.parse(t) : NaN;
+    if (Number.isFinite(ms)) return ms;
+  }
+  try {
+    const st = statSync(file);
+    return st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 function walk(dir: string, depth: number, out: string[]): void {
   let ents: Dirent[];
   try {
@@ -144,6 +168,8 @@ function walk(dir: string, depth: number, out: string[]): void {
 export function scan(deps: WorkDeps): number {
   const db = deps.store.workDb;
   const since = deps.now().getTime() - SCAN_DAYS * 86_400_000;
+  const hook = intake.firstHookAt(db);
+  const hookMs = hook ? Date.parse(hook) : null;
   let added = 0;
   const hosts: [Host, string, number][] = [
     ["claude", ".claude/projects", 1],
@@ -175,8 +201,11 @@ export function scan(deps: WorkDeps): number {
       } catch {
         project = null;
       }
-      // 未登记目录的会话也记下坐标（不抽取），下次扫描不再为它跑 git
-      intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via: "scan" }, () => project?.name ?? null, deps.now());
+      // 未登记目录的会话也记下坐标（不抽取），下次扫描不再为它跑 git。
+      // 开始时间早于第一次 hook 登记的是装 hook 前的历史会话（backfill），不算漏登记
+      const started = sessionStart(f, head);
+      const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
+      intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
       if (project) added++;
     }
   }
@@ -325,6 +354,44 @@ async function prefetchNeighbors(deps: WorkDeps, turns: Turn[], projectId: strin
   return [...best.values()].sort((a, b) => b.similarity - a.similarity).slice(0, MAX_NEIGHBORS).map((n) => n.prop);
 }
 
+function cosine(a: Float32Array, b: Float32Array): number {
+  let d = 0;
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < a.length; i++) {
+    d += a[i] * b[i];
+    x += a[i] * a[i];
+    y += b[i] * b[i];
+  }
+  return x && y ? d / Math.sqrt(x * y) : 0;
+}
+
+/** 同窗口近重复：余弦 ≥ SAME_WINDOW_DUP_SIM 的只留一条。kind 与 basis 对得上的优先，其次证据多的；证据取并集。 */
+export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { cand: Candidate; vec: Float32Array }[] {
+  const score = (c: Candidate) => (KIND_FOR_BASIS[c.basis] === c.kind ? 10 : 0) + c.evidence.length;
+  const kept: { cand: Candidate; vec: Float32Array }[] = [];
+  for (let i = 0; i < cands.length; i++) {
+    const cur = { cand: cands[i], vec: vecs[i] };
+    // 关系不同（比如一条是对旧条目的纠正、一条是新提议）不合并，免得丢掉纠正信号
+    const j = kept.findIndex(
+      (k) =>
+        k.cand.scope === cur.cand.scope &&
+        k.cand.relation.type === cur.cand.relation.type &&
+        k.cand.relation.target === cur.cand.relation.target &&
+        cosine(k.vec, cur.vec) >= SAME_WINDOW_DUP_SIM,
+    );
+    if (j < 0) {
+      kept.push(cur);
+      continue;
+    }
+    const [win, lose] = score(cur.cand) > score(kept[j].cand) ? [cur, kept[j]] : [kept[j], cur];
+    const seen = new Set(win.cand.evidence.map((e) => `${e.anchor}|${e.quote_sha256}`));
+    const evidence = [...win.cand.evidence, ...lose.cand.evidence.filter((e) => !seen.has(`${e.anchor}|${e.quote_sha256}`))].slice(0, MAX_EVIDENCE);
+    kept[j] = { cand: { ...win.cand, evidence }, vec: win.vec };
+  }
+  return kept;
+}
+
 // ---------- 准入（§7.2 矩阵，没有一行直接转正） ----------
 
 interface Admission {
@@ -453,17 +520,33 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   const v = validate(parsed, win, neighbors, c.id);
   receipt.candidates += Array.isArray((parsed as any).candidates) ? (parsed as any).candidates.length : 0;
   for (const [k, n] of Object.entries(v.dropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
-  // 每条候选单独复查：出现没给模型看过的高相似近邻，说明邻居检查不完整（§9.4.4 → unreconciled）
-  const shown = new Set(neighbors.map((n) => n.id));
+  for (const [k, n] of Object.entries(v.evidenceDropped)) receipt.evidence_dropped[k] = (receipt.evidence_dropped[k] ?? 0) + (n ?? 0);
   const vecs = v.candidates.length ? await embedOrDefer(deps.embedder, v.candidates.map((x) => x.text)) : [];
-  const checked = v.candidates.map((cand, i) => ({
-    ...cand,
-    unreconciled: deps.store.nearestByVector(vecs[i], projectId, RECHECK_TOP, DUP_CHECK_SIM).some((n) => !shown.has(n.prop.id) && n.similarity >= DUP_CHECK_SIM),
-  }));
+  const merged = mergeSameWindow(v.candidates, vecs);
+  receipt.merged += v.candidates.length - merged.length;
+  // 每条候选单独复查已有条目（§9.4.4 → unreconciled）：
+  // 没给模型看过的高相似近邻，说明邻居检查不完整；给模型看过、模型仍说 new，说明模型与向量意见相左。
+  // 两种都不由向量自动合并，交给用户裁决（§21 2026-10-12）。
+  const shown = new Set(neighbors.map((n) => n.id));
+  const checked = merged.map(({ cand, vec }) => {
+    const hits = deps.store.nearestByVector(vec, projectId, RECHECK_TOP, DUP_CHECK_SIM);
+    const handled = new Set([cand.relation.target].filter(Boolean));
+    return {
+      ...cand,
+      unreconciled: hits.some((n) => !shown.has(n.prop.id)) || (cand.relation.type === "new" && hits.some((n) => !handled.has(n.prop.id))),
+    };
+  });
   return admit(checked, s, projectId, c.id, deps.store.project().props);
 }
 
-async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOptions, report: WorkReport, holder: string): Promise<void> {
+/** 本次运行里补登记会话还能处理几个窗口（sweep 才有上限）。 */
+interface Backlog {
+  left: number;
+}
+
+const isBacklog = (s: intake.SessionRow) => s.via === "scan" || s.via === "backfill";
+
+async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOptions, report: WorkReport, holder: string, backlog: Backlog): Promise<void> {
   const db = deps.store.workDb;
   const now = deps.now();
   if (s.ephemeral || !s.project || !s.transcript) {
@@ -507,14 +590,24 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   }
   const projectId = deps.projectId(s.project);
   let row = s;
+  const capped = opts.sweep && isBacklog(s);
+  if (capped && chunks.length && backlog.left <= 0) {
+    report.backlogLeft++;
+    return;
+  }
   for (const c of chunks.slice(0, MAX_WINDOWS_PER_SESSION_RUN)) {
     const prev = intake.getWindow(db, c.id);
     if (prev?.state === "deferred" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
-    if (!intake.budgetLeft(db, deps.now())) {
+    if (capped && backlog.left <= 0) {
+      report.backlogLeft++;
+      break;
+    }
+    if (!intake.budgetLeft(db, deps.now(), "extract")) {
       intake.deferWindow(db, row, c, "budget_exhausted", deps.now(), false, intake.tomorrow(deps.now()));
       report.windows.deferred++;
       break;
     }
+    if (capped) backlog.left--;
     const receipt = intake.emptyReceipt();
     receipt.turns = c.turns.length;
     receipt.chars = c.chars;
@@ -563,7 +656,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     .sort((a, b) => a.seq - b.seq);
   let done = 0;
   for (const p of todo) {
-    if (done >= MAX_VERIFY_PER_RUN || !intake.budgetLeft(db, deps.now())) break;
+    if (done >= MAX_VERIFY_PER_RUN || !intake.budgetLeft(db, deps.now(), "verify")) break;
     const entry = deps.registry.find((e) => e.name === names.get(p.project_id!));
     if (!entry?.path || !existsSync(entry.path)) continue;
     const tools = new RepoTools(entry.path);
@@ -609,6 +702,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     busy: false,
     scanned: 0,
     windows: { done: 0, deferred: 0, failed: 0, skipped: 0 },
+    backlogLeft: 0,
     receipt: intake.emptyReceipt(),
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
     expired: 0,
@@ -621,8 +715,16 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     return report;
   }
   try {
-    if (opts.sweep && !opts.dryRun) report.scanned = scan(deps);
-    for (const s of intake.sessions(db, opts.session)) await processSession(deps, s, opts, report, holder);
+    if (opts.sweep && !opts.dryRun) {
+      intake.reclassifyScanned(db, (t) => sessionStart(t));
+      report.scanned = scan(deps);
+    }
+    if (opts.redo && opts.session && !opts.dryRun) intake.resetSession(db, opts.session.host, opts.session.session_id);
+    // hook / 手动登记的会话先处理；扫描补登记的排后面，并受 BACKLOG_WINDOWS_PER_SWEEP 限制
+    const list = intake.sessions(db, opts.session);
+    const ordered = [...list.filter((x) => !isBacklog(x)), ...list.filter(isBacklog)];
+    const backlog: Backlog = { left: BACKLOG_WINDOWS_PER_SWEEP };
+    for (const s of ordered) await processSession(deps, s, opts, report, holder, backlog);
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);
       expirePass(deps, report);
