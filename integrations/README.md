@@ -53,7 +53,6 @@
   （`-w` 不带值时 `security` 会交互提示输入，key 不进 shell 历史。）不写 `baseUrl` 时沿用 `embedding.json` 的地址和 `agentbrain-embedding` 的 key。没有这个文件、缺 key 时窗口延后，`ab doctor` 的"抽取模型"一行会写明原因和当前用的地址与钥匙串 service。
 
   **已知风险（2026-10-12 查）**：agentrouter.org 对非白名单客户端返回 HTTP 401 `unauthorized client detected`（box 上用通用 HTTP 请求实测如此，用的是无效 key，因此还不能区分是 key 问题还是客户端拦截；社区报告称它只放行 Claude Code、Codex 等官方客户端，要伪装成 Claude Code 的请求头才能过）。`ab work` 不伪装客户端。装上后先跑 `ab work --session <id>` 看 `ab doctor`：若报 HTTP 401 unauthorized client，就要换一个允许直连的 OpenAI 兼容地址，或去掉 `baseUrl` 退回 DashScope。
-- 模型名由用户定；方案里的候选是 `qwen-flash`（便宜）或 `qwen-plus`。
 
 ### 用户机器上要改的地方（本机绝对路径）
 
