@@ -38,13 +38,13 @@
 
 ### 前提
 
-- `~/.agentbrain/extract.json`：抽取与代码核验用的模型。用户 2026-10-12 选定 agentrouter.org 的 `deepseek-v4-flash`：
+- `~/.agentbrain/extract.json`：抽取与代码核验用的模型。用户 2026-10-12 选定 DashScope `qwen-plus`，不写 `baseUrl`，地址与 key 沿用 `embedding.json` 和钥匙串 `agentbrain-embedding`：
 
   ```json
-  {"baseUrl": "https://agentrouter.org/v1", "model": "deepseek-v4-flash"}
+  {"model": "qwen-plus"}
   ```
 
-  写了 `baseUrl` 时，key 从钥匙串 service `agentbrain-extract` 读（3 秒超时，不读环境变量、不进文件）：
+  将来要换到别的 OpenAI 兼容地址时才写 `baseUrl`，这时 key 从钥匙串 service `agentbrain-extract` 读（3 秒超时，不读环境变量、不进文件）：
 
   ```sh
   security add-generic-password -U -s agentbrain-extract -a "$USER" -w
@@ -52,7 +52,7 @@
 
   （`-w` 不带值时 `security` 会交互提示输入，key 不进 shell 历史。）不写 `baseUrl` 时沿用 `embedding.json` 的地址和 `agentbrain-embedding` 的 key。没有这个文件、缺 key 时窗口延后，`ab doctor` 的"抽取模型"一行会写明原因和当前用的地址与钥匙串 service。
 
-  **已知风险（2026-10-12 查）**：agentrouter.org 对非白名单客户端返回 HTTP 401 `unauthorized client detected`（box 上用通用 HTTP 请求实测如此，用的是无效 key，因此还不能区分是 key 问题还是客户端拦截；社区报告称它只放行 Claude Code、Codex 等官方客户端，要伪装成 Claude Code 的请求头才能过）。`ab work` 不伪装客户端。装上后先跑 `ab work --session <id>` 看 `ab doctor`：若报 HTTP 401 unauthorized client，就要换一个允许直连的 OpenAI 兼容地址，或去掉 `baseUrl` 退回 DashScope。
+  注意：agentrouter.org 拦截非官方客户端（2026-10-12 用户用真实 key 实测 401 `unauthorized client detected`），不能作为 `baseUrl`；`ab work` 不伪装客户端。
 
 ### 用户机器上要改的地方（本机绝对路径）
 

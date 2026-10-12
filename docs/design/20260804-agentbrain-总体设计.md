@@ -1007,7 +1007,7 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 - rejected/expired Proposal、临时来源和模型 I/O 采用有限保留策略；
 - prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文；
 - **向量计算会离开本机（v2.6）**：记忆正文与切片 2 每轮召回的用户 prompt 会发送到阿里云 DashScope 计算向量。这是用户 2026-10-10 的明确选择，用户已知情。sensitivity 高的条目是否跳过向量化留作 **CANDIDATE**。
-- **切片 3 的出境范围扩大（2026-10-12）**：`ab work` 把**脱敏后的会话窗口**（去掉宿主注入与 ab 输出，工具输出只留报错首尾）、有界的项目背景（仓库 AGENTS.md / CLAUDE.md / README、pm 档案、已确认记忆）、以及代码核验时模型请求读取的**仓库文件片段**（同样先脱敏）发到抽取模型的 chat 接口。用户 2026-10-12 原话"数据无所谓"，即同意这一范围。**接收方（2026-10-12 11:37 用户选定）是 agentrouter.org（OpenAI 兼容，模型 `deepseek-v4-flash`，按模型名转发上游 DeepSeek）**，不是 DashScope；向量计算仍发 DashScope。仍然不出境的：未脱敏的原文、仓库外的文件、`.git` 内部。
+- **切片 3 的出境范围扩大（2026-10-12）**：`ab work` 把**脱敏后的会话窗口**（去掉宿主注入与 ab 输出，工具输出只留报错首尾）、有界的项目背景（仓库 AGENTS.md / CLAUDE.md / README、pm 档案、已确认记忆）、以及代码核验时模型请求读取的**仓库文件片段**（同样先脱敏）发到抽取模型的 chat 接口。用户 2026-10-12 原话"数据无所谓"，即同意这一范围。**接收方是阿里云 DashScope（OpenAI 兼容 chat 接口，模型 `qwen-plus`，2026-10-12 11:42 用户选定）**，与向量计算同一家。仍然不出境的：未脱敏的原文、仓库外的文件、`.git` 内部。
 
 ### 13.4 数据生命周期类别
 
@@ -1285,7 +1285,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 > **2026-10-12 裁决**（用户授权见 §21 同日条目）：
 >
 > 1. **谁来消费 intake**：短命的 `ab work` 进程，单实例租约（`store.db` 的 `work_lease`，10 分钟过期，持有者 pid 已死可接管）。三个入口：会话结束 hook 拉起分离的 `ab work --session`；launchd 每 30 分钟 `ab work --sweep`（静置会话、漏登记扫描、代码核验、过期归档）；手动 `ab work`。不做 daemon，不在 `ab brief`/`recall` 的热路径上补跑。
-> 2. **算力**：`ab work` 直连 OpenAI 兼容 `/chat/completions`。`~/.agentbrain/extract.json` 写 `model`（必填）和 `baseUrl`（可选，+2 配置键，§14.4 不写死 model ID）；有 `baseUrl` 时 key 读钥匙串 `agentbrain-extract`，没有时沿用 embedding 的地址与 `agentbrain-embedding` 的 key。用户 2026-10-12 选定 agentrouter.org 的 `deepseek-v4-flash`（§21）。不用会内子代理、`claude -p`、`codex exec`：不抢主会话额度，没有 hook 递归，抽取调用没有工具，transcript 里的注入驱动不了任何操作。代码核验另给只读、限定仓库根的五个工具（search/read/list/git log/git blame），没有写、没有网络。
+> 2. **算力**：`ab work` 直连 OpenAI 兼容 `/chat/completions`。`~/.agentbrain/extract.json` 写 `model`（必填）和 `baseUrl`（可选，+2 配置键，§14.4 不写死 model ID）；有 `baseUrl` 时 key 读钥匙串 `agentbrain-extract`，没有时沿用 embedding 的地址与 `agentbrain-embedding` 的 key。用户 2026-10-12 选定 DashScope `qwen-plus`，不写 `baseUrl`，沿用 embedding 的地址与 key（§21）。不用会内子代理、`claude -p`、`codex exec`：不抢主会话额度，没有 hook 递归，抽取调用没有工具，transcript 里的注入驱动不了任何操作。代码核验另给只读、限定仓库根的五个工具（search/read/list/git log/git blame），没有写、没有网络。
 > 3. **业务理解**：每次抽取带有界的项目背景（仓库 AGENTS.md / CLAUDE.md / README 合计 ≤6000 字、pm `repos/<项目>.md` ≤3000 字、本项目与全局已确认记忆 ≤3000 字、近邻 ≤12 条），都是代码常量。
 >
 > 以下为重开时的问题陈述，保留供追溯。
@@ -1346,7 +1346,7 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 - **主题清单的维护形态**（§9.4.4）：如何合并近义主题格，由谁触发。
 - **三层判断链的模型分配**（§9.4.5）：第 1、2 层各用什么档位的模型。链的形状是 LOCKED，模型选择不是。
 
-**切片 3 关闭的部分（2026-10-12）**：第 1 层模型由用户选定为 agentrouter.org 的 `deepseek-v4-flash`（2026-10-12，用户直接选择，未用评测定；写在 `~/.agentbrain/extract.json`）；跨会话印证的门槛为至少 2 个不同会话的用户原话（代码常量，见 §21）；自动沉淀提议的过期为 90 天（代码常量）。两级使用门槛、采用信号、主题清单仍未定。
+**切片 3 关闭的部分（2026-10-12）**：第 1 层模型由用户选定为 DashScope `qwen-plus`（2026-10-12 11:42，用户直接选择，未用评测定；写在 `~/.agentbrain/extract.json`）；跨会话印证的门槛为至少 2 个不同会话的用户原话（代码常量，见 §21）；自动沉淀提议的过期为 90 天（代码常量）。两级使用门槛、采用信号、主题清单仍未定。
 
 ### 19.7 Retrieval Default Profile
 
@@ -1419,6 +1419,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-12（切片 3：抽取模型定为 DashScope qwen-plus，撤回 agentrouter）**：用户 2026-10-12 11:42 SGT 决定抽取与代码核验用 DashScope `qwen-plus`，`extract.json` 只写 `{"model":"qwen-plus"}`，沿用 `embedding.json` 的地址和钥匙串 `agentbrain-embedding`。原因：用户在 Mac 上用真实 key 测试 agentrouter.org，返回 401 `unauthorized client detected`，证实它拦截非官方客户端（上一条的风险成立）；`ab work` 不伪装客户端。§13.3 的出境方因此回到 DashScope 一家。`extract.json` 的可选 `baseUrl` 与 `agentbrain-extract` 钥匙串路径保留（代码与测试都在），当前不用。兼容性（DashScope 文档，2026-10-12 查）：OpenAI 兼容模式下 qwen-plus 支持 `tools`（仅 function 类型）与 `response_format: json_object`，后者要求 messages 里出现 "JSON" 字样，抽取与核验的 prompt 都满足；两者不同时传（核验在工具轮只传 tools，结论轮只传 json_object）。
 
 - **2026-10-12（切片 3：抽取模型改用 agentrouter.org）**：用户 2026-10-12 11:37 SGT 决定抽取与代码核验改用 agentrouter.org 的 OpenAI 兼容接口、模型 `deepseek-v4-flash`，不与 embedding 共用 DashScope。这也了结了 flash 还是 plus 的未决项。
   1. `extract.json` 增加可选 `baseUrl`。有它时 key 读钥匙串 service `agentbrain-extract`；没有时沿用 `embedding.json` 的地址与 `agentbrain-embedding`。仍不读环境变量、key 不进文件，钥匙串读取 3 秒超时。配置键 +1（`baseUrl`）。
