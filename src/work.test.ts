@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
-import { allowedTranscript, chunk, runWork, scan, type WorkDeps } from "./work.ts";
+import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { sha256 } from "./extract.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
@@ -112,7 +112,8 @@ test("会话静置后抽出一条未确认提议；编造引文的候选被丢�
   const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
   assert.deepEqual(r.windows, { done: 1, deferred: 0, failed: 0, skipped: 0 });
   assert.equal(r.receipt.proposals, 1);
-  assert.deepEqual(r.receipt.dropped, { quote_mismatch: 1 });
+  assert.deepEqual(r.receipt.dropped, { no_evidence: 1 });
+  assert.deepEqual(r.receipt.evidence_dropped, { quote_mismatch: 1 });
   const [p] = props(e.store);
   assert.equal(p.text, RULE.text);
   assert.equal(p.confirmed, false);
@@ -221,6 +222,34 @@ test("近邻复查：出现没给模型看过的高相似条目 → 关系未判
   assert.equal(props(e.store).filter((p) => p.unreconciled).length, 1);
 });
 
+test("给模型看过近邻、模型仍说 new，而正文与近邻几乎一样 → 关系未判定，不自动合并", async () => {
+  const e = env();
+  e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令写 node 绝对路径，不依赖 PATH", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "x" } });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，不依赖 PATH")]));
+  const chat = fakeChat((msgs) => {
+    assert.match(msgs[1].content!, /m1 \[rule，未确认\] hook 命令写 node 绝对路径/, "近邻给模型看了");
+    return json({ candidates: [{ ...RULE, text: "hook 命令写 node 绝对路径，不要依赖 PATH" }] });
+  });
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual([r.receipt.unreconciled, r.receipt.proposals], [1, 0]);
+  assert.equal(props(e.store).length, 2, "不由向量自动并进旧条目");
+});
+
+test("同一窗口近重复：只留一条，优先 kind 与 basis 对得上的，证据取并集；不相干的照常保留", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径"), asst("a1", "好"), user("u2", "对，hook 一律写 node 绝对路径")]));
+  const chat = fakeChat(() => json({ candidates: [
+    { ...RULE, kind: "decision", text: "hook 命令都写 node 绝对路径，不依赖 PATH", evidence: [{ anchor: "#3", role: "user", quote: "hook 一律写 node 绝对路径" }] },
+    { ...RULE, text: "hook 命令写 node 绝对路径，不依赖 PATH" },
+    { ...RULE, text: "提交信息用中文写", evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令" }] },
+  ] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [3, 1, 2]);
+  const kept = props(e.store).find((p) => p.text.startsWith("hook"))!;
+  assert.equal(kept.kind, "rule", "user_directive 对应 rule");
+  assert.deepEqual(kept.evidence.map((x) => x.anchor).sort(), ["u1", "u2"]);
+});
+
 test("跨会话印证：两个不同会话里用户各自说过同一条规则 → 自动转正；同一句原话被复制到新会话不算", async () => {
   const e = env();
   e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
@@ -298,6 +327,77 @@ test("限流 429 延后；日预算用完延后到次日", async () => {
   assert.equal(e2.store.workDb.prepare("SELECT error_code FROM capture_windows").get()!.error_code, "budget_exhausted");
 });
 
+test("日预算给代码核验留了份额：抽取停在 上限-保留，核验仍能跑", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
+  intake.spend(e.store.workDb, new Date(), intake.DAILY_MAX_CALLS - intake.VERIFY_RESERVED_CALLS, 0);
+  const chat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(r.windows.deferred, 1, "抽取让出预算");
+  assert.equal(r.verify.verified, 1, "核验用保留份额");
+  assert.equal(e.store.project().props.get(id)!.confirmed_by, "code");
+  assert.ok(!chat.calls.some((c) => c[0].content!.includes("记忆抽取器")), "没有抽取调用");
+});
+
+test("补登记会话每次 sweep 最多处理 BACKLOG_WINDOWS_PER_SWEEP 个窗口；hook 登记的先处理、不受限", async () => {
+  const e = env();
+  for (let i = 0; i < BACKLOG_WINDOWS_PER_SWEEP + 2; i++) {
+    const f = e.transcript(`b${i}`, [user(`u${i}`, `历史会话 ${i}`)]);
+    intake.upsertSession(e.store.workDb, { host: "claude", session_id: `b${i}`, transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "backfill" }, () => "alpha", new Date());
+  }
+  const live = e.transcript("live", [user("u", "当前会话")]);
+  intake.upsertSession(e.store.workDb, { host: "claude", session_id: "live", transcript: live, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date(Date.now() + 1000));
+  const seenUsers: string[] = [];
+  const chat = fakeChat((msgs) => {
+    seenUsers.push(/\[#1 user\] (.*)/.exec(msgs[1].content!)![1]);
+    return json({ candidates: [] });
+  });
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(seenUsers[0], "当前会话", "hook 会话先处理");
+  assert.equal(r.windows.done, BACKLOG_WINDOWS_PER_SWEEP + 1);
+  assert.equal(r.backlogLeft, 2);
+  const r2 = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.deepEqual([r2.windows.done, r2.backlogLeft], [2, 0], "下次 sweep 接着补");
+  const one = await runWork(e.deps(chat), { session: { host: "claude", session_id: "b0" }, sweep: false, dryRun: false, redo: true });
+  assert.equal(one.windows.done, 1, "--session 不受补登记上限");
+});
+
+test("同窗口近重复但关系不同（纠正 vs 新提议）不合并", async () => {
+  const e = env();
+  e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令直接写 ab", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "x" } });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，不依赖 PATH")]));
+  const chat = fakeChat(() => json({ candidates: [
+    { ...RULE, relation: { type: "conflicts", target: "m1" } },
+    { ...RULE, text: "hook 命令写 node 绝对路径，不要依赖 PATH" },
+  ] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.merged, 0);
+  assert.equal(r.receipt.corrections, 1, "纠正信号保留");
+});
+
+test("first_hook_at 只写一次：扫描行后来被 hook 碰到，不会把它的早期登记时间当成 hook 安装时间", () => {
+  const e = env();
+  const db = e.store.workDb;
+  intake.upsertSession(db, { host: "pi", session_id: "old", transcript: null, cwd: e.repo, ended: false, ephemeral: false, via: "backfill" }, () => "alpha", new Date("2026-10-01T00:00:00Z"));
+  intake.upsertSession(db, { host: "pi", session_id: "h", transcript: null, cwd: e.repo, ended: false, ephemeral: false, via: "hook" }, () => "alpha", new Date("2026-10-10T00:00:00Z"));
+  intake.upsertSession(db, { host: "pi", session_id: "old", transcript: null, cwd: e.repo, ended: false, ephemeral: false, via: "hook" }, () => "alpha", new Date("2026-10-11T00:00:00Z"));
+  assert.equal(intake.firstHookAt(db), "2026-10-10T00:00:00.000Z");
+});
+
+test("--redo：从头重跑一个会话，已入库的同一候选不重复", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const again = await runWork(e.deps(chat), { session: { host: "claude", session_id: "s1" }, sweep: false, dryRun: false });
+  assert.equal(again.windows.done, 0, "不 redo 时没有新内容");
+  const redo = await runWork(e.deps(chat), { session: { host: "claude", session_id: "s1" }, sweep: false, dryRun: false, redo: true });
+  assert.equal(redo.windows.done, 1);
+  assert.equal(chat.calls.length, 2);
+  assert.equal(props(e.store).length, 1, "同一候选幂等");
+});
+
 test("ephemeral、未登记目录、已 purge 的会话跳过，不调模型", async () => {
   const e = env();
   const f = e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]);
@@ -349,22 +449,49 @@ test("transcript 路径必须在宿主自己的会话目录里", () => {
   }
 });
 
-test("扫描兜底：只补登记 cwd 在已登记项目里的近期会话", () => {
+test("扫描兜底：只补登记 cwd 在已登记项目里的近期会话；装 hook 前开始的记为 backfill，不报漏登记", () => {
   const e = env();
   const home = join(base, "scanhome");
   mkdirSync(join(home, ".claude/projects/p"), { recursive: true });
-  writeFileSync(join(home, ".claude/projects/p/in.jsonl"), JSON.stringify({ type: "user", uuid: "u", cwd: e.repo, message: { content: "hi" } }) + "\n");
-  writeFileSync(join(home, ".claude/projects/p/out.jsonl"), JSON.stringify({ type: "user", uuid: "u", cwd: "/tmp", message: { content: "hi" } }) + "\n");
+  const line = (cwd: string, ts: string) => JSON.stringify({ type: "user", uuid: "u", cwd, timestamp: ts, message: { content: "hi" } }) + "\n";
+  writeFileSync(join(home, ".claude/projects/p/in.jsonl"), line(e.repo, "2026-10-01T00:00:00Z"));
+  writeFileSync(join(home, ".claude/projects/p/out.jsonl"), line("/tmp", "2026-10-01T00:00:00Z"));
   const old = process.env.HOME;
   process.env.HOME = home;
   try {
     assert.equal(scan(e.deps(null)), 1);
     assert.equal(scan(e.deps(null)), 0);
-    assert.equal(intake.stats(e.store.workDb, new Date()).sessions.scanned, 1, "未登记目录的会话不算疑似漏登记");
+    let st = intake.stats(e.store.workDb, new Date()).sessions;
+    assert.deepEqual([st.scanned, st.backfill], [0, 1], "还没有任何 hook 登记：全是历史会话");
+    // hook 第一次登记之后开始、却只能靠扫描登记的会话才算疑似漏登记
+    intake.upsertSession(e.store.workDb, { host: "codex", session_id: "h1", transcript: null, cwd: e.repo, ended: false, ephemeral: false, via: "hook" }, () => "alpha", new Date("2026-10-05T00:00:00Z"));
+    writeFileSync(join(home, ".claude/projects/p/early.jsonl"), line(e.repo, "2026-10-04T00:00:00Z"));
+    writeFileSync(join(home, ".claude/projects/p/late.jsonl"), line(e.repo, "2026-10-06T00:00:00Z"));
+    assert.equal(scan(e.deps(null)), 2);
+    st = intake.stats(e.store.workDb, new Date()).sessions;
+    assert.deepEqual([st.scanned, st.backfill, st.scannedByHost], [1, 2, { claude: 1 }]);
+    // hook 后来碰到了这个会话：说明 hook 对它生效，不再算漏登记
+    intake.upsertSession(e.store.workDb, { host: "claude", session_id: "late", transcript: null, cwd: e.repo, ended: false, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+    assert.equal(intake.stats(e.store.workDb, new Date()).sessions.scanned, 0);
   } finally {
     process.env.HOME = old;
   }
-  assert.deepEqual(intake.sessions(e.store.workDb).map((s) => [s.session_id, s.project, s.via]).sort(), [["in", "alpha", "scan"], ["out", null, "scan"]]);
+  assert.deepEqual(intake.sessions(e.store.workDb).map((s) => [s.session_id, s.project, s.via]).sort(), [
+    ["early", "alpha", "backfill"], ["h1", "alpha", "hook"], ["in", "alpha", "backfill"], ["late", "alpha", "hook"], ["out", null, "backfill"],
+  ]);
+});
+
+test("旧数据里的 scan 记录：开始早于第一次 hook 登记的改记 backfill（只降级）", () => {
+  const e = env();
+  const db = e.store.workDb;
+  const reg = (id: string, via: "hook" | "scan", at: string) =>
+    intake.upsertSession(db, { host: "pi", session_id: id, transcript: `/x/${id}.jsonl`, cwd: e.repo, ended: false, ephemeral: false, via }, () => "alpha", new Date(at));
+  reg("old", "scan", "2026-10-12T03:58:00Z");
+  reg("new", "scan", "2026-10-12T03:58:00Z");
+  reg("hk", "hook", "2026-10-12T03:44:00Z");
+  const starts: Record<string, number> = { "/x/old.jsonl": Date.parse("2026-10-10T00:00:00Z"), "/x/new.jsonl": Date.parse("2026-10-12T03:50:00Z") };
+  assert.equal(intake.reclassifyScanned(db, (t) => starts[t] ?? null), 1);
+  assert.deepEqual(intake.sessions(db).map((s) => [s.session_id, s.via]).sort(), [["hk", "hook"], ["new", "scan"], ["old", "backfill"]]);
 });
 
 // ---------- 代码核验转正 ----------

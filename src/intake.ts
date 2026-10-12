@@ -10,6 +10,9 @@ import type { WorkError } from "./llm.ts";
 export const LEASE_TTL_MS = 10 * 60_000;
 export const DAILY_MAX_CALLS = 60;
 export const DAILY_MAX_TOKENS = 2_500_000;
+/** 日预算里留给代码核验的部分：抽取用到 (上限 - 保留) 即停，核验可用满（§21 2026-10-12 质量修正）。 */
+export const VERIFY_RESERVED_CALLS = 12;
+export const VERIFY_RESERVED_TOKENS = 300_000;
 export const MAX_ATTEMPTS = 4;
 const BACKOFF_MIN = [1, 5, 30, 120];
 const WINDOW_RETENTION_DAYS = 30;
@@ -28,7 +31,8 @@ export interface SessionRow {
   ended_at: string | null;
   ephemeral: number;
   processed_anchor: string | null;
-  via: "hook" | "scan" | "manual";
+  /** scan：hook 生效后仍靠扫描才登记（疑似漏登记）；backfill：装 hook 之前就开始的历史会话。 */
+  via: "hook" | "scan" | "backfill" | "manual";
   error_code: string | null;
 }
 
@@ -54,7 +58,12 @@ export interface Receipt {
   stripped: number;
   sanitizer: Record<string, number>;
   candidates: number;
+  /** 候选级丢弃。 */
   dropped: Record<string, number>;
+  /** 证据级丢弃（候选可能仍保留）。 */
+  evidence_dropped: Record<string, number>;
+  /** 同窗口近重复合并掉的候选数。 */
+  merged: number;
   proposals: number;
   attached: number;
   corrections: number;
@@ -76,11 +85,14 @@ export interface Registration {
 /** 已存在时只刷新 last_touch / transcript / ended_at，不重新解析项目（hook 的热路径要快）。 */
 export function upsertSession(db: DatabaseSync, r: Registration, resolveProject: () => string | null, now: Date): "new" | "touched" {
   const ts = now.toISOString();
+  // 记下第一次 hook 登记的时间（只写一次）。旧库没有这个键时，以已有 hook 行的最早登记时间为准
+  if (r.via === "hook") db.prepare("INSERT OR IGNORE INTO work_meta(key,value) VALUES('first_hook_at',?)").run(firstHookAt(db) ?? ts);
   const row = db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(r.host, r.session_id);
   if (row) {
     db.prepare(
-      "UPDATE capture_sessions SET last_touch=?, transcript=COALESCE(?,transcript), ended_at=CASE WHEN ? THEN ? ELSE ended_at END, ephemeral=MAX(ephemeral,?) WHERE host=? AND session_id=?",
-    ).run(ts, r.transcript, r.ended ? 1 : 0, ts, r.ephemeral ? 1 : 0, r.host, r.session_id);
+      // hook 碰到了扫描登记的会话，说明 hook 在这个会话上是生效的
+      "UPDATE capture_sessions SET last_touch=?, transcript=COALESCE(?,transcript), ended_at=CASE WHEN ? THEN ? ELSE ended_at END, ephemeral=MAX(ephemeral,?), via=CASE WHEN ?='hook' THEN 'hook' ELSE via END WHERE host=? AND session_id=?",
+    ).run(ts, r.transcript, r.ended ? 1 : 0, ts, r.ephemeral ? 1 : 0, r.via, r.host, r.session_id);
     return "touched";
   }
   db.prepare(
@@ -195,9 +207,11 @@ export function budget(db: DatabaseSync, now: Date): { calls: number; tokens: nu
   return row ?? { calls: 0, tokens: 0 };
 }
 
-export function budgetLeft(db: DatabaseSync, now: Date): boolean {
+export function budgetLeft(db: DatabaseSync, now: Date, purpose: "extract" | "verify"): boolean {
   const b = budget(db, now);
-  return b.calls < DAILY_MAX_CALLS && b.tokens < DAILY_MAX_TOKENS;
+  const calls = purpose === "extract" ? DAILY_MAX_CALLS - VERIFY_RESERVED_CALLS : DAILY_MAX_CALLS;
+  const tokens = purpose === "extract" ? DAILY_MAX_TOKENS - VERIFY_RESERVED_TOKENS : DAILY_MAX_TOKENS;
+  return b.calls < calls && b.tokens < tokens;
 }
 
 export function spend(db: DatabaseSync, now: Date, calls: number, tokens: number): void {
@@ -240,7 +254,7 @@ export function prune(db: DatabaseSync, now: Date): void {
 }
 
 export interface IntakeStats {
-  sessions: { total: number; unregistered: number; ephemeral: number; scanned: number; errors: Record<string, number> };
+  sessions: { total: number; unregistered: number; ephemeral: number; scanned: number; scannedByHost: Record<string, number>; backfill: number; errors: Record<string, number> };
   windows: { done: number; deferred: number; failed: number; errors: Record<string, number>; nextRetry: string | null };
   receipts7d: Receipt;
   budget: { calls: number; tokens: number };
@@ -250,11 +264,12 @@ export interface IntakeStats {
 }
 
 function emptyReceipt(): Receipt {
-  return { turns: 0, chars: 0, truncated: 0, stripped: 0, sanitizer: {}, candidates: 0, dropped: {}, proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, tokens: 0 };
+  return { turns: 0, chars: 0, truncated: 0, stripped: 0, sanitizer: {}, candidates: 0, dropped: {}, evidence_dropped: {}, merged: 0, proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, tokens: 0 };
 }
 
 export function addReceipt(into: Receipt, r: Receipt): void {
-  for (const k of ["turns", "chars", "truncated", "stripped", "candidates", "proposals", "attached", "corrections", "unreconciled", "corroborated", "tokens"] as const) into[k] += r[k] ?? 0;
+  for (const k of ["turns", "chars", "truncated", "stripped", "candidates", "merged", "proposals", "attached", "corrections", "unreconciled", "corroborated", "tokens"] as const) into[k] += r[k] ?? 0;
+  for (const [k, n] of Object.entries(r.evidence_dropped ?? {})) into.evidence_dropped[k] = (into.evidence_dropped[k] ?? 0) + n;
   for (const [k, n] of Object.entries(r.sanitizer ?? {})) into.sanitizer[k] = (into.sanitizer[k] ?? 0) + n;
   for (const [k, n] of Object.entries(r.dropped ?? {})) into.dropped[k] = (into.dropped[k] ?? 0) + n;
 }
@@ -266,6 +281,7 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
   const errors: Record<string, number> = {};
   for (const s of all) if (s.error_code) errors[s.error_code] = (errors[s.error_code] ?? 0) + 1;
   const week = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const missed = all.filter((s) => s.via === "scan" && s.project && s.first_seen >= week);
   const wins = db.prepare("SELECT * FROM capture_windows").all() as unknown as WindowRow[];
   const werr: Record<string, number> = {};
   const r7 = emptyReceipt();
@@ -280,7 +296,9 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
       total: all.length,
       unregistered: all.filter((s) => !s.project && !s.ephemeral).length,
       ephemeral: all.filter((s) => s.ephemeral).length,
-      scanned: all.filter((s) => s.via === "scan" && s.project && s.first_seen >= week).length,
+      scanned: missed.length,
+      scannedByHost: missed.reduce<Record<string, number>>((m, s) => ((m[s.host] = (m[s.host] ?? 0) + 1), m), {}),
+      backfill: all.filter((s) => s.via === "backfill" && s.project).length,
       errors,
     },
     windows: {
@@ -296,4 +314,35 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
     lastRun: meta(db, "last_run"),
     lastSuccess: meta(db, "last_success"),
   };
+}
+
+/** 第一次 hook 登记的时间（任一宿主）。之后开始、却只能靠扫描登记的会话才算疑似漏登记。 */
+export function firstHookAt(db: DatabaseSync): string | null {
+  const m = meta(db, "first_hook_at");
+  if (m) return m;
+  const row = db.prepare("SELECT MIN(first_seen) AS t FROM capture_sessions WHERE via='hook'").get() as { t: string | null } | undefined;
+  return row?.t ?? null;
+}
+
+/** 把开始时间早于第一次 hook 登记的扫描会话改记为 backfill。只降级，不升级。 */
+export function reclassifyScanned(db: DatabaseSync, startedAt: (transcript: string) => number | null): number {
+  const hook = firstHookAt(db);
+  const hookMs = hook ? Date.parse(hook) : null;
+  const rows = db.prepare("SELECT host,session_id,transcript FROM capture_sessions WHERE via='scan'").all() as { host: string; session_id: string; transcript: string | null }[];
+  let n = 0;
+  for (const r of rows) {
+    const t = r.transcript ? startedAt(r.transcript) : null;
+    if (hookMs === null || t === null || t < hookMs) {
+      db.prepare("UPDATE capture_sessions SET via='backfill' WHERE host=? AND session_id=?").run(r.host, r.session_id);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** ab work --redo：从头重跑一个会话。删窗口记录、清 checkpoint；候选幂等键保留，同样的候选不会重复入库。 */
+export function resetSession(db: DatabaseSync, host: Host, sessionId: string): boolean {
+  const r = db.prepare("UPDATE capture_sessions SET processed_anchor=NULL, error_code=NULL WHERE host=? AND session_id=?").run(host, sessionId);
+  db.prepare("DELETE FROM capture_windows WHERE host=? AND session_id=?").run(host, sessionId);
+  return r.changes === 1;
 }

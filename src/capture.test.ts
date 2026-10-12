@@ -54,7 +54,7 @@ function reply(body: any): object {
   const said = /\[#(\d+) user\] (以后 hook 命令都写 node 绝对路径)/.exec(user);
   const candidates = [];
   if (said) candidates.push({ kind: "rule", scope: "project", text: "hook 命令都写 node 绝对路径", basis: "user_directive", evidence: [{ anchor: `#${said[1]}`, role: "user", quote: said[2] }], relation: { type: "new", target: null } });
-  if (tool) candidates.push({ kind: "pitfall", scope: "project", text: "宿主跑 hook 时 PATH 里可能没有 node，hook 命令要写 node 绝对路径", trigger: "配置宿主 hook", basis: "observed_failure", evidence: [{ anchor: `#${tool[1]}`, role: "tool", quote: tool[2] }], relation: { type: "new", target: null } });
+  if (tool) candidates.push({ kind: "pitfall", scope: "project", text: "宿主子进程环境变量很少，找不到解释器就报错退出", trigger: "配置宿主 hook", basis: "observed_failure", evidence: [{ anchor: `#${tool[1]}`, role: "tool", quote: tool[2] }], relation: { type: "new", target: null } });
   return { role: "assistant", content: JSON.stringify({ candidates }) };
 }
 const server = createServer(async (req: IncomingMessage, res) => {
@@ -113,7 +113,7 @@ test("SessionEnd 拉起分离的 ab work：会话被抽成未确认的自动沉�
     out = (await ab(["search", "node 绝对路径"])).out;
   }
   assert.match(out, /alpha 规则\[未确认·自动沉淀\]: hook 命令都写 node 绝对路径/);
-  assert.match(out, /alpha 坑\[未确认·自动沉淀\]: 宿主跑 hook 时 PATH 里可能没有 node/);
+  assert.match((await ab(["search", "解释器"])).out, /alpha 坑\[未确认·自动沉淀\]: 宿主子进程环境变量很少，找不到解释器就报错退出/);
   const chats = seen.filter((s) => s.path === "/v1/chat/completions");
   assert.equal(chats.length, 1);
   assert.equal(chats[0].auth, "Bearer fixture-key");
@@ -124,7 +124,7 @@ test("SessionEnd 拉起分离的 ab work：会话被抽成未确认的自动沉�
   assert.match(sent, /hook 命令要写成/, "仓库 README 作为项目背景送了");
   const doctor = (await ab(["doctor"])).out;
   assert.match(doctor, /窗口: 完成 1，延后 0/);
-  assert.match(doctor, /近 7 天: 提议 2/);
+  assert.match(doctor, /近 7 天: 候选 2，提议 2/);
   assert.match(doctor, /脱敏命中 credential 1/);
   const brief = (await ab(["brief"])).out;
   assert.match(brief, /另有 2 条未确认（其中自动沉淀 2 条/);
@@ -139,7 +139,7 @@ test("ab work --sweep 按仓库代码核验未确认的坑：证据对得上就�
   const tools = seen.slice(before).filter((s) => s.body.tools);
   assert.ok(tools.length >= 2);
   assert.match(JSON.stringify(tools[1].body.messages), /README\.md:3:hook 命令要写成/, "工具结果回给了模型");
-  const hit = (await ab(["search", "PATH 里可能没有 node"])).out;
+  const hit = (await ab(["search", "解释器"])).out;
   const id = /\[([0-9a-f]{8})\] alpha 坑/.exec(hit)![1];
   assert.doesNotMatch(hit, /alpha 坑\[未确认/);
   const got = (await ab(["get", id])).out;
@@ -148,8 +148,8 @@ test("ab work --sweep 按仓库代码核验未确认的坑：证据对得上就�
   assert.match(got, /依据: 工具报错/);
   const rule = (await ab(["search", "hook 命令都写"])).out;
   assert.match(rule, /规则\[未确认·自动沉淀\]/, "规则不走代码核验，仍未确认");
-  const recall = await ab(["recall", "--hook"], { input: JSON.stringify({ prompt: "配置宿主 hook PATH 里可能没有 node", cwd: repo }) });
-  assert.match(recall.out, /PATH 里可能没有 node/, "转正后进每轮召回");
+  const recall = await ab(["recall", "--hook"], { input: JSON.stringify({ prompt: "宿主子进程环境变量很少，找不到解释器", cwd: repo }) });
+  assert.match(recall.out, /找不到解释器就报错退出/, "转正后进每轮召回");
 });
 
 test("ab work --dry-run 只报待处理量，不调模型、不写库", async () => {

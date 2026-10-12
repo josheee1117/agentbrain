@@ -16,7 +16,7 @@ import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 import { chatClient, loadChatConfig } from "./llm.ts";
-import { allowedTranscript, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
+import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 
 const BRIEF_MAX_CHARS = 2000;
@@ -797,15 +797,18 @@ async function cmdWork(argv: string[]): Promise<void> {
       session: { type: "string" },
       sweep: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
+      redo: { type: "boolean", default: false },
     },
     strict: true,
   });
+  if (values.redo && !values.session) die("--redo 必须和 --session 一起用");
   const store = open();
   try {
     const r = await runWork(workDeps(store), {
       session: values.session ? parseSessionKey(values.session) : undefined,
       sweep: values.sweep === true,
       dryRun: values["dry-run"] === true,
+      redo: values.redo === true,
     });
     if (r.busy) {
       console.log("另一个 ab work 正在运行，本次跳过。");
@@ -819,8 +822,9 @@ async function cmdWork(argv: string[]): Promise<void> {
     console.log(
       [
         `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : ""}`,
-        `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}`,
-        `产出: 提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，丢弃 ${Object.values(x.dropped).reduce((a, b) => a + b, 0)}`,
+        `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}${r.backlogLeft ? `；补登记会话留到下次 ${r.backlogLeft}（每次 sweep 最多 ${BACKLOG_WINDOWS_PER_SWEEP} 个窗口）` : ""}`,
+        `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
+        `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
         values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}；过期归档 ${r.expired}` : "",
       ].filter(Boolean).join("\n"),
     );
@@ -852,10 +856,10 @@ function sedimentLines(store: Store): string[] {
   const lastRetry = st.windows.nextRetry ? `，最早 ${new Date(st.windows.nextRetry).toLocaleString("zh-CN", { hour12: false })} 重试` : "";
   return [
     "沉淀（切片 3）:",
-    `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；近 7 天靠扫描补登记 ${st.sessions.scanned}${st.sessions.scanned ? "（hook 可能没生效，Codex 要在 /hooks 里信任）" : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
+    `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；补登记历史会话（装 hook 前）${st.sessions.backfill}；近 7 天疑似漏登记 ${st.sessions.scanned}${st.sessions.scanned ? `（${fmtCounts(st.sessions.scannedByHost)}；hook 装好后开始的会话仍只能靠扫描登记，该宿主 hook 可能没生效，Codex 要在 /hooks 里信任）` : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
     `  窗口: 完成 ${st.windows.done}，延后 ${st.windows.deferred}${lastRetry}，失败 ${st.windows.failed}；未完成原因 ${fmtCounts(st.windows.errors)}`,
-    `  今日预算: 调用 ${st.budget.calls}/${intake.DAILY_MAX_CALLS}，token ${st.budget.tokens}/${intake.DAILY_MAX_TOKENS}`,
-    `  近 7 天: 提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}；丢弃 ${fmtCounts(r.dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
+    `  今日预算: 调用 ${st.budget.calls}/${intake.DAILY_MAX_CALLS}，token ${st.budget.tokens}/${intake.DAILY_MAX_TOKENS}（其中 ${intake.VERIFY_RESERVED_CALLS} 次 / ${intake.VERIFY_RESERVED_TOKENS} token 留给代码核验）`,
+    `  近 7 天: 候选 ${r.candidates}，提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}，同窗口合并 ${r.merged}；丢弃整条候选 ${fmtCounts(r.dropped)}、单条证据 ${fmtCounts(r.evidence_dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
     `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，过期归档 ${auto.filter((p) => p.expired).length}`,
     `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
     `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : `${cfg.model} @ ${hostOf(cfg.baseUrl)}（key: 钥匙串 ${cfg.keyService}）`}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
@@ -948,8 +952,9 @@ const USAGE = `用法:
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
   ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
                                     手动登记一个会话（hook 没生效时）
-  ab work [--session <host>:<id>] [--sweep] [--dry-run]
+  ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
+                                    --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
                                     --sweep 另扫描漏登记的会话、按代码核验未确认的坑、归档过期提议（launchd 每 30 分钟）`;
 
 async function main(): Promise<void> {

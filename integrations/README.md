@@ -83,7 +83,7 @@
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentbrain.work.plist
    ```
 
-   日志在 `~/.agentbrain/work.log`。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选"始终允许"；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
+   日志在 `~/.agentbrain/work.log`。每次 sweep 先处理 hook 登记的会话，扫描/补登记来的历史会话每次最多 10 个窗口；日预算 60 次调用里留 12 次给代码核验。要重跑某个会话：`ab work --session <host>:<id> --redo`（已入库的同一候选不会重复）。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选"始终允许"；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
 
 ### 装完后的验收
 
