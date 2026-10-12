@@ -2,7 +2,7 @@
 
 - 状态：**v2.6 宿主无关基线**
 - 最新修订：2026-10-12
-- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验（§21）**
+- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验；切片 3（自动沉淀）2026-10-12 代码完成，先于 2.5，尚未接入用户机器、未跑真实模型（§21）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
@@ -497,19 +497,24 @@ GATE：后台 worker 形态，见 §19.3（v2.5 重开）。
 ### 8.1 总体流水线
 
 ```text
-宿主会话结束（触发形态见 §19.3）
-  → adapter 去除自身注入和 harness 噪声
-  → 持久化前 secret/PII/path sanitizer
-  → Durable Intake
-  → batch/window builder
-  → LLM extractor（只生成 Proposal/Assertion）
-  → neighbor lookup / dedup context
-  → curator decision
-  → append L1
+宿主 hook 登记会话坐标（每轮 UserPromptSubmit / Pi before_agent_start；触发形态见 §19.3）
+  → Durable Intake：只存 host + session id + transcript 路径 + 处理到的定位点，不存正文
+  → 会话已结束（SessionEnd / session_shutdown）或 transcript 静置 30 分钟
+  → window builder：从 checkpoint 按轮次切窗口
+  → adapter 去除宿主注入、ab 自身输出和 harness 噪声
+  → secret/PII/path sanitizer（送模型前）
+  → neighbor lookup / dedup context + 项目背景（仓库文档、pm 档案、已确认记忆）
+  → LLM extractor（第 1 层，只生成 Proposal）
+  → 确定性校验：引文逐字、角色、锚点、种类、sanitizer（写 L1 前再跑一次）
+  → 每条候选单独近邻复查 → 关系判定
+  → curator decision（准入矩阵，§8.4）
+  → append L1 + 窗口完成 + checkpoint 推进（同一事务）
   → deterministic L2 projector
   → L3 reconcile
-  → visible diagnostic/outcome
+  → visible diagnostic/outcome（ab doctor）
 ```
+
+**切片 3 落地（2026-10-12）**。intake 只存坐标，所以"持久化前脱敏"落在送模型前与写 L1 前两处：会话正文从不写进 agentbrain 自己的库，进 L1 的只有抽取出的记忆正文（已二次脱敏）和引文的 sha256。实现见 `src/{transcript,sanitize,intake,extract,work}.ts`。
 
 ### 8.2 来源和默认写权
 
@@ -542,6 +547,8 @@ v2 保留 abrain 的 INV-INVISIBILITY：
 1. **显式意图模式**：用户主动 remember/correct/archive/reactivate/forget/purge；
 2. **上下文澄清模式**：当前任务确实依赖 unresolved Proposal，系统在原对话中询问一次具体歧义；
 3. **自治延后模式**：等待更多证据、reject/expire/defer，不打扰用户。
+
+**切片 3 的自动转正（2026-10-12，改动本节与 §9.4 的 LOCKED 规则，理由见 §21 同日条目）**。自动沉淀的条目一律先是未确认。转正只有三条路：用户确认；`ab work` 按项目真实代码核验，拿到程序能逐字核对的代码证据（文件存在且引文在所引行内，或 commit 是 HEAD 的祖先且提交说明里有引文）；规则与决定在至少两个不同会话里都有用户原话支持，且两处原话不同（防 resume/fork 复制的历史冒充独立来源）。后两条按本节"独立证据"条款处理：代码是会话之外的独立来源；两个会话里用户各自说过是两份 Human directive，不是同一记忆的派生引用。模型的置信度、模型间一致意见、计数都不能转正。全局记忆、待确认的纠正、关系未判定的条目不走自动转正。
 
 禁止建立批量记忆审批后台作为正常闭环。**Unreconciled 集合（§9.4.4）与 Ephemeral 证据（§9.5）都不得做成常驻待办列表**：它们在检索自然命中时带 `unreconciled`/`ephemeral` 标记进入 Memory Card，由主 Agent 自然决定问不问；系统**不**另设"当前任务是否确实依赖"的判断步骤（那本身是 §9.4.3 不信任的模型判断）；总量由 doctor 报告（§14.3）。§9.4 的 Corroboration Count 之所以不违反本条，是因为计数在后台自行排队、不向 Human 呈现列表，只在达到门槛时才可能触发一次询问。进入 stable Policy View 的高影响 Proposal 必须经过独立证据、明确用户 directive 或另行冻结的高影响校准策略；不得仅凭单模型高 confidence 发布。
 
@@ -1000,6 +1007,7 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 - rejected/expired Proposal、临时来源和模型 I/O 采用有限保留策略；
 - prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文；
 - **向量计算会离开本机（v2.6）**：记忆正文与切片 2 每轮召回的用户 prompt 会发送到阿里云 DashScope 计算向量。这是用户 2026-10-10 的明确选择，用户已知情。sensitivity 高的条目是否跳过向量化留作 **CANDIDATE**。
+- **切片 3 的出境范围扩大（2026-10-12）**：`ab work` 把**脱敏后的会话窗口**（去掉宿主注入与 ab 输出，工具输出只留报错首尾）、有界的项目背景（仓库 AGENTS.md / CLAUDE.md / README、pm 档案、已确认记忆）、以及代码核验时模型请求读取的**仓库文件片段**（同样先脱敏）发到 DashScope 的 chat 接口。用户 2026-10-12 原话"数据无所谓"，即同意这一范围。仍然不出境的：未脱敏的原文、仓库外的文件、`.git` 内部。
 
 ### 13.4 数据生命周期类别
 
@@ -1213,7 +1221,9 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 
 ## 18. 里程碑：按场景切片（v2.4 重排，v2.5 插入 1.5 与 2.5）
 
-以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。v2.5 插入两个切片而不重新编号，以保持正文中"切片 3""切片 4 之后"等引用不变。切片顺序为 2 → 2.5 → 3。
+以下取代 v2.3 的 T0/D0/P0-P2/M1-M6 框架。每个切片做完即可 dogfood，各自需要用户明确授权。v2.5 插入两个切片而不重新编号，以保持正文中"切片 3""切片 4 之后"等引用不变。原定顺序为 2 → 2.5 → 3；2026-10-12 用户授权切片 3 先做（§21），2.5 仍需单独授权。
+
+**触发写法修订（2026-10-12）**：原表写的"Pi `agent_end`、Claude Code/Codex `Stop`"是**每轮**事件（官方文档，2026-10-12 查），不能当"会话结束"。改为首轮登记 + `SessionEnd` / `session_shutdown` 加速 + transcript 静置兜底。
 
 | 切片 | 内容 | 覆盖场景 / 痛点 | 关掉的 gate |
 |---|---|---|---|
@@ -1221,7 +1231,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
 | **2**（2026-10-10 代码完成，2026-10-12 三宿主接线，Claude Code 模型侧待复验） | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
-| 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
+| **3**（2026-10-12 代码完成，先于 2.5；未接线） | 首轮登记（Claude Code/Codex `UserPromptSubmit`、Pi `before_agent_start`）+ 会话结束加速（Claude Code/Codex `SessionEnd`、Pi `session_shutdown`）+ 静置 30 分钟兜底 + launchd 定时 `ab work --sweep` → durable intake → 单层 extractor（带项目背景）→ Proposal → 准入与 Unreconciled；按代码核验与跨会话印证自动转正 | 痛点"不及时更新" | §19.3（已关闭）；§19.6 单层部分 |
 | 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
 | 之后 | Corroboration；三层链第 2、3 层；Delegation Grant；Purge 传递闭包；backup/export。使用成熟度计数因缺可靠"真被用上"信号继续后置（§9.4） | — | §19.6/§19.7 其余 |
 
@@ -1270,9 +1280,18 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 - purge journal；
 - 不产生第二语义真相源。
 
-### 19.3 后台 Worker 拓扑（**v2.5 重开**；切片 3 前关闭）
+### 19.3 后台 Worker 拓扑（**2026-10-12 关闭**）
 
-> **v2.5 重开**：v2.4 的"进程内后台任务"只对常驻的 Pi 扩展成立；v2.5 删除了 Pi 扩展，三个宿主里都只有短命的 `ab` 进程，会话结束后没有可承载后台抽取的 agentbrain 进程。仍然成立的部分：durable intake 先落 `store.db`（§19.2）；daemon/DCC/LSEA 式多进程收敛仍属场景复杂度，不做。需要裁决的是两件事：
+> **2026-10-12 裁决**（用户授权见 §21 同日条目）：
+>
+> 1. **谁来消费 intake**：短命的 `ab work` 进程，单实例租约（`store.db` 的 `work_lease`，10 分钟过期，持有者 pid 已死可接管）。三个入口：会话结束 hook 拉起分离的 `ab work --session`；launchd 每 30 分钟 `ab work --sweep`（静置会话、漏登记扫描、代码核验、过期归档）；手动 `ab work`。不做 daemon，不在 `ab brief`/`recall` 的热路径上补跑。
+> 2. **算力**：`ab work` 直连 OpenAI 兼容 `/chat/completions`（DashScope），baseUrl 与 key 复用 embedding，模型名在 `~/.agentbrain/extract.json`（+1 配置键，§14.4 不写死 model ID）。不用会内子代理、`claude -p`、`codex exec`：不抢主会话额度，没有 hook 递归，抽取调用没有工具，transcript 里的注入驱动不了任何操作。代码核验另给只读、限定仓库根的五个工具（search/read/list/git log/git blame），没有写、没有网络。
+> 3. **业务理解**：每次抽取带有界的项目背景（仓库 AGENTS.md / CLAUDE.md / README 合计 ≤6000 字、pm `repos/<项目>.md` ≤3000 字、本项目与全局已确认记忆 ≤3000 字、近邻 ≤12 条），都是代码常量。
+>
+> 以下为重开时的问题陈述，保留供追溯。
+
+> **v2.5 重开时的问题**：
+> v2.4 的"进程内后台任务"只对常驻的 Pi 扩展成立；v2.5 删除了 Pi 扩展，三个宿主里都只有短命的 `ab` 进程，会话结束后没有可承载后台抽取的 agentbrain 进程。仍然成立的部分：durable intake 先落 `store.db`（§19.2）；daemon/DCC/LSEA 式多进程收敛仍属场景复杂度，不做。需要裁决的是两件事：
 >
 > 1. **谁来消费 intake**。候选：会话结束 hook 写入 intake 后拉起一个分离的 `ab work` 进程排空队列，用单实例锁保证同一时刻只有一个；或在下一次任意会话执行 `ab brief` 时补跑。会话结束的触发点本身也要定：各宿主的 Stop/`agent_end` hook，或不用 hook、由下次会话补跑。
 > 2. **抽取用什么算力**。Pi `ModelRuntime` 不再通用。候选：`claude -p`、`codex exec`、直接调用模型 API。按 §14.4，代码与 schema 不硬编码 model ID。
@@ -1303,6 +1322,8 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 
 **切片 2 部分关闭（2026-10-10）**：已实现的形状以 `src/l2.ts` 的类型冻结，未冻结项见 §21 同日切片 2 条目第 7 条。
 
+**切片 3 扩展（2026-10-12）**：`RememberBody` 增加 `origin`、`basis`、`trigger`、`evidence[]`（锚点 + 角色 + 引文 sha256）、`window_id`、`relation`、`unreconciled`；新增事件 `evidence`（重复时给已有条目追加来源）与 `verify`（代码核验结论，带 HEAD 与代码证据）；`confirm` 事件体可带 `by: corroboration`；`archive` 可带 `reason: expired`。投影新增 `confirmed_by`、`extra_sources`、`code_evidence`、`stale`、`expired`。旧事件缺字段时按原语义投影。
+
 冻结 proposition envelope、facets、stable identity、四种 readable views、组合视图物化、projector version 和 schema migration。
 
 ### 19.5 Identity / Project Binding / Loadout / Delegation
@@ -1324,6 +1345,8 @@ Prototype 裁决 daemon、短命 worker、进程内 worker、RPC 或混合；不
 - **实际采用信号与结算合同**（§9.4.2/§9.4.6）：进入 prompt 仅算 exposure，明确不采用不得计数；未知不加计数。冻结跨 Session 幂等、来源血缘检查，以及高影响发布的独立证据策略。
 - **主题清单的维护形态**（§9.4.4）：如何合并近义主题格，由谁触发。
 - **三层判断链的模型分配**（§9.4.5）：第 1、2 层各用什么档位的模型。链的形状是 LOCKED，模型选择不是。
+
+**切片 3 关闭的部分（2026-10-12）**：第 1 层模型由用户写进 `~/.agentbrain/extract.json`（候选 qwen-flash / qwen-plus，未用评测定）；跨会话印证的门槛为至少 2 个不同会话的用户原话（代码常量，见 §21）；自动沉淀提议的过期为 90 天（代码常量）。两级使用门槛、采用信号、主题清单仍未定。
 
 ### 19.7 Retrieval Default Profile
 
@@ -1396,6 +1419,18 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-12（切片 3 自动沉淀：授权、裁决与对已定条文的改动）**：
+  1. **授权与顺序**。用户 2026-10-12 11:05 SGT 原话："abwork 直接调 api 的话会不会出现不理解到底什么值得沉淀的问题（不理解业务） 数据无所谓、未确认是一种临时状态，是不是可以定期根据现有项目的真实code（只有真实 code 才是最准确的说明）来决定是否变成正式呢。不用跑一周，直接完整干完。"据此切片 3 一次做完（不分 3a/3b），并**先于切片 2.5**，偏离 §18 原定的 2 → 2.5 → 3。切片 2.5 仍需单独授权。
+  2. **§19.3 关闭**：短命 `ab work` + 单实例租约 + 直连 OpenAI 兼容 API（DashScope），见 §19.3 裁决。理由：不抢主会话额度（10-12 已遇 429/520/400），没有 hook 递归，抽取无工具、注入驱动不了操作，三宿主共用一份代码。
+  3. **业务理解**：用户担心直连 API 的模型"不理解业务"。处置：每次抽取带项目背景（仓库文档、pm 档案、已确认记忆、近邻），预算为代码常量；prompt 明确"空输出最常见""用户面向以后的指令不能漏"。
+  4. **§13.3 出境范围扩大**：脱敏后的会话窗口、项目背景、代码核验读取的仓库片段发往 DashScope。依据是上面原话里的"数据无所谓"。
+  5. **§8.1 落实方式**：intake 只存坐标、不存正文，sanitizer 放在送模型前与写 L1 前两处。意图与 §8.1 一致，文字顺序不同。
+  6. **§18 触发写法**：`Stop` / `agent_end` 每轮都触发，改为首轮登记 + `SessionEnd` / `session_shutdown` 加速 + 静置 30 分钟兜底 + launchd 每 30 分钟定时。Codex 的 `SessionEnd` 已按 2026-10-12 官方文档核实（关闭、归档、空闲 30 分钟触发，不对子代理，默认 1 秒最多 3 秒）。
+  7. **改动 LOCKED 规则：自动转正（§8.3、§8.4、§9.4）**。用户提出"未确认是临时状态，按真实代码决定是否转正"。实现为三条：(a) 坑与事实由 `ab work --sweep` 用只读、限定仓库根的工具核验，结论必须带程序能逐字核对的代码证据，verified → 追加 `verify` 事件并转正，contradicted → 标"与代码不符"、保持未确认，代码无法核验或证据不足 → 只记在 work store；(b) 规则与决定（理由、用户偏好）代码证明不了，保持未确认，直到用户确认，或在至少 2 个不同会话里都有用户原话支持且原话不同（追加 `confirm {by: corroboration}`）；(c) 全局记忆、待确认的纠正、关系未判定的条目不自动转正。这改变了 §8.2"没有任何一行能直接得到 confirmed"的切片 1.5 落地形态与本方案原先的"首发无自动转正"。依据是 §8.3 的"独立证据"条款：代码是会话之外的独立来源；两个会话的用户原话是两份 Human directive。§9.4.6 不算独立证据的"同一记忆派生的跨 Session 引用、模型复述、多模型意见"仍然不算：模型置信度从不参与，引文相同的会话按复制历史处理。§9.4 的使用计数（Corroboration Count）仍排期在切片 4 之后，与此处的跨会话印证不是一回事。
+  8. **§19.4 L2 合同扩展**：见 §19.4 切片 3 段。`unreconciled` 条目在 search/get 带"关系未判定"标记，不进 brief/recall，只有用户 confirm 或 archive 能解除（§9.4.4）。
+  9. **预算常量**（§2.2，均为代码常量）：静置 30 分钟；窗口 ≤48,000 字，前置 4 轮只读上下文；每窗口 ≤5 条候选；每会话每次 ≤6 个窗口；每日 ≤60 次调用、≤250 万 token；抽取超时 90 秒；重试 4 次（1/5/30/120 分钟）；租约 10 分钟；近邻复查门槛 0.80；代码核验每次 ≤3 条、每条 ≤8 次工具调用、单次输出 ≤6,000 字、合计 ≤30,000 字，同一 HEAD 不重复、24 小时内不重复；提议 90 天过期；终态窗口保留 30 天、会话坐标 90 天。
+  10. **未做 / 未决**：试探召回（未确认条目进每轮召回，D3）未决、未实现；评测集（§10 方案）未入库、未跑；真实 DashScope 调用未在 box 上跑（没有 key）；三宿主接线未装到用户机器；Pi 的 `getSessionId` / `session_shutdown` 上下文形状按文档写、未实测；未登记目录的会话只登记不抽取。
 
 - **2026-10-12（切片 2 接线实测；只记事实，无新决策）**：用户授权后在用户机器上追加 hook，原有 hook 保留。Claude Code（`~/.claude/settings.json`）和 Codex（`~/.codex/hooks.json`）的 `UserPromptSubmit` 命令都是 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab recall --hook`，超时 5 秒。用绝对路径是因为宿主的 PATH 不一定能找到 `ab` 和 Node ≥ 24。Pi 链接了 `~/.pi/agent/extensions/agentbrain-recall.ts`。§15.3 实测：Codex、Pi 的模型收到并引用了召回；Claude Code 的 hook 执行并输出了召回块，但模型那一轮被网关返回 400 拒绝，需要复验。Codex 日常会话要先在 `/hooks` 里信任这条 hook。因为 agentbrain 项目里还没有记忆，实测用的是 ai-data 项目里一条已确认的坑。
 
