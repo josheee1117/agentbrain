@@ -360,11 +360,11 @@ test("扫描兜底：只补登记 cwd 在已登记项目里的近期会话", () 
   try {
     assert.equal(scan(e.deps(null)), 1);
     assert.equal(scan(e.deps(null)), 0);
+    assert.equal(intake.stats(e.store.workDb, new Date()).sessions.scanned, 1, "未登记目录的会话不算疑似漏登记");
   } finally {
     process.env.HOME = old;
   }
-  const [s] = intake.sessions(e.store.workDb);
-  assert.deepEqual([s.session_id, s.project, s.via], ["in", "alpha", "scan"]);
+  assert.deepEqual(intake.sessions(e.store.workDb).map((s) => [s.session_id, s.project, s.via]).sort(), [["in", "alpha", "scan"], ["out", null, "scan"]]);
 });
 
 // ---------- 代码核验转正 ----------

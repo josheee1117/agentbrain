@@ -96,7 +96,7 @@ export class RepoTools {
         const pattern = args.pattern;
         if (typeof pattern !== "string" || !pattern || pattern.length > MAX_PATTERN_CHARS) return "错误：pattern 必须是 1 到 200 字的字符串";
         try {
-          out = this.git(["grep", "-n", "-I", "-F", "--untracked", "-e", pattern, "--", "."]);
+          out = this.git(["grep", "-n", "-I", "-F", "--no-textconv", "--untracked", "-e", pattern, "--", "."]);
         } catch (e) {
           out = (e as { status?: number }).status === 1 ? "（没有匹配）" : `错误：${(e as Error).message.split("\n")[0]}`;
         }
@@ -121,7 +121,7 @@ export class RepoTools {
         const abs = this.resolve(args.path);
         const start = Math.max(1, Math.floor(Number(args.start_line) || 1));
         const end = Math.max(start, Math.min(start + 50, Math.floor(Number(args.end_line) || start)));
-        out = this.git(["blame", "-s", "-L", `${start},${end}`, "--", relative(this.root, abs)]);
+        out = this.git(["blame", "--no-textconv", "-s", "-L", `${start},${end}`, "--", relative(this.root, abs)]);
       } else {
         return `错误：没有工具 ${name}`;
       }
@@ -182,7 +182,10 @@ verified 和 contradicted 必须给证据：文件证据写 {"path":"仓库内�
 export interface VerifyResult {
   verdict: Verdict;
   refs: CodeRef[];
+  /** 工具调用次数。 */
   calls: number;
+  /** 模型调用次数（计入日预算）。 */
+  rounds: number;
   tokens: number;
 }
 
@@ -194,6 +197,7 @@ export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Prop
     { role: "user", content: `<memory>\n${subject}\n</memory>` },
   ];
   let calls = 0;
+  let rounds = 0;
   let tokens = 0;
   let total = 0;
   let final: ChatMessage | null = null;
@@ -201,6 +205,7 @@ export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Prop
     const exhausted = calls >= MAX_TOOL_CALLS || total >= MAX_TOTAL_TOOL_CHARS;
     if (exhausted) messages.push({ role: "user", content: "工具额度已用完，现在只输出结论 JSON。" });
     const r = await chat(messages, exhausted ? { json: true } : { tools: TOOLS });
+    rounds++;
     tokens += r.tokens;
     const msg = r.message;
     if (!msg.tool_calls?.length || exhausted) {
@@ -228,12 +233,12 @@ export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Prop
   const parsed = parseJsonLoose(final?.content ?? null) as { verdict?: unknown; evidence?: unknown } | null;
   if (!parsed) throw new WorkFailure("invalid_output", "核验输出不是 JSON");
   const verdict = parsed.verdict;
-  if (verdict === "not_verifiable" || verdict === "inconclusive") return { verdict, refs: [], calls, tokens };
+  if (verdict === "not_verifiable" || verdict === "inconclusive") return { verdict, refs: [], calls, rounds, tokens };
   if (verdict !== "verified" && verdict !== "contradicted") throw new WorkFailure("invalid_output", "核验结论不在闭集里");
   const cited = Array.isArray(parsed.evidence) ? parsed.evidence : [];
   const refs = cited.map((e) => tools.check(e));
   // 一条证据编造就整体作废：不能只挑对得上的那条
-  if (!refs.length || refs.some((r) => r === null)) return { verdict: "inconclusive", refs: [], calls, tokens };
-  return { verdict, refs: refs as CodeRef[], calls, tokens };
+  if (!refs.length || refs.some((r) => r === null)) return { verdict: "inconclusive", refs: [], calls, rounds, tokens };
+  return { verdict, refs: refs as CodeRef[], calls, rounds, tokens };
 }
 

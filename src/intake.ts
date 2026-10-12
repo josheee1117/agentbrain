@@ -280,7 +280,7 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
       total: all.length,
       unregistered: all.filter((s) => !s.project && !s.ephemeral).length,
       ephemeral: all.filter((s) => s.ephemeral).length,
-      scanned: all.filter((s) => s.via === "scan" && s.first_seen >= week).length,
+      scanned: all.filter((s) => s.via === "scan" && s.project && s.first_seen >= week).length,
       errors,
     },
     windows: {

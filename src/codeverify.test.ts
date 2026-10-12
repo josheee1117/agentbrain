@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RepoEscape, RepoTools, verifyProposition } from "./codeverify.ts";
@@ -73,7 +73,7 @@ test("verified：模型调工具后引用对得上的代码 → 结论成立，�
     () => final({ verdict: "verified", evidence: [{ path: "src/store.ts", line_start: 2, line_end: 2, quote: "VEC_MIN_SIM = 0.45" }] }),
   ]);
   const r = await verifyProposition(chat, tools, prop);
-  assert.deepEqual(r, { verdict: "verified", refs: [{ path: "src/store.ts", line_start: 2, line_end: 2, quote: "VEC_MIN_SIM = 0.45" }], calls: 1, tokens: 20 });
+  assert.deepEqual(r, { verdict: "verified", refs: [{ path: "src/store.ts", line_start: 2, line_end: 2, quote: "VEC_MIN_SIM = 0.45" }], calls: 1, rounds: 2, tokens: 20 });
   assert.match(chat.seen[1].at(-1)!.content!, /src\/store\.ts:2:const VEC_MIN_SIM = 0\.45;/);
 });
 
@@ -84,7 +84,7 @@ test("contradicted 带 commit 证据也成立；编造一条证据整个结论�
     { path: "src/store.ts", line_start: 2, line_end: 2, quote: "VEC_MIN_SIM = 0.45" },
     { path: "src/store.ts", line_start: 3, line_end: 3, quote: "门槛已经验证过" },
   ] })]), tools, prop);
-  assert.deepEqual(fake, { verdict: "inconclusive", refs: [], calls: 0, tokens: 10 });
+  assert.deepEqual(fake, { verdict: "inconclusive", refs: [], calls: 0, rounds: 1, tokens: 10 });
   const none = await verifyProposition(scripted([() => final({ verdict: "verified", confidence: 0.99, evidence: [] })]), tools, prop);
   assert.equal(none.verdict, "inconclusive", "只有置信度、没有证据不算");
 });
@@ -101,4 +101,21 @@ test("not_verifiable 原样返回；工具额度用完后强制收尾", async ()
   const r = await verifyProposition(wrapped, tools, prop);
   assert.equal(r.calls, 8);
   assert.equal(r.verdict, "inconclusive");
+});
+
+test("仓库配置不能借 git 执行命令：core.fsmonitor 被关掉", () => {
+  const marker = join(base, "pwned");
+  const evil = join(base, "evil.sh");
+  writeFileSync(evil, `#!/bin/sh\ntouch '${marker}'\n`);
+  execFileSync("chmod", ["+x", evil]);
+  git("config", "core.fsmonitor", evil);
+  try {
+    tools.run("search_code", { pattern: "VEC_MIN_SIM" });
+    tools.run("git_log", {});
+    tools.run("git_blame", { path: "src/store.ts", start_line: 1 });
+    tools.check({ commit: head, quote: "从 0.35 调到 0.45" });
+    assert.equal(existsSync(marker), false);
+  } finally {
+    git("config", "--unset", "core.fsmonitor");
+  }
 });

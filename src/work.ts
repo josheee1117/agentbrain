@@ -175,9 +175,9 @@ export function scan(deps: WorkDeps): number {
       } catch {
         project = null;
       }
-      if (!project) continue;
-      intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via: "scan" }, () => project!.name, deps.now());
-      added++;
+      // 未登记目录的会话也记下坐标（不抽取），下次扫描不再为它跑 git
+      intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via: "scan" }, () => project?.name ?? null, deps.now());
+      if (project) added++;
     }
   }
   return added;
@@ -490,10 +490,10 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     intake.setSessionError(db, s, "source_unavailable");
     return;
   }
-  const hits: Record<string, number> = {};
+  const hitsByAnchor = new Map<string, Record<string, number>>();
   turns = turns.map((t) => {
     const r = sanitize(t.text);
-    addHits(hits, r.hits);
+    hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
@@ -519,8 +519,8 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     receipt.turns = c.turns.length;
     receipt.chars = c.chars;
     receipt.truncated = c.truncated;
-    receipt.stripped = row === s ? stripped : 0;
-    receipt.sanitizer = row === s ? hits : {};
+    receipt.stripped = row.processed_anchor === null ? stripped : 0; // 去噪计数是整份 transcript 的，只记在首个窗口
+    for (const t of c.turns) addHits(receipt.sanitizer, hitsByAnchor.get(t.anchor) ?? {});
     let adm: Admission;
     try {
       adm = await extractWindow(deps, c, row, projectId, receipt);
@@ -582,7 +582,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } finally {
       intake.renewLease(db, holder, deps.now());
     }
-    intake.spend(db, deps.now(), result.calls + 1, result.tokens);
+    intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
     if (result.verdict === "verified" || result.verdict === "contradicted") {
       const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: deps.chat.model };
