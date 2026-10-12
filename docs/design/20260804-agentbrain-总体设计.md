@@ -1,8 +1,8 @@
 # agentbrain 总体设计
 
 - 状态：**v2.6 宿主无关基线**
-- 最新修订：2026-10-10
-- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线与实测（§15.3）待做**
+- 最新修订：2026-10-12
+- 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验（§21）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
@@ -1219,7 +1219,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 |---|---|---|---|
 | **1**（已实现，仅 Pi） | `/ab bind` 显式项目绑定；`memory_remember`（坑/决定，自动带 Source Pointer）；`memory_search`（FTS5）；`memory_get` 含来源展开（读 transcript）；archive；每轮注入的小型 Brief；范围 = Session 的 Purge；§15.1 对应不变量测试 | 场景②③可用；场景①可存可搜 | §19.1 身份、§19.2、§19.8 物理布局用代码验证 |
 | **1.5**（v2.5，2026-10-10 已实现） | 记忆核心与 Pi 扩展拆开，删除 Pi 扩展与 `/ab bind`；`ab` 命令行（brief / brief --worker / remember / confirm / search / get / archive / status）；全局与项目两级范围、补 `rule` 种类（§5.3）；项目清单读 pm 的 `repos/*.md`、worktree 归回主仓库（§6.1）；会话身份按最近的宿主父进程判定，Source Pointer 泛化为 host + session id + transcript + 定位点，补 Claude Code 与 Codex 的 transcript 读取（§7.1）；多进程正确性（有界写入等待、投影与 L3 按 L1 水位失效，§7.3）；接线：三个全局规则文件各加一句、pm 补 `AGENTS.md`、派活说明约定（§7.1）；三个宿主各跑一遍 §15.3 最小集与四条附加用例；在 pm 与 agentbrain 两个仓库 dogfood | 场景①②③在三个宿主、直接开与子代理两种会话中可用；跨项目规则可用 | §19.5 会话身份部分（已于 2026-10-09 实测关闭）；§19.5 registry 形态 |
-| **2**（2026-10-10 代码完成，宿主实测待做） | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
+| **2**（2026-10-10 代码完成，2026-10-12 三宿主接线，Claude Code 模型侧待复验） | 以用户 prompt 为 query 的每轮召回（坑主动投递）。这一步规则文件做不到，需要 hook：Claude Code/Codex 用 `UserPromptSubmit`，Pi 用一个只调用 `ab` 的几行扩展（`before_agent_start`）；correct/supersede/reactivate；Memory Card 冲突暴露；混合检索（向量）+ 用 pm `repos/*.md` 中已有的真实坑造检索测试集，对比纯 FTS 与混合的命中率 | 场景①完整；痛点"不及时更新"的可见性 | §19.4 L2 合同以类型冻结 |
 | **2.5**（v2.5） | 带 trigger 的 Procedure 可读种类；从 pm 的 `.pensieve/` 人工挑选导入（§12.4 manifest）；把散在四处的全局规则（`~/.claude/CLAUDE.md`、Claude 自动记忆、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）人工挑选收进全局记忆，三个文件最后只留 `ab` 那一句；通过 §15.5 Pensieve 对照清单后停用 pm 的 Pensieve hook 与路由 | 首个替代对象落地 | — |
 | 3 | 宿主会话结束事件（Pi `agent_end`、Claude Code/Codex `Stop`）→ durable intake → 单层 extractor → Proposal → 准入与 Unreconciled | 痛点"不及时更新" | §19.3（v2.5 重开）；§19.6 单层部分 |
 | 4 | Ephemeral session ⇒ 受限能力；子代理可用 scoped search；三个宿主的 ephemeral/子代理信号 | 场景④ | §19.5 最小形态 |
@@ -1396,6 +1396,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- **2026-10-12（切片 2 接线实测；只记事实，无新决策）**：用户授权后在用户机器上追加 hook，原有 hook 保留。Claude Code（`~/.claude/settings.json`）和 Codex（`~/.codex/hooks.json`）的 `UserPromptSubmit` 命令都是 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab recall --hook`，超时 5 秒。用绝对路径是因为宿主的 PATH 不一定能找到 `ab` 和 Node ≥ 24。Pi 链接了 `~/.pi/agent/extensions/agentbrain-recall.ts`。§15.3 实测：Codex、Pi 的模型收到并引用了召回；Claude Code 的 hook 执行并输出了召回块，但模型那一轮被网关返回 400 拒绝，需要复验。Codex 日常会话要先在 `/hooks` 里信任这条 hook。因为 agentbrain 项目里还没有记忆，实测用的是 ai-data 项目里一条已确认的坑。
 
 - **2026-10-10（切片 2 收尾）**：
   1. **授权**。用户 2026-10-10 18:05 SGT 原话："用 pstack 继续完成 brain"，指让 agent 接着把切片 2 做完。在此之前的切片 2 提交（`b5e73bf`、`1ced6e1`、WIP `5c4e6b9`）没有找到授权原话记录，是否追认由用户确认。切片 2.5 与 3 仍需单独授权。
