@@ -445,7 +445,7 @@ test("recall 超过 3 条只出前 3 条", () => {
   assert.match(ctx, /召回限额第 [0-4] 条坑/);
 });
 
-test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPromptSubmit 的 additionalContext", () => {
+test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPromptSubmit 的 additionalContext，capture 命令静默成功", () => {
   const own = join(dir, "wiring-home");
   const pit = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "接线样例要能召回这个坑", "--summary", "接线"], alpha, own);
   assert.equal(pit.code, 0, pit.err);
@@ -455,9 +455,20 @@ test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPrompt
   chmodSync(join(shim, "ab"), 0o755);
   for (const file of ["claude-code/settings.example.json", "codex/hooks.example.json"]) {
     const config = JSON.parse(readFileSync(join(import.meta.dirname, "../integrations", file), "utf8")) as {
-      hooks: { UserPromptSubmit: { hooks: { type: string; command: string }[] }[] };
+      hooks: Record<"UserPromptSubmit" | "SessionEnd", { hooks: { type: string; command: string }[] }[]>;
     };
-    const [handler] = config.hooks.UserPromptSubmit[0].hooks;
+    const [handler, capture] = config.hooks.UserPromptSubmit[0].hooks;
+    const host = file.startsWith("claude") ? "claude" : "codex";
+    for (const [h, event] of [[capture, "UserPromptSubmit"], [config.hooks.SessionEnd[0].hooks[0], "SessionEnd"]] as const) {
+      assert.equal(h.command, `ab capture --hook --host ${host}`, file);
+      const c = spawnSync("sh", ["-c", h.command], {
+        cwd: alpha,
+        encoding: "utf8",
+        input: JSON.stringify({ session_id: `wiring-${host}`, hook_event_name: event, prompt: "x", cwd: alpha }),
+        env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${shim}:${bin}:${process.env.PATH}` },
+      });
+      assert.deepEqual([c.status, c.stdout, c.stderr], [0, "", ""], `${file} ${event}`);
+    }
     assert.equal(handler.type, "command");
     const r = spawnSync("sh", ["-c", handler.command], {
       cwd: alpha,

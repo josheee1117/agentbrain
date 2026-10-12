@@ -1,4 +1,7 @@
-# 每轮召回接线（切片 2）
+# 宿主接线（切片 2 每轮召回 + 切片 3 自动沉淀）
+
+本目录只放样例，不改任何全局配置。装到用户机器上之前要先得到用户同意，改之前先备份。
+
 
 三个宿主在用户每次发 prompt 时调用 `ab recall --hook`。它从 stdin 读宿主给的 JSON（只用 `prompt` 和 `cwd`），命中当前项目的坑、规则、决定或标了 for_workers 的全局记忆时，输出一行：
 
@@ -17,6 +20,63 @@
 ```
 
 超时 5 秒。本目录只放样例，不改任何全局配置。
+
+## 切片 3：会话登记与 `ab work`
+
+切片 3 在每个宿主上加两类事件，外加一个定时任务：
+
+| 宿主 | 登记（每轮，毫秒级，不读 transcript） | 会话结束（只用来加快处理） |
+|---|---|---|
+| Claude Code | `UserPromptSubmit`：`ab capture --hook --host claude` | `SessionEnd`：同一条命令，拉起分离的 `ab work --session` |
+| Codex | `UserPromptSubmit`：`ab capture --hook --host codex` | `SessionEnd`：同上 |
+| Pi | 扩展的 `before_agent_start` | 扩展的 `session_shutdown` |
+| 定时 | launchd 每 30 分钟 `ab work --sweep` | |
+
+`ab capture --hook` 从 stdin 读宿主给的 `session_id`、`transcript_path`、`cwd`、`hook_event_name`，只把这几个坐标写进 `~/.agentbrain/store.db`，不输出、不报错，退出码总是 0。transcript 路径必须在该宿主自己的会话目录下（`~/.claude/projects`、`~/.codex/sessions`、`~/.pi/agent/sessions`），否则不登记，防止借它把任意文件送出本机。2026-10-12 在 Linux box 上测 30 次，单次耗时（含 Node 启动）p50 120 ms、最大 155 ms。
+
+`ab work --sweep` 做四件事：处理静置 30 分钟或已结束的会话；扫描三宿主近 7 天的会话目录，补登记 hook 没生效的会话（只补 cwd 在已登记项目里的）；按仓库代码核验未确认的坑和事实；归档 90 天未确认的自动沉淀。hook 拉起的分离进程即使被宿主杀掉，定时任务也会接上（租约 10 分钟过期后可被接管）。
+
+### 前提
+
+- `~/.agentbrain/extract.json` 写 `{"model": "<DashScope 模型名>"}`。baseUrl 与 key 复用 `embedding.json` 和钥匙串（service `agentbrain-embedding`）。没有这个文件时窗口会延后，`ab doctor` 报"抽取模型不可用"。
+- 模型名由用户定；方案里的候选是 `qwen-flash`（便宜）或 `qwen-plus`。
+
+### 用户机器上要改的地方（本机绝对路径）
+
+命令统一写成 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab …`，理由见上文 PATH 一节。
+
+1. `~/.claude/settings.json`：在现有 `UserPromptSubmit` 的 hooks 数组里追加一项，并新增 `SessionEnd`：
+
+   ```json
+   {"type": "command", "command": "/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab capture --hook --host claude", "timeout": 5}
+   ```
+
+   ```json
+   "SessionEnd": [{"hooks": [{"type": "command", "command": "/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab capture --hook --host claude", "timeout": 1}]}]
+   ```
+
+   Claude Code 的所有 SessionEnd hook 共享 1.5 秒预算，这条命令只登记并拉起分离进程，不等抽取。
+
+2. `~/.codex/hooks.json`：同样追加 `--host codex` 的两条，`SessionEnd` 超时写 3（Codex 默认 1 秒，最多 3 秒）。改完在 Codex 的 `/hooks` 里**重新信任**这两条，不信任会被跳过（扫描兜底会补登记，但会晚到 30 分钟以上）。
+
+   - 依据：<https://developers.openai.com/codex/hooks>（2026-10-12 读）。`SessionEnd` 在正常关闭、归档或删除仍打开的会话、空闲 30 分钟且没有客户端打开时触发；不对子代理触发；总是同步执行，输出不影响 Codex；stdin 带 `session_id`、`transcript_path`、`cwd`、`reason`。
+
+3. Pi：`~/.pi/agent/extensions/agentbrain-recall.ts` 已经链接到本仓的 `pi/agentbrain-recall.ts`，`git pull` 后自动带上 `session_shutdown`。扩展优先用上面的绝对路径，找不到才退回 PATH 上的 `ab`。`getSessionFile()` 为空的会话（子代理）按 ephemeral 登记、不抽取（§9.5）。`getSessionId` 没有时 `ab` 从文件名 `<时间>_<id>.jsonl` 取 id。这两个 API 的形状按 pi.dev 文档写，本机未实测。
+
+4. launchd：
+
+   ```sh
+   cp launchd/com.agentbrain.work.plist ~/Library/LaunchAgents/
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentbrain.work.plist
+   ```
+
+   日志在 `~/.agentbrain/work.log`。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选"始终允许"；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
+
+### 装完后的验收
+
+- 在已登记仓库里开一个新会话，发一句"以后……"之类面向以后的要求，正常结束会话。几秒后 `ab doctor` 里"窗口: 完成"加 1，`ab search` 能看到 `[未确认·自动沉淀]` 的条目。
+- 不正常结束的会话（直接关终端）30 分钟后由 launchd 处理。
+- `ab doctor` 里"近 7 天靠扫描补登记"大于 0，说明某个宿主的 hook 没生效（多半是 Codex 未信任）。
 
 ## Claude Code
 
@@ -46,6 +106,6 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 
 - 2026-10-12 在用户机器上实测：单文件扩展能被加载，模型收到并引用了注入的召回。扩展里调用的是 PATH 上的 `ab`，同样受上面 PATH/Node 版本的影响。
 
-## 装完后的验收（设计 §15.3）
+## 每轮召回装完后的验收（设计 §15.3）
 
 在三个宿主里各做一次：在已登记仓库里 `ab remember --confirmed --kind pitfall …` 记一个坑，开新会话，发一句和这个坑相关的话，确认模型收到了 `<agentbrain-recall>` 块。某个宿主做不到时记为该宿主的显式降级，不算通过。
