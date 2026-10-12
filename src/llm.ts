@@ -1,14 +1,21 @@
 /**
- * 切片 3 的模型调用（设计 §19.3）：OpenAI 兼容 /chat/completions，与 embedding 共用 baseUrl 和钥匙串 key。
- * 只新增一个配置键：<home>/extract.json 的 model（§14.4 不在代码里写死 model ID）。
+ * 切片 3 的模型调用（设计 §19.3）：OpenAI 兼容 /chat/completions。
+ * 配置在 <home>/extract.json：model 必填；baseUrl 可选（§14.4 不在代码里写死 model ID 和地址）。
+ * 有自己的 baseUrl 时 key 读钥匙串 service agentbrain-extract；没有时沿用 embedding.json 的 baseUrl
+ * 与 agentbrain-embedding 的 key。不读环境变量，key 不进文件。
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadEmbedConfig } from "./embed.ts";
+import { KEYCHAIN_SERVICE, loadEmbedConfig } from "./embed.ts";
+
+/** extract.json 自带 baseUrl 时用的钥匙串 service。 */
+export const EXTRACT_KEYCHAIN_SERVICE = "agentbrain-extract";
 
 export interface ChatConfig {
   baseUrl: string;
   model: string;
+  /** 读 key 用的钥匙串 service。 */
+  keyService: string;
 }
 
 export interface ToolCall {
@@ -51,17 +58,21 @@ export class WorkFailure extends Error {
 }
 
 export function loadChatConfig(home: string): ChatConfig | { error: string } {
-  const emb = loadEmbedConfig(home);
-  if ("error" in emb) return emb;
   const path = join(home, "extract.json");
-  let model: unknown;
+  let o: { model?: unknown; baseUrl?: unknown };
   try {
-    model = (JSON.parse(readFileSync(path, "utf8")) as { model?: unknown }).model;
+    o = JSON.parse(readFileSync(path, "utf8")) as typeof o;
   } catch {
     return { error: `没有 ${path} 或不是合法 JSON` };
   }
-  if (typeof model !== "string" || !model.trim()) return { error: `${path} 缺 model` };
-  return { baseUrl: emb.baseUrl, model };
+  if (typeof o?.model !== "string" || !o.model.trim()) return { error: `${path} 缺 model` };
+  if (o.baseUrl !== undefined) {
+    if (typeof o.baseUrl !== "string" || !o.baseUrl.trim()) return { error: `${path} 的 baseUrl 不是非空字符串` };
+    return { baseUrl: o.baseUrl, model: o.model, keyService: EXTRACT_KEYCHAIN_SERVICE };
+  }
+  const emb = loadEmbedConfig(home);
+  if ("error" in emb) return { error: `${path} 没写 baseUrl，沿用 embedding 配置失败：${emb.error}` };
+  return { baseUrl: emb.baseUrl, model: o.model, keyService: KEYCHAIN_SERVICE };
 }
 
 export type Chat = (messages: ChatMessage[], opts?: { tools?: ToolSpec[]; json?: boolean }) => Promise<{ message: ChatMessage; tokens: number }>;

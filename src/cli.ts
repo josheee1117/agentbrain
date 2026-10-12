@@ -775,7 +775,7 @@ function workDeps(store: Store): WorkDeps {
   let chat: WorkDeps["chat"];
   if ("error" in cfg) chat = { error: "no_config", message: cfg.error };
   else {
-    const key = readKey();
+    const key = readKey(cfg.keyService);
     chat = typeof key === "string" ? { chat: chatClient(cfg, key, EXTRACT_TIMEOUT_MS), model: cfg.model } : { error: "no_key", message: key.error };
   }
   return {
@@ -834,6 +834,14 @@ function fmtCounts(o: Record<string, number>): string {
   return parts.length ? parts.join("、") : "无";
 }
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
 function sedimentLines(store: Store): string[] {
   const now = new Date();
   const st = intake.stats(store.workDb, now);
@@ -850,7 +858,7 @@ function sedimentLines(store: Store): string[] {
     `  近 7 天: 提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}；丢弃 ${fmtCounts(r.dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
     `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，过期归档 ${auto.filter((p) => p.expired).length}`,
     `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
-    `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : cfg.model}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
+    `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : `${cfg.model} @ ${hostOf(cfg.baseUrl)}（key: 钥匙串 ${cfg.keyService}）`}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
   ];
 }
 
