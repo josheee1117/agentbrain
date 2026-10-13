@@ -16,9 +16,10 @@ import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 import { chatClient, loadChatConfig } from "./llm.ts";
-import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
+import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
+import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
 const BRIEF_MAX_CHARS = 2000;
 const RECALL_MAX_ITEMS = 3;
@@ -550,6 +551,7 @@ function cmdGet(argv: string[]): void {
       p.confirmed && p.confirmed_by === "corroboration" ? "已由跨会话印证转正（两个以上会话里用户都这样说过）" : "",
       p.expired ? `自动沉淀后 ${PROPOSAL_EXPIRE_DAYS} 天未确认，已归档` : "",
       p.trigger ? `触发: ${p.trigger}` : "",
+      p.import_ref ? `导入自 Pensieve ${p.import_ref.id}: ${p.import_ref.path}${p.import_ref.also?.length ? `（另有 ${p.import_ref.also.length} 处相同副本）` : ""}` : "",
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
@@ -866,6 +868,76 @@ async function cmdWork(argv: string[]): Promise<void> {
   }
 }
 
+async function cmdImport(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      global: { type: "string", multiple: true, default: [] },
+      "skip-file": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (positionals[0] !== "pensieve") die("用法: ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]");
+  const dirs = positionals.slice(1);
+  const globals = (values.global as string[]).map((d) => realpathSync(d));
+  if (!dirs.length && !globals.length) die("至少给一个含 .pensieve 的目录");
+  const skip = new Map<string, string>();
+  if (values["skip-file"]) {
+    for (const line of readFileSync(values["skip-file"], "utf8").split(/\r?\n/)) {
+      const m = /^\s*([^\s#]+)\s*(.*)$/.exec(line);
+      if (m) skip.set(m[1], m[2].trim() || "整理时判为不导入");
+    }
+  }
+  const inputs: PlanInput[] = globals.map((root) => ({ root, project: null }));
+  const unresolved: string[] = [];
+  for (const d of dirs) {
+    const root = realpathSync(d);
+    const here = resolveProject(root);
+    if (!here) unresolved.push(root);
+    else inputs.push({ root, project: here.name });
+  }
+  const plan = planImport(inputs, skip);
+  for (const u of unresolved) plan.skipped.push({ path: u, id: "*", reason: "目录不属于已登记项目（要记全局请用 --global）" });
+  const h = homedir();
+  if (values["dry-run"]) {
+    for (const it of plan.items) {
+      console.log(`[${it.project ?? "全局"}] ${it.doc.type}→${it.kind} ${it.doc.id}\n  正文: ${it.text}\n  背景: ${it.why ?? "（无）"}\n  出处: ${displayPath(it.doc.path, h)}${it.also.length ? `（另有 ${it.also.length} 处相同副本）` : ""}`);
+    }
+    for (const s of plan.skipped) console.log(`跳过 ${s.id} ${displayPath(s.path, h)}：${s.reason}`);
+    console.log(`共 ${plan.items.length} 条待导入，跳过 ${plan.skipped.length} 条（试运行，未写入）`);
+    return;
+  }
+  const store = open();
+  try {
+    const deps = workDeps(store);
+    const r = await importPensieve(
+      {
+        store,
+        projectId: (name) => projectIdByName(store, name),
+        embedder: deps.embedder,
+        chat: "error" in deps.chat ? null : deps.chat,
+        relateSim: RELATE_SIM,
+        relateTop: RELATE_TOP,
+        relateBatch: RELATE_BATCH,
+      },
+      plan,
+    );
+    const reason = await updateVectors(store);
+    const x = r.relate;
+    console.log(
+      [
+        `导入 Pensieve: 新增 ${r.created.length}，内容变更改为纠正 ${r.corrected.length}，未变 ${r.unchanged}，此前已归档不再导 ${r.archivedSkip}，跳过 ${r.skipped.length}`,
+        `关系判定: 已有条目并入导入条 ${x.mergedExisting}，导入条并入已确认条目 ${x.mergedIntoExisting}，补充 ${x.refines}，冲突 ${x.conflicts.length}${x.conflicts.length ? `（${x.conflicts.join("、")}）` : ""}，无关 ${x.unrelated}，拿不准 ${x.unsure}，出错 ${x.errors}`,
+        reason ? `向量未更新：${reason}` : "",
+      ].filter(Boolean).join("\n"),
+    );
+  } finally {
+    store.close();
+  }
+}
+
 function fmtCounts(o: Record<string, number>): string {
   const parts = Object.entries(o).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
   return parts.length ? parts.join("、") : "无";
@@ -986,6 +1058,8 @@ const USAGE = `用法:
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
   ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
                                     手动登记一个会话（hook 没生效时）
+  ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
+                                    把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
@@ -1016,6 +1090,7 @@ async function main(): Promise<void> {
     if (cmd === "status" || cmd === "doctor") return cmdStatus();
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);
+    if (cmd === "import") return await cmdImport(rest);
     if (cmd === "view") return cmdView(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);

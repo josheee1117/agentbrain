@@ -46,7 +46,7 @@ const SCAN_HEAD_BYTES = 64 * 1024;
 const CODE_VERIFIABLE = new Set(["pitfall", "note"]);
 /** 关系判定第 2 层（§21 2026-10-13）：近邻余弦下限、每条最多给几个近邻、一次调用判几条、每次运行最多几次调用。 */
 export const RELATE_SIM = 0.7;
-const RELATE_TOP = 3;
+export const RELATE_TOP = 3;
 export const RELATE_BATCH = 6;
 const MAX_RELATE_CALLS_PER_RUN = 10;
 const CORROBORATE_KINDS = new Set(["rule", "decision"]);
