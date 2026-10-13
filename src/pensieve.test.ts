@@ -101,6 +101,9 @@ test("解析与映射：一句话结论做正文，Context/Problem 压成背景�
   assert.equal(mapDoc(parseDoc("/x/maxims/m.md", MAXIM, "maxim")!).kind, "rule");
   assert.equal(condense("- a\n- [[b/c]]\n| x |"), "a；b/c");
   const meta = parseDoc("/x/decisions/t.md", "---\nid: t\ntitle: 写入时机\n---\n# 写入时机\n\n**日期**: 2026-03-24\n**状态**: 已实施\n\n## 背景\n两条路径。\n\n## 决策\n只在 sync=false 时写 pending_sync\n", "decision")!;
+  const colon = parseDoc("/x/decisions/c.md", "---\nid: c\ntitle: 日志表\n---\n## 决策\n新建 log 表，关键设计点：\n\n- 只追加\n- 按对象建索引\n\n## 后果\n无\n", "decision")!;
+  assert.equal(colon.conclusion, "新建 log 表，关键设计点：只追加；按对象建索引", "冒号收尾时带上后面的列表");
+  assert.equal(mapDoc(parseDoc("/x/knowledge/f.md", "---\nid: f\ntitle: Feign 集成规范\n---\n## Summary\n异常必须分类，失败要重试。\n", "knowledge")!).kind, "note", "规范里出现失败/异常不算坑");
   assert.equal(meta.conclusion, "只在 sync=false 时写 pending_sync", "没有结论段时取决策段，跳过元数据块，保留下划线");
 });
 
