@@ -142,3 +142,8 @@ test("prompt 要求逐字照抄、≤80 字，并给出锚点正反例", () => {
   assert.match(sys, /anchor 写 "#7"/);
   assert.match(sys, /错误写法："7"、"#c2"/);
 });
+
+test("prompt 排除本项目代码里修好就失效的具体缺陷（2026-10-13 质量抽查）", () => {
+  const sys = buildMessages({ turns: [], context: [] }, { name: null, docs: "", registry: "", confirmed: "" } as any, [])[0].content!;
+  assert.match(sys, /本项目代码里刚发现的具体缺陷/);
+});
