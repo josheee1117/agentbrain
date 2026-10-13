@@ -19,7 +19,9 @@ const WHY_DECISION = ["context", "背景", "problem", "问题"];
 const WHY_MAXIM = ["guidance", "指导规则", "指导", "boundaries", "边界"];
 const WHY_KNOWLEDGE = ["content", "内容", "背景", "context"];
 /** knowledge 里讲坑的：标题/结论带这些词按 pitfall，其余按 note。 */
-const TRAP = /坑|陷阱|禁止|不要|不能|别用|误判|覆盖|失效|根因|root[- ]cause|bug|NPE|gotcha|pitfall|报错|异常|失败/i;
+// knowledge 记成坑：标题里有明确的陷阱/禁止措辞，或结论里点名是坑/根因/NPE。"必须""失败""异常"这类词在规范和架构说明里太常见，不算。
+const TRAP_TITLE = /坑|陷阱|禁止|不要|别用|误判|根因|会导致|root[- ]cause|NPE|trap|gotcha|pitfall/i;
+const TRAP_BODY = /坑|陷阱|根因|root[- ]cause|NPE|gotcha|pitfall/i;
 
 export interface PensieveDoc {
   id: string;
@@ -99,11 +101,18 @@ export function parseDoc(path: string, src: string, dirType: PensieveDoc["type"]
   const title = meta.title || h1 || "";
   // 没有结论段：decision 退到"决策"段；再不行取第一个不是标题、也不是"**日期**: …"元数据块的段落
   const isMeta = (para: string) => para.split("\n").every((l) => /^\s*(?:[-*]\s*)?(?:\*\*[^*]{1,12}\*\*|[^\s:：]{1,8})\s*[:：]/.test(l));
-  const firstPara = (t: string) => t.split(/\n\s*\n/).map((p) => p.trim()).find((p) => p && !p.startsWith("#") && !isMeta(p));
+  const firstPara = (t: string) => {
+    const ps = t.split(/\n\s*\n/).map((p) => p.trim());
+    const i = ps.findIndex((p) => p && !p.startsWith("#") && !isMeta(p));
+    return i < 0 ? undefined : ps.slice(i).join("\n\n");
+  };
   const conclusionRaw = pick(sections, CONCLUSION)[0]
     ?? (dirType === "decision" ? pick(sections, ["decision", "决策", "决定", "方案"]).map(firstPara).find(Boolean) : undefined)
     ?? firstPara(body) ?? "";
-  const conclusion = condense(conclusionRaw.split(/\n\s*\n/)[0] ?? "");
+  // 第一段以冒号收尾（"关键设计点：" 后面跟列表），把下一段也带上，否则正文只剩半句
+  const paras = conclusionRaw.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  let conclusion = condense(paras[0] ?? "");
+  if (/[:：]$/.test(conclusion) && paras[1]) conclusion = `${conclusion}${condense(paras[1])}`;
   const id = meta.id || path.split("/").slice(-2).join("/").replace(/\.md$/, "");
   return {
     id,
@@ -118,7 +127,7 @@ export function parseDoc(path: string, src: string, dirType: PensieveDoc["type"]
 }
 
 export function mapDoc(doc: PensieveDoc): { kind: PropKind; text: string; why: string | undefined } {
-  const kind: PropKind = doc.type === "maxim" ? "rule" : doc.type === "decision" ? "decision" : TRAP.test(`${doc.title} ${doc.conclusion}`) ? "pitfall" : "note";
+  const kind: PropKind = doc.type === "maxim" ? "rule" : doc.type === "decision" ? "decision" : (TRAP_TITLE.test(doc.title) || TRAP_BODY.test(doc.conclusion)) ? "pitfall" : "note";
   const head = doc.title && !doc.conclusion.includes(doc.title) ? `${doc.title}：` : "";
   const text = cap(sanitize(`${head}${doc.conclusion || doc.title}`).text, IMPORT_TEXT_MAX);
   const whyKeys = doc.type === "decision" ? WHY_DECISION : doc.type === "maxim" ? WHY_MAXIM : WHY_KNOWLEDGE;
