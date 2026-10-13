@@ -544,7 +544,6 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
 }
 
 function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {
-  mkdirSync(dir, { recursive: true });
   const body = {
     session: `${s.host}:${s.session_id}`,
     window: c.id,
@@ -553,7 +552,12 @@ function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: 
     dropped: v.dropped,
     evidenceDropped: v.evidenceDropped,
   };
-  writeFileSync(join(dir, `${s.host}-${s.session_id}-${c.id.slice(0, 12)}.json`), JSON.stringify(body, null, 1), { mode: 0o600 });
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, `${s.host}-${s.session_id}-${c.id.slice(0, 12)}.json`), JSON.stringify(body, null, 1), { mode: 0o600 });
+  } catch {
+    /* 调试输出写不了不影响抽取 */
+  }
 }
 
 /** 本次运行里补登记会话还能处理几个窗口（sweep 才有上限）。 */
