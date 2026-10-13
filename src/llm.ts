@@ -47,6 +47,7 @@ export type WorkError =
   | "invalid_output"
   | "embed_unavailable"
   | "source_unavailable"
+  /** 仅旧数据：日上限已取消（§21 2026-10-13）。 */
   | "budget_exhausted";
 
 export class WorkFailure extends Error {

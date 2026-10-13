@@ -867,7 +867,7 @@ function sedimentLines(store: Store): string[] {
     "沉淀（切片 3）:",
     `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；补登记历史会话（装 hook 前）${st.sessions.backfill}；近 7 天疑似漏登记 ${st.sessions.scanned}${st.sessions.scanned ? `（${fmtCounts(st.sessions.scannedByHost)}；hook 装好后开始的会话仍只能靠扫描登记，该宿主 hook 可能没生效，Codex 要在 /hooks 里信任）` : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
     `  窗口: 完成 ${st.windows.done}，延后 ${st.windows.deferred}${lastRetry}，失败 ${st.windows.failed}；未完成原因 ${fmtCounts(st.windows.errors)}`,
-    `  今日预算: 调用 ${st.budget.calls}/${intake.DAILY_MAX_CALLS}，token ${st.budget.tokens}/${intake.DAILY_MAX_TOKENS}（其中 ${intake.VERIFY_RESERVED_CALLS} 次 / ${intake.VERIFY_RESERVED_TOKENS} token 留给代码核验）`,
+    `  今日用量: 调用 ${st.budget.calls}，token ${st.budget.tokens}（只记录，不设上限）`,
     `  近 7 天: 候选 ${r.candidates}，提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}，同窗口合并 ${r.merged}；丢弃整条候选 ${fmtCounts(r.dropped)}、单条证据 ${fmtCounts(r.evidence_dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
     `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，过期归档 ${auto.filter((p) => p.expired).length}`,
     `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
