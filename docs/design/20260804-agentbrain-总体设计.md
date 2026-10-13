@@ -1420,6 +1420,11 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- **2026-10-13（切片 3：引文对不上的排查；只加调试开关，不改校验与 prompt）**：用户 2026-10-13 让查"引文对不上"（doctor 近 7 天整条丢弃里最多的一项）。
+  1. **调试开关**。`AB_DEBUG=1 ab work …` 时，每个窗口把送模型的轮次（已脱敏、带 #编号与角色）和模型原始回复（再脱敏一次）写到 `~/.agentbrain/debug/<host>-<session>-<窗口>.json`，文件权限 600；默认关闭。
+  2. **证据**。按窗口更新时间拆分 Mac 上的回执：引文对不上、角色不符、编号越界**全部**出在 2026-10-12 11 点（SGT）那一批，当时用 qwen-plus、尚未合入 PR #22 的逐条证据判定。换成方舟 deepseek-v4.1-flash 且合入 #22 之后约 190 个窗口，三项都是 0。2026-10-13 用 `AB_DEBUG=1 --redo` 重跑 1 个 Codex、4 个 Claude 会话（9 个窗口），模型给的 33 条引文 33 条在对应编号的原文里**逐字**命中、角色全对，没有一条靠空白归一才过。唯一例外：当天 09:39 重跑 codex:01a12526 一次出现 4 条引文对不上，此后同一会话重跑 4 次都是 0，那次没开调试，原因未知。
+  3. **决定**。不放宽校验（没有证据说明校验过严，放宽只会多放进改写），也不改 prompt。doctor 的近 7 天丢弃数还含旧批次，会随 7 天窗口自然滚掉。再出现时先开 `AB_DEBUG=1` 取原始回复再定。
+
 - **2026-10-13（切片 3：Codex 子 agent 会话不抽取；hook 时未落盘的 transcript 事后补找）**：用户 2026-10-13 让排查 Codex 窗口证据编号越界。依据 Mac 真实数据（Codex 88 个窗口）：
   1. **根因**。17 条"证据编号越界"全部来自 Codex guardian 审批会话（`session_meta.payload.source.subagent.other = "guardian"`）。这类会话的"user"消息是 Codex 塞给审批模型的另一份完整会话记录（单条 4 万字），里面带着自己的编号，模型照着内层编号引用，于是越界；同理带来角色不符和引文对不上。`thread_spawn` 子 agent 的"user"是父 agent，也不是用户原话。`src/transcript.ts` 的编号本身没有错。
   2. **决定**。凡 `source.subagent` 存在的 Codex 会话都按 ephemeral 处理：`ab work` 读到就标 ephemeral、不调模型；扫描兜底不补登记；doctor 的"疑似漏登记"不计 ephemeral（之前 14 个里 12 个是 thread_spawn 子 agent，子 agent 本就不触发 hook）。与 Claude 的 `isSidechain` 同一思路。已经由这类会话产生的未确认条目不追删，等定期代码核验或 90 天过期。
