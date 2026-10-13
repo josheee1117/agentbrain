@@ -209,7 +209,7 @@ const ref=id=>{const e=byId.get(id);return '<a data-go="'+id+'">['+short(id)+']<
 function card(e){return '<div class="card'+(e.state!=='active'?' inactive':'')+'" id="c-'+e.id+'" style="border-left-color:'+color(e.project)+'">'+
 '<div><span class="tag">'+esc(e.project)+'</span><span class="tag">'+KIND[e.kind]+'</span><span class="tag st-'+e.status+'">'+ST[e.status]+'</span>'+
 (e.state!=='active'?'<span class="tag">'+STATE[e.state]+'</span>':'')+(e.unreconciled?'<span class="tag">关系未判定</span>':'')+(e.expired?'<span class="tag">过期归档</span>':'')+
-'<span class="meta">['+short(e.id)+'] '+(e.origin==='extract'?'自动沉淀':'手动')+' · '+esc(e.host||'未知宿主')+' · '+e.created.slice(0,16).replace('T',' ')+'</span></div>'+
+'<span class="meta">['+short(e.id)+'] '+(e.origin==='extract'?'自动沉淀':e.origin==='import'?'导入':'手动')+' · '+esc(e.host||'未知宿主')+' · '+e.created.slice(0,16).replace('T',' ')+'</span></div>'+
 '<div style="white-space:pre-wrap;margin-top:4px">'+esc(e.text)+'</div>'+
 (e.why?'<div class="why">为什么：'+esc(e.why)+'</div>':'')+'<div class="meta">背景：'+esc(e.summary)+(e.trigger?' · 触发：'+esc(e.trigger):'')+'</div>'+
 (e.links.length?'<div class="meta">'+e.links.map(l=>LINK[l.type]+' '+ref(l.id)).join('<br>')+'</div>':'')+

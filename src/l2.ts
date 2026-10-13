@@ -19,7 +19,16 @@ export interface SourcePointer {
 
 /** 切片 3：这条记忆从哪种依据抽出来（§8.2）。user_* 必须引用户原话，observed_failure 必须引工具输出。 */
 export type Basis = "user_directive" | "user_confirmed" | "observed_failure" | "agent_inference";
-export type Origin = "manual" | "extract";
+export type Origin = "manual" | "extract" | "import";
+/** 从外部知识库导入的出处（§21 2026-10-13 Pensieve 导入）：原文件路径与内容哈希，重导时据此判断是否变更。 */
+export interface ImportRef {
+  system: "pensieve";
+  id: string;
+  path: string;
+  sha256: string;
+  /** 同一内容在其他仓库的副本路径。 */
+  also?: string[];
+}
 /** 抽取器判定的与已有记忆的关系（§9.4.4）。 */
 export type RelationType = "new" | "duplicate" | "refines" | "conflicts" | "supersedes" | "unsure";
 /** 谁让这条转正：用户、代码核验、跨会话印证。旧数据缺字段按用户。 */
@@ -57,6 +66,8 @@ export interface RememberBody {
   relation?: { type: RelationType; target: string | null };
   /** 第 1 层没判定关系（§9.4.4 pending）。第 2 层 relate 判出确定关系即解除；判 unsure 后只有用户能解除（§21 2026-10-13）。 */
   unreconciled?: boolean;
+  /** 导入条目的出处（origin=import）。 */
+  import_ref?: ImportRef;
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -139,6 +150,7 @@ export interface Proposition {
   merged_into: string | null;
   /** 关系判定判为与之冲突的条目；只标记，从不替代对方。 */
   conflicts_with: string | null;
+  import_ref: ImportRef | null;
 }
 
 export interface Projection {
@@ -207,6 +219,7 @@ export function fold(rows: EventRow[]): Projection {
         related: null,
         merged_into: null,
         conflicts_with: null,
+        import_ref: b.import_ref ?? null,
       });
       continue;
     }
