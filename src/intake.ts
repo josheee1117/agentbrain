@@ -114,6 +114,16 @@ export function setSessionError(db: DatabaseSync, s: SessionRow, code: string | 
   db.prepare("UPDATE capture_sessions SET error_code=? WHERE host=? AND session_id=?").run(code, s.host, s.session_id);
 }
 
+/** 事后才认出的 ephemeral 会话（如 Codex 子 agent）：标记后不再抽取。 */
+export function markEphemeral(db: DatabaseSync, s: SessionRow): void {
+  db.prepare("UPDATE capture_sessions SET ephemeral=1 WHERE host=? AND session_id=?").run(s.host, s.session_id);
+}
+
+/** hook 登记时 transcript 还没落盘的会话，事后补上路径。 */
+export function setTranscript(db: DatabaseSync, s: SessionRow, transcript: string): void {
+  db.prepare("UPDATE capture_sessions SET transcript=? WHERE host=? AND session_id=? AND transcript IS NULL").run(transcript, s.host, s.session_id);
+}
+
 export function getWindow(db: DatabaseSync, id: string): WindowRow | undefined {
   return db.prepare("SELECT * FROM capture_windows WHERE window_id=?").get(id) as unknown as WindowRow | undefined;
 }
@@ -281,7 +291,7 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
   const errors: Record<string, number> = {};
   for (const s of all) if (s.error_code) errors[s.error_code] = (errors[s.error_code] ?? 0) + 1;
   const week = new Date(now.getTime() - 7 * 86_400_000).toISOString();
-  const missed = all.filter((s) => s.via === "scan" && s.project && s.first_seen >= week);
+  const missed = all.filter((s) => s.via === "scan" && s.project && !s.ephemeral && s.first_seen >= week);
   const wins = db.prepare("SELECT * FROM capture_windows").all() as unknown as WindowRow[];
   const werr: Record<string, number> = {};
   const r7 = emptyReceipt();

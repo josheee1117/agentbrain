@@ -21,6 +21,14 @@ export interface Cleaned {
   stripped: number;
   /** transcript 里记的工作目录（首个出现的），找不到为 null。 */
   cwd: string | null;
+  /** Codex 子 agent 会话（guardian 审批、thread_spawn 等）：里面的 user 是另一个 agent，不是用户。 */
+  subagent: boolean;
+}
+
+/** Codex rollout 的 session_meta.payload.source.subagent 存在即子 agent 会话（§21 2026-10-13）。 */
+export function isCodexSubagent(lines: any[]): boolean {
+  const meta = lines.find((e) => e?.type === "session_meta");
+  return !!meta?.payload?.source?.subagent;
 }
 
 const TOOL_KEEP_CHARS = 300;
@@ -213,5 +221,5 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
     cwd = cwdOf(e);
     if (cwd) break;
   }
-  return { turns: b.turns, stripped: b.stripped, cwd };
+  return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines) };
 }
