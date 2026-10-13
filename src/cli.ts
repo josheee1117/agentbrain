@@ -930,6 +930,8 @@ async function cmdImport(argv: string[]): Promise<void> {
       [
         `导入 Pensieve: 新增 ${r.created.length}，内容变更改为纠正 ${r.corrected.length}，未变 ${r.unchanged}，此前已归档不再导 ${r.archivedSkip}，跳过 ${r.skipped.length}`,
         `关系判定: 已有条目并入导入条 ${x.mergedExisting}，导入条并入已确认条目 ${x.mergedIntoExisting}，补充 ${x.refines}，冲突 ${x.conflicts.length}${x.conflicts.length ? `（${x.conflicts.join("、")}）` : ""}，无关 ${x.unrelated}，拿不准 ${x.unsure}，出错 ${x.errors}`,
+        ...x.errorDetails.map((d) => `  出错原因: ${d}`),
+        x.errors ? "  出错的条目下次运行同一命令会补判（未变的导入条只要还没判过关系就会重判）" : "",
         reason ? `向量未更新：${reason}` : "",
       ].filter(Boolean).join("\n"),
     );
