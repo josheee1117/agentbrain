@@ -787,6 +787,7 @@ function workDeps(store: Store): WorkDeps {
     registryDir: registryDir(),
     resolveProject: (cwd) => resolveProject(cwd),
     projectId: (name) => projectIdByName(store, name),
+    debugDir: process.env.AB_DEBUG === "1" ? join(home(), "debug") : undefined,
   };
 }
 

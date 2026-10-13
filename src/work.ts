@@ -3,7 +3,7 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -56,6 +56,8 @@ export interface WorkDeps {
   registryDir: string;
   resolveProject: (cwd: string) => { name: string; path: string } | null;
   projectId: (name: string) => string;
+  /** 设了就把每个窗口送模型的轮次与模型原始回复（脱敏后）写到这里，排查证据对不上用；默认不设（AB_DEBUG=1 时 cli 设为 ~/.agentbrain/debug）。 */
+  debugDir?: string;
 }
 
 export interface WorkOptions {
@@ -519,6 +521,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
     if (!parsed) throw new WorkFailure("invalid_output", "抽取输出两次都不是 JSON");
   }
   const v = validate(parsed, win, neighbors, c.id);
+  if (deps.debugDir) dumpDebug(deps.debugDir, s, c, r.message.content ?? "", v);
   receipt.candidates += Array.isArray((parsed as any).candidates) ? (parsed as any).candidates.length : 0;
   for (const [k, n] of Object.entries(v.dropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
   for (const [k, n] of Object.entries(v.evidenceDropped)) receipt.evidence_dropped[k] = (receipt.evidence_dropped[k] ?? 0) + (n ?? 0);
@@ -538,6 +541,19 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
     };
   });
   return admit(checked, s, projectId, c.id, deps.store.project().props);
+}
+
+function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {
+  mkdirSync(dir, { recursive: true });
+  const body = {
+    session: `${s.host}:${s.session_id}`,
+    window: c.id,
+    turns: c.turns.map((t, i) => ({ n: `#${i + 1}`, role: t.role, text: t.text })), // 已脱敏
+    raw: sanitize(raw).text,
+    dropped: v.dropped,
+    evidenceDropped: v.evidenceDropped,
+  };
+  writeFileSync(join(dir, `${s.host}-${s.session_id}-${c.id.slice(0, 12)}.json`), JSON.stringify(body, null, 1), { mode: 0o600 });
 }
 
 /** 本次运行里补登记会话还能处理几个窗口（sweep 才有上限）。 */
