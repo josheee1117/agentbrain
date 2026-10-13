@@ -53,7 +53,7 @@ function reply(body: any): object {
   const tool = /\[#(\d+) tool\] (env: node: No such file)/.exec(user);
   const said = /\[#(\d+) user\] (以后 hook 命令都写 node 绝对路径)/.exec(user);
   const candidates = [];
-  if (said) candidates.push({ kind: "rule", scope: "project", text: "hook 命令都写 node 绝对路径", basis: "user_directive", evidence: [{ anchor: `#${said[1]}`, role: "user", quote: said[2] }], relation: { type: "new", target: null } });
+  if (said) candidates.push({ kind: "rule", scope: "project", text: "hook 命令都写 node 绝对路径", why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令", basis: "user_directive", evidence: [{ anchor: `#${said[1]}`, role: "user", quote: said[2] }], relation: { type: "new", target: null } });
   if (tool) candidates.push({ kind: "pitfall", scope: "project", text: "宿主子进程环境变量很少，找不到解释器就报错退出", trigger: "配置宿主 hook", basis: "observed_failure", evidence: [{ anchor: `#${tool[1]}`, role: "tool", quote: tool[2] }], relation: { type: "new", target: null } });
   return { role: "assistant", content: JSON.stringify({ candidates }) };
 }

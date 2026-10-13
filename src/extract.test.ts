@@ -1,7 +1,7 @@
 /** 运行：node --test src/extract.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMessages, sha256, validate, type ExtractWindow } from "./extract.ts";
+import { buildMessages, hasBackground, sha256, validate, type ExtractWindow } from "./extract.ts";
 import type { Proposition } from "./l2.ts";
 
 const win: ExtractWindow = {
@@ -17,6 +17,7 @@ const good = {
   kind: "rule",
   scope: "global",
   text: "hook 命令用 node 绝对路径，不依赖 PATH",
+  why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
   basis: "user_directive",
   evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都用 node 的绝对路径" }],
   relation: { type: "new", target: null },
@@ -146,4 +147,13 @@ test("prompt 要求逐字照抄、≤80 字，并给出锚点正反例", () => {
 test("prompt 排除本项目代码里修好就失效的具体缺陷（2026-10-13 质量抽查）", () => {
   const sys = buildMessages({ turns: [], context: [] }, { name: null, docs: "", registry: "", confirmed: "" } as any, [])[0].content!;
   assert.match(sys, /本项目代码里刚发现的具体缺陷/);
+});
+
+test("decision/rule 没有背景的 why 一律丢弃，pitfall 不受影响", () => {
+  const cases = [{ ...good, why: undefined }, { ...good, why: "用户明确要求。" }, { ...good, why: "用户的仓库卫生要求" }, { ...good, why: "hook 命令用 node 绝对路径" }];
+  for (const c of cases) assert.deepEqual(validate({ candidates: [c] }, win, [neighbor], "w1").dropped, { no_why: 1 }, JSON.stringify(c.why));
+  const pit = { ...good, kind: "pitfall", basis: "user_directive", trigger: "配置 hook", why: undefined };
+  assert.deepEqual(validate({ candidates: [pit] }, win, [neighbor], "w1").dropped, {});
+  assert.equal(hasBackground("助手把通知发到了生产 webhook，用户纠正后要求只用测试环境", "通知只发测试环境"), true);
+  assert.equal(hasBackground("用户要求以后都这样做", "x"), false);
 });
