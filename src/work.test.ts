@@ -546,10 +546,23 @@ test("关系判定：补充 / 无关解除关系未判定；拿不准照旧；�
   assert.deepEqual([r.relate.conflicts, r.relate.unrelated, r.relate.unsure, r.relate.errors], [1, 1, 1, 1]);
   const P = e.store.project().props;
   assert.deepEqual([P.get(ok)!.state, P.get(ok)!.confirmed, P.get(ok)!.pending_corrections], ["active", true, [c1]]);
-  assert.deepEqual([P.get(c1)!.unreconciled, P.get(c1)!.supersedes, P.get(c1)!.confirmed], [false, ok, false]);
+  assert.deepEqual([P.get(c1)!.unreconciled, P.get(c1)!.conflicts_with, P.get(c1)!.supersedes, P.get(c1)!.confirmed], [false, ok, undefined, false]);
   assert.equal(P.get(c2)!.unreconciled, false);
   assert.deepEqual([P.get(c3)!.unreconciled, P.get(c3)!.related?.outcome], [true, "unsure"]);
   assert.deepEqual([P.get(c4)!.unreconciled, P.get(c4)!.related], [true, null], "校验不过：不写 L1，下次再判");
+});
+
+test("关系判定的冲突只标记：本条之后被转正（如被并入后印证）也不替代对方", async () => {
+  const e = env();
+  const ok = e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令直接写 ab，靠 PATH 找到它", confirmed: true, source: src0(null) });
+  const c1 = auto(e, "s1", "hook 命令直接写 ab，不靠 PATH 找到它", "q1");
+  const chat = fakeChat(() => json({ candidates: [] }), relateReply([{ id: "q1", relation: "conflicts", target: "m1", reason: "相反" }]));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  e.store.lifecycle("confirm", c1, null, { by: "code" });
+  const P = e.store.project().props;
+  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.pending_corrections], ["active", [c1]], "对方仍有效，只标冲突");
+  assert.deepEqual([P.get(c1)!.conflicts_with, P.get(c1)!.supersedes], [ok, undefined]);
+
 });
 
 test("--redo 不因换了措辞而多出条目：同会话新抽出的近重复由关系判定并入", async () => {

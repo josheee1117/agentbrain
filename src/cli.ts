@@ -552,10 +552,12 @@ function cmdGet(argv: string[]): void {
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
       p.merged_into ? `判定与 [${short(p.merged_into)}] 重复，已并入并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       p.related && p.related.outcome === "refines" && p.related.target ? `是 [${short(p.related.target)}] 的补充` : "",
+      p.conflicts_with ? `与 [${short(p.conflicts_with)}] 说法冲突（关系判定），两条不能同时成立` : "",
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
       ...p.pending_corrections.map((id) => {
         const c = store.project().props.get(id)!;
+        if (c.conflicts_with === p.id && !c.supersedes) return `与 [${short(id)}] 说法冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;
         return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
       }),
       p.why ? `为什么: ${p.why}` : "",

@@ -458,7 +458,7 @@ export function admit(
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
-      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed) {
+      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.conflicts_with && !target.pending_corrections.length) {
         const sessions = distinctUserSessions(target, { host: s.host, session_id: s.session_id, basis: c.basis, quote_sha256: c.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256) });
         if (sessions.length >= 2) {
           const cb: ConfirmBody = { by: "corroboration", sessions };
@@ -741,14 +741,15 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const props = deps.store.project().props;
       const p = props.get(batch[k].prop.id);
       const target = v.target ? props.get(v.target.id) : null;
-      if (!p || p.state !== "active" || p.related || (v.target && target?.state !== "active")) continue;
+      // 同一次运行里前面的并入可能已让本条被印证转正：已确认的条目一律不再自动改
+      if (!p || p.state !== "active" || p.confirmed || p.related || (v.target && target?.state !== "active")) continue;
       const rel: RelateBody = { outcome: v.outcome, target: target?.id ?? null, reason: v.reason, model: deps.chat.model };
       const appends: PendingAppend[] = [{ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel }];
       if (v.outcome === "duplicate" && target) {
         const basis = p.basis ?? "agent_inference";
         const ev: EvidenceBody = { source: p.source, basis, evidence: p.evidence, window_id: `relate:${p.id}` };
         appends.push({ kind: "evidence", project_id: target.project_id, session_id: p.source.session_id, target_id: target.id, body: ev });
-        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled) {
+        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled && !target.conflicts_with && !target.pending_corrections.length) {
           const userQuotes = p.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
           const sessions = distinctUserSessions(target, { host: p.source.host, session_id: p.source.session_id, basis, quote_sha256: userQuotes });
           if (sessions.length >= 2) {
