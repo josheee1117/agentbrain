@@ -26,13 +26,20 @@ const fakeEmbed: Embedder = Object.assign(async (texts: string[]) => texts.map((
 }), { model: "fake-embed" });
 
 type Reply = (msgs: ChatMessage[], opts?: { tools?: unknown[]; json?: boolean }) => ChatMessage | Promise<ChatMessage>;
-function fakeChat(reply: Reply): Chat & { calls: ChatMessage[][] } {
+/** 关系判定（第 2 层）的调用单独记在 relateCalls，默认回空结果（不写 L1）。 */
+function fakeChat(reply: Reply, relate: Reply = () => json({ results: [] })): Chat & { calls: ChatMessage[][]; relateCalls: ChatMessage[][] } {
   const calls: ChatMessage[][] = [];
+  const relateCalls: ChatMessage[][] = [];
   const f = (async (msgs: ChatMessage[], opts?: { tools?: unknown[]; json?: boolean }) => {
+    if (msgs[0]?.content?.includes("记忆关系判定器")) {
+      relateCalls.push(structuredClone(msgs));
+      return { message: await relate(msgs, opts), tokens: 50 };
+    }
     calls.push(structuredClone(msgs));
     return { message: await reply(msgs, opts), tokens: 100 };
-  }) as Chat & { calls: ChatMessage[][] };
+  }) as Chat & { calls: ChatMessage[][]; relateCalls: ChatMessage[][] };
   f.calls = calls;
+  f.relateCalls = relateCalls;
   return f;
 }
 const json = (o: object): ChatMessage => ({ role: "assistant", content: JSON.stringify(o) });
@@ -481,6 +488,82 @@ test("debugDir：每个窗口写一份脱敏后的轮次与模型原始回复；
   e2.register("s1", e2.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);
   await runWork(e2.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
   assert.equal(readdirSync(dir).length, 1);
+});
+
+const src0 = (sid: string | null) => ({ host: "claude" as const, session_id: sid, transcript: null, anchor: "u1", summary: "x" });
+const auto = (e: Env, sid: string, text: string, quote: string, extra: Partial<RememberBody> = {}) =>
+  e.store.remember(e.pid, sid, false, { kind: "rule", text, confirmed: false, origin: "extract", basis: "user_directive", evidence: [{ anchor: "u1", role: "user", quote_sha256: sha256(quote) }], source: src0(sid), ...extra });
+const relateReply = (results: object[]): Reply => () => json({ results });
+
+test("关系判定：重复 → 来源并入旧条目、本条归档（可撤销），不同会话不同原话 → 跨会话印证转正", async () => {
+  const e = env();
+  const a = auto(e, "s1", "hook 命令写 node 绝对路径，不依赖 PATH", "以后 hook 命令都写 node 绝对路径");
+  const b = auto(e, "s2", "hook 命令写 node 绝对路径，别依赖 PATH", "hook 里一律用 node 的绝对路径");
+  const chat = fakeChat(() => json({ candidates: [] }), relateReply([{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }]));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.relateCalls.length, 1);
+  assert.match(chat.relateCalls[0][1].content!, /N: \[rule，未确认\] hook 命令写 node 绝对路径，别依赖/);
+  assert.deepEqual([r.relate.duplicate, r.relate.corroborated], [1, 1]);
+  const pa = e.store.project().props.get(a)!;
+  const pb = e.store.project().props.get(b)!;
+  assert.deepEqual([pb.state, pb.merged_into, pb.related?.outcome], ["archived", a, "duplicate"]);
+  assert.deepEqual(pa.extra_sources.map((x) => x.session_id), ["s2"]);
+  assert.deepEqual([pa.state, pa.confirmed, pa.confirmed_by], ["active", true, "corroboration"]);
+  e.store.lifecycle("reactivate", b, null);
+  assert.deepEqual([e.store.project().props.get(b)!.state, e.store.project().props.get(b)!.merged_into], ["active", null], "归档可撤销");
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.relateCalls.length, 1, "判过的不再判");
+});
+
+test("关系判定：同一会话里的重复只算一个会话，不转正", async () => {
+  const e = env();
+  const a = auto(e, "s1", "hook 命令写 node 绝对路径，不依赖 PATH", "以后 hook 命令都写 node 绝对路径");
+  auto(e, "s1", "hook 命令写 node 绝对路径，别依赖 PATH", "hook 里一律用 node 的绝对路径");
+  const chat = fakeChat(() => json({ candidates: [] }), relateReply([{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }]));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual([r.relate.duplicate, r.relate.corroborated], [1, 0]);
+  assert.equal(e.store.project().props.get(a)!.confirmed, false);
+});
+
+test("关系判定：补充 / 无关解除关系未判定；拿不准照旧；冲突走待确认纠正，已确认条目不被改；校验不过的不写", async () => {
+  const e = env();
+  const ok = e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令直接写 ab，靠 PATH 找到它", confirmed: true, source: src0(null) });
+  const c1 = auto(e, "s1", "hook 命令直接写 ab，不靠 PATH 找到它", "q1", { unreconciled: true });
+  const c2 = auto(e, "s2", "hook 命令直接写 ab，靠 PATH 找到它就行", "q2", { unreconciled: true });
+  const c3 = auto(e, "s3", "hook 命令直接写 ab，靠 PATH 找到它即可", "q3", { unreconciled: true });
+  const c4 = auto(e, "s4", "hook 命令直接写 ab，靠 PATH 找到它吧", "q4", { unreconciled: true });
+  const chat = fakeChat(() => json({ candidates: [] }), (msgs) => {
+    const n = (msgs[1].content!.match(/## q/g) ?? []).length;
+    assert.equal(n, 4);
+    return json({ results: [
+      { id: "q1", relation: "conflicts", target: "m1", reason: "说法相反" },
+      { id: "q2", relation: "unrelated", target: null, reason: "" },
+      { id: "q3", relation: "unsure", target: null, reason: "" },
+      { id: "q4", relation: "duplicate", target: "m9", reason: "编号越界" },
+    ] });
+  });
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual([r.relate.conflicts, r.relate.unrelated, r.relate.unsure, r.relate.errors], [1, 1, 1, 1]);
+  const P = e.store.project().props;
+  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.confirmed, P.get(ok)!.pending_corrections], ["active", true, [c1]]);
+  assert.deepEqual([P.get(c1)!.unreconciled, P.get(c1)!.supersedes, P.get(c1)!.confirmed], [false, ok, false]);
+  assert.equal(P.get(c2)!.unreconciled, false);
+  assert.deepEqual([P.get(c3)!.unreconciled, P.get(c3)!.related?.outcome], [true, "unsure"]);
+  assert.deepEqual([P.get(c4)!.unreconciled, P.get(c4)!.related], [true, null], "校验不过：不写 L1，下次再判");
+});
+
+test("--redo 不因换了措辞而多出条目：同会话新抽出的近重复由关系判定并入", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);
+  let text = "hook 命令写 node 绝对路径，不依赖 PATH";
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, text }] }), relateReply([{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }]));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  text = "hook 命令写 node 绝对路径，别依赖 PATH";
+  await runWork(e.deps(chat), { session: { host: "claude", session_id: "s1" }, sweep: false, dryRun: false, redo: true });
+  const active = props(e.store).filter((p) => p.state === "active");
+  assert.equal(active.length, 1);
+  assert.equal(active[0].text, "hook 命令写 node 绝对路径，不依赖 PATH");
+  assert.equal(active[0].confirmed, false);
 });
 
 test("单实例：租约被占时直接返回 busy；持有者进程已死则接管并计数", async () => {

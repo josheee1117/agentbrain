@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./store.ts";
-import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
+import type { ArchiveBody, Basis, ConfirmBody, EvidenceBody, Host, Proposition, RelateBody, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
+import { buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
@@ -43,6 +44,11 @@ export const PROPOSAL_EXPIRE_DAYS = 90;
 const SCAN_DAYS = 7;
 const SCAN_HEAD_BYTES = 64 * 1024;
 const CODE_VERIFIABLE = new Set(["pitfall", "note"]);
+/** 关系判定第 2 层（§21 2026-10-13）：近邻余弦下限、每条最多给几个近邻、一次调用判几条、每次运行最多几次调用。 */
+export const RELATE_SIM = 0.7;
+const RELATE_TOP = 3;
+export const RELATE_BATCH = 6;
+const MAX_RELATE_CALLS_PER_RUN = 10;
 const CORROBORATE_KINDS = new Set(["rule", "decision"]);
 const USER_BASES = new Set<Basis | undefined>(["user_directive", "user_confirmed"]);
 
@@ -77,6 +83,7 @@ export interface WorkReport {
   receipt: intake.Receipt;
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
   expired: number;
+  relate: Record<RelateOutcome | "corroborated" | "errors", number>;
   dry: { session: string; windows: number; chars: number }[];
 }
 
@@ -681,6 +688,84 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   }
 }
 
+/**
+ * 待判关系的条目：自动沉淀、未确认、active、还没判过，且有余弦 ≥ RELATE_SIM 的近邻。
+ * 每对只从一侧判：近邻须比它早，或是已确认 / 非自动沉淀（这些自己不会被判）。
+ */
+export function relateTodo(store: Store): RelateItem[] {
+  const props = [...store.project().props.values()]
+    .filter((p) => p.state === "active" && p.origin === "extract" && !p.confirmed && !p.related)
+    .sort((a, b) => a.seq - b.seq);
+  const items: RelateItem[] = [];
+  for (const p of props) {
+    const ns = store.neighbors(p.id);
+    if (!ns) continue;
+    const near = ns.filter((n) => n.similarity >= RELATE_SIM && (n.prop.seq < p.seq || n.prop.confirmed || n.prop.origin !== "extract"));
+    if (near.length) items.push({ prop: p, neighbors: near.slice(0, RELATE_TOP).map((n) => n.prop) });
+  }
+  return items;
+}
+
+/** 关系判定第 2 层：重复 → 来源并入旧条目并归档本条（可 reactivate 撤销）；补充 / 无关 → 解除关系未判定；冲突 → 待确认纠正；拿不准 → 照旧。 */
+async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
+  if ("error" in deps.chat || !deps.embedder) return;
+  const db = deps.store.workDb;
+  try {
+    await deps.store.syncVectors(deps.embedder, deps.embedder.model!);
+  } catch {
+    report.relate.errors++;
+    return;
+  }
+  const todo = relateTodo(deps.store);
+  for (let i = 0, calls = 0; i < todo.length && calls < MAX_RELATE_CALLS_PER_RUN; i += RELATE_BATCH, calls++) {
+    if (!intake.budgetLeft(db, deps.now(), "extract")) break;
+    const batch = todo.slice(i, i + RELATE_BATCH);
+    let verdicts;
+    try {
+      const r = await deps.chat.chat(buildRelateMessages(batch), { json: true });
+      intake.spend(db, deps.now(), 1, r.tokens);
+      verdicts = parseRelate(parseJsonLoose(r.message.content), batch);
+    } catch {
+      report.relate.errors++;
+      break;
+    } finally {
+      intake.renewLease(db, holder, deps.now());
+    }
+    for (let k = 0; k < batch.length; k++) {
+      const v = verdicts[k];
+      if (!v) {
+        report.relate.errors++;
+        continue;
+      }
+      // 同一批里前面的结论可能已经归档了本条或目标：以当前投影为准，目标不在了就留到下次
+      const props = deps.store.project().props;
+      const p = props.get(batch[k].prop.id);
+      const target = v.target ? props.get(v.target.id) : null;
+      if (!p || p.state !== "active" || p.related || (v.target && target?.state !== "active")) continue;
+      const rel: RelateBody = { outcome: v.outcome, target: target?.id ?? null, reason: v.reason, model: deps.chat.model };
+      const appends: PendingAppend[] = [{ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel }];
+      if (v.outcome === "duplicate" && target) {
+        const basis = p.basis ?? "agent_inference";
+        const ev: EvidenceBody = { source: p.source, basis, evidence: p.evidence, window_id: `relate:${p.id}` };
+        appends.push({ kind: "evidence", project_id: target.project_id, session_id: p.source.session_id, target_id: target.id, body: ev });
+        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled) {
+          const userQuotes = p.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
+          const sessions = distinctUserSessions(target, { host: p.source.host, session_id: p.source.session_id, basis, quote_sha256: userQuotes });
+          if (sessions.length >= 2) {
+            const cb: ConfirmBody = { by: "corroboration", sessions };
+            appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
+            report.relate.corroborated++;
+          }
+        }
+        const ar: ArchiveBody = { reason: "duplicate", into: target.id };
+        appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
+      }
+      deps.store.commit(appends, () => {});
+      report.relate[v.outcome]++;
+    }
+  }
+}
+
 /** 按代码核验：只核验项目范围、未确认、可由代码证明的种类（坑、事实），且不是待确认的纠正。 */
 async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
   if ("error" in deps.chat) return;
@@ -741,6 +826,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     receipt: intake.emptyReceipt(),
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
     expired: 0,
+    relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
   };
   const db = deps.store.workDb;
@@ -760,6 +846,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     const ordered = [...list.filter((x) => !isBacklog(x)), ...list.filter(isBacklog)];
     const backlog: Backlog = { left: BACKLOG_WINDOWS_PER_SWEEP };
     for (const s of ordered) await processSession(deps, s, opts, report, holder, backlog);
+    if (!opts.dryRun) await relatePass(deps, report, holder);
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);
       expirePass(deps, report);
