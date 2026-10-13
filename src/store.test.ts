@@ -619,3 +619,12 @@ test("混合检索：两路各取 20 条，融合 limit 可超过 20", async () 
     assert.equal(all.hits.length, 40);
   } finally { s.close(); }
 });
+
+test("recallableUnconfirmed：只放有用户原话的未确认规则/决定，冲突、纠正、关系未判定、与代码不符、推断的坑都不放", async () => {
+  const { recallableUnconfirmed } = await import("./l2.ts");
+  const ok = { confirmed: false, kind: "rule", basis: "user_directive", evidence: [{ role: "user" }], unreconciled: false, stale: null, conflicts_with: null, supersedes: undefined, pending_corrections: [] } as any;
+  assert.equal(recallableUnconfirmed(ok), true);
+  assert.equal(recallableUnconfirmed({ ...ok, kind: "decision", basis: "user_confirmed" }), true);
+  for (const bad of [{ confirmed: true }, { kind: "pitfall" }, { basis: "agent_inference" }, { evidence: [{ role: "assistant" }] }, { unreconciled: true }, { stale: {} }, { conflicts_with: "x" }, { supersedes: "x" }, { pending_corrections: ["x"] }])
+    assert.equal(recallableUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
+});
