@@ -565,6 +565,31 @@ test("关系判定的冲突只标记：本条之后被转正（如被并入后�
 
 });
 
+test("待确认的纠正不走印证转正；即便被非用户途径转正也不替代旧条目", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "rule", text: "e2e 由用户自己跑，agent 不跑", confirmed: false, origin: "extract", source: src0(null) });
+  const corr = auto(e, "s1", "e2e 由 agent 自己跑，做成一条命令", "以后 e2e 你自己跑", { supersedes: old });
+  auto(e, "s2", "e2e 由 agent 自己跑，做成一条命令吧", "e2e 都由你来跑");
+  // 只把 s2 那条判为 corr 的重复，其余判无关
+  const chat = fakeChat(() => json({ candidates: [] }), (msgs) => {
+    const qs = msgs[1].content!.split("## ").slice(1);
+    return json({ results: qs.map((q) => {
+      const id = q.split("\n")[0];
+      if (!/N: .*命令吧/.test(q)) return { id, relation: "unrelated", target: null, reason: "" };
+      const m = /^(m\d+): .*做成一条命令$/m.exec(q)!;
+      return { id, relation: "duplicate", target: m[1], reason: "同一件事" };
+    }) });
+  });
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual([r.relate.duplicate, r.relate.corroborated], [1, 0], "两个会话两句不同原话，但目标是待确认纠正，不转正");
+  e.store.lifecycle("confirm", corr, null, { by: "corroboration", sessions: ["a", "b"] });
+  let P = e.store.project().props;
+  assert.deepEqual([P.get(old)!.state, P.get(old)!.pending_corrections], ["active", [corr]]);
+  e.store.lifecycle("confirm", corr, null, {});
+  P = e.store.project().props;
+  assert.equal(P.get(old)!.state, "superseded", "用户确认后纠正才生效");
+});
+
 test("--redo 不因换了措辞而多出条目：同会话新抽出的近重复由关系判定并入", async () => {
   const e = env();
   e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);

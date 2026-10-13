@@ -458,7 +458,7 @@ export function admit(
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
-      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.conflicts_with && !target.pending_corrections.length) {
+      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
         const sessions = distinctUserSessions(target, { host: s.host, session_id: s.session_id, basis: c.basis, quote_sha256: c.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256) });
         if (sessions.length >= 2) {
           const cb: ConfirmBody = { by: "corroboration", sessions };
@@ -749,7 +749,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
         const basis = p.basis ?? "agent_inference";
         const ev: EvidenceBody = { source: p.source, basis, evidence: p.evidence, window_id: `relate:${p.id}` };
         appends.push({ kind: "evidence", project_id: target.project_id, session_id: p.source.session_id, target_id: target.id, body: ev });
-        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled && !target.conflicts_with && !target.pending_corrections.length) {
+        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
           const userQuotes = p.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
           const sessions = distinctUserSessions(target, { host: p.source.host, session_id: p.source.session_id, basis, quote_sha256: userQuotes });
           if (sessions.length >= 2) {
