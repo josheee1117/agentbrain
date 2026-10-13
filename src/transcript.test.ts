@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanTranscript, isAbCommand } from "./transcript.ts";
+import { cleanTranscript, isAbCommand, stripInjected } from "./transcript.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "ab-tr-"));
 const file = (name: string, lines: object[]) => {
@@ -88,4 +88,17 @@ test("识别 ab 自身命令（含绝对路径与 cli.ts），不误伤含 ab �
   assert.equal(isAbCommand("node src/cli.ts search foo"), true);
   assert.equal(isAbCommand("grep -r tab file"), false);
   assert.equal(isAbCommand("cat lab notes"), false);
+});
+
+test("剥掉宿主注入噪声：skill 正文、task-notification、Codex app 页面事件、Subagent updates above.", () => {
+  const cases: [string, string][] = [
+    ['<skill name="show-me" location="/x/SKILL.md">\n# Show me\n很长的说明\n</skill>\n给我直接浏览器打开', "给我直接浏览器打开"],
+    ["<task-notification> <task-id>a9</task-id> <status>completed</status> </task-notification>", ""],
+    ['<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>', ""],
+    ["Subagent updates above.", ""],
+    ["Subagent updates above.\n为什么超时", "为什么超时"],
+    ["说明里提到 Subagent updates above. 这句话", "说明里提到 Subagent updates above. 这句话"],
+    ["我写了 <skill> 标签吗", "我写了 <skill> 标签吗"],
+  ];
+  for (const [inp, out] of cases) assert.equal(stripInjected(inp).text, out, inp);
 });

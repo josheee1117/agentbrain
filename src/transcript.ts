@@ -38,6 +38,12 @@ const INJECTED_BLOCKS = [
   /<agentbrain(?:-recall)?(?:\s[^>]*)?>[\s\S]*?(?:<\/agentbrain(?:-recall)?>|$)/g,
   /<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g,
   /<local-command-(stdout|stderr|caveat)>[\s\S]*?(?:<\/local-command-\1>|$)/g,
+  // 宿主注入的 skill 正文、后台任务通知、Codex app 页面事件、Pi 子代理提示（§21 2026-10-13）
+  /<skill\s+name="[^"]*"[^>]*>[\s\S]*?(?:<\/skill>|$)/g,
+  /<task-notification>[\s\S]*?(?:<\/task-notification>|$)/g,
+  /<external_codex_apps_[a-z_]+>[\s\S]*?(?:<\/external_codex_apps_[a-z_]+>|$)/g,
+  /<user-prompt-submit-hook>[\s\S]*?(?:<\/user-prompt-submit-hook>|$)/g,
+  /^[ \t]*Subagent updates above\.[ \t]*$/gm,
 ];
 const AB_COMMAND = /(?:^|[\s;&|(`'"])(?:\S*\/)?ab\s+(?:brief|search|get|status|doctor|recall|remember|correct|confirm|archive|capture|work)\b|\bcli\.ts\s+(?:brief|search|get|status|doctor|recall|remember|correct|confirm|archive|capture|work)\b/;
 
