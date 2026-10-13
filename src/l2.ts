@@ -3,7 +3,7 @@
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
-export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify";
+export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate";
 export type Host = "claude" | "codex" | "pi";
 export type PropState = "active" | "archived" | "superseded";
 
@@ -81,9 +81,18 @@ export interface ConfirmBody {
   sessions?: string[];
 }
 
-/** archive 事件体。ab work 归档过期提议时带 reason。 */
+/** archive 事件体。ab work 归档过期提议、或判定为重复后并入 into 时带 reason。用 reactivate 可撤销。 */
 export interface ArchiveBody {
-  reason?: "expired";
+  reason?: "expired" | "duplicate";
+  into?: string;
+}
+
+/** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
+export interface RelateBody {
+  outcome: "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
+  target: string | null;
+  reason: string;
+  model: string;
 }
 
 export interface ExtraSource {
@@ -124,6 +133,10 @@ export interface Proposition {
   /** 代码与这条矛盾（未确认条目才会被核验）。 */
   stale: { head: string; refs: CodeRef[] } | null;
   expired: boolean;
+  /** 关系判定第 2 层的结论；没判过为 null。 */
+  related: { outcome: RelateBody["outcome"]; target: string | null } | null;
+  /** 判定为重复、已并入的条目。 */
+  merged_into: string | null;
 }
 
 export interface Projection {
@@ -189,6 +202,8 @@ export function fold(rows: EventRow[]): Projection {
         code_evidence: null,
         stale: null,
         expired: false,
+        related: null,
+        merged_into: null,
       });
       continue;
     }
@@ -226,8 +241,18 @@ export function fold(rows: EventRow[]): Projection {
       }
       continue;
     }
+    if (r.kind === "relate") {
+      const b = JSON.parse(r.body) as RelateBody;
+      target.related = { outcome: b.outcome, target: b.target };
+      // 第 2 层判出了确定关系才解除"关系未判定"；unsure 照旧，之后只有用户能解除
+      if (b.outcome !== "unsure") target.unreconciled = false;
+      if (b.outcome === "conflicts" && b.target && !target.supersedes) target.supersedes = b.target; // 走待确认纠正，不盖掉旧条目
+      continue;
+    }
     target.state = r.kind === "archive" ? "archived" : "active";
-    target.expired = r.kind === "archive" && (JSON.parse(r.body) as ArchiveBody).reason === "expired";
+    const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
+    target.expired = ab?.reason === "expired";
+    target.merged_into = ab?.reason === "duplicate" ? (ab.into ?? null) : null;
   }
   // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
   for (const p of props.values()) {

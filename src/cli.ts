@@ -550,6 +550,8 @@ function cmdGet(argv: string[]): void {
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
+      p.merged_into ? `判定与 [${short(p.merged_into)}] 重复，已并入并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
+      p.related && p.related.outcome === "refines" && p.related.target ? `是 [${short(p.related.target)}] 的补充` : "",
       p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
       p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
       ...p.pending_corrections.map((id) => {
@@ -826,6 +828,7 @@ async function cmdWork(argv: string[]): Promise<void> {
         `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}${r.backlogLeft ? `；补登记会话留到下次 ${r.backlogLeft}（每次 sweep 最多 ${BACKLOG_WINDOWS_PER_SWEEP} 个窗口）` : ""}`,
         `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
+        Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
         values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}；过期归档 ${r.expired}` : "",
       ].filter(Boolean).join("\n"),
     );
