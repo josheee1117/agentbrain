@@ -484,6 +484,31 @@ test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPrompt
 });
 
 // 放在最后：长内容进独立 AB_HOME，不进共享库；它也负责删掉整个临时目录。
+test("recall：有用户原话依据的未确认规则/决定最多 1 条，排在已确认之后、标未确认；推断的坑、有冲突的不进", async () => {
+  const own = join(dir, "recall-unconfirmed");
+  const made = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "部署脚本召回要先停旧进程", "--summary", "召回"], alpha, own);
+  assert.equal(made.code, 0, made.err);
+  const { Store } = await import("./store.ts");
+  const store = new Store(join(own, "store.db"), join(own, "index.db"));
+  const pid = store.ensureProject("alpha");
+  const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: "a", summary: "x" };
+  const ev = [{ anchor: "a", role: "user" as const, quote_sha256: "h" }];
+  const base = { confirmed: false, origin: "extract" as const, source: src, evidence: ev };
+  store.remember(pid, "s", false, { ...base, kind: "rule", basis: "user_directive", text: "部署脚本召回一律用用户原话规则甲" });
+  store.remember(pid, "s", false, { ...base, kind: "decision", basis: "user_confirmed", text: "部署脚本召回采用用户认可的决定乙" });
+  store.remember(pid, "s", false, { ...base, kind: "pitfall", basis: "agent_inference", text: "部署脚本召回推断的坑丙", evidence: [{ anchor: "a", role: "tool", quote_sha256: "h" }] });
+  store.close();
+  const r = recall(["recall", "部署脚本召回"], alpha, own);
+  assert.equal(r.code, 0, r.err);
+  const lines = r.out.split("\n").filter((l) => l.startsWith("- "));
+  assert.match(lines[0], /坑: 部署脚本召回要先停旧进程/, "已确认在前");
+  const un = lines.filter((l) => /（未确认）/.test(l));
+  assert.equal(un.length, 1, r.out);
+  assert.match(un[0], /(规则|决定)（未确认）: 部署脚本召回.*(甲|乙)/);
+  assert.equal(lines.indexOf(un[0]), lines.length - 1);
+  assert.doesNotMatch(r.out, /推断的坑丙/);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;

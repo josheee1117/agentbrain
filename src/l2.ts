@@ -281,3 +281,21 @@ export function fold(rows: EventRow[]): Projection {
   }
   return { props, orphans, ephemeral, purged };
 }
+
+/**
+ * 未确认条目进每轮召回的门槛（D3，§21 2026-10-13）：规则或决定、依据是用户原话且带用户引文；
+ * 关系未判定、与代码不符、有冲突或待确认纠正、本身是纠正的都不进。agent 推断的坑要等代码核验转正（那时已是已确认）。
+ */
+export function recallableUnconfirmed(p: Proposition): boolean {
+  return (
+    !p.confirmed &&
+    (p.kind === "rule" || p.kind === "decision") &&
+    (p.basis === "user_directive" || p.basis === "user_confirmed") &&
+    p.evidence.some((e) => e.role === "user") &&
+    !p.unreconciled &&
+    !p.stale &&
+    !p.conflicts_with &&
+    !p.supersedes &&
+    !p.pending_corrections.length
+  );
+}

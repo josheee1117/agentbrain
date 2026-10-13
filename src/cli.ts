@@ -9,7 +9,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
-import type { Host, PropKind, Proposition, SourcePointer } from "./l2.ts";
+import { recallableUnconfirmed, type Host, type PropKind, type Proposition, type SourcePointer } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandSource, latestAnchor } from "./source.ts";
 import { detectHost, locateTranscript } from "./host.ts";
@@ -288,20 +288,23 @@ async function recall(store: Store, query: string, cwd: string): Promise<string>
     minSim: RECALL_MIN_SIM,
   }, embedder);
   const props = store.project().props;
-  const picked = hits.flatMap((h) => {
-    const p = props.get(h.id);
-    if (!p || p.state !== "active" || !p.confirmed || !RECALL_KINDS.includes(p.kind)) return [];
-    if (p.project_id === null && !p.for_workers) return [];
-    if (p.project_id !== null && (!here || p.project_id !== projects[0])) return [];
-    return [p];
-  }).slice(0, RECALL_MAX_ITEMS);
+  const inScope = (p: Proposition) => {
+    if (p.project_id === null && !p.for_workers) return false;
+    if (p.project_id !== null && (!here || p.project_id !== projects[0])) return false;
+    return true;
+  };
+  const ranked = hits.map((h) => props.get(h.id)).filter((p): p is Proposition => !!p && p.state === "active" && inScope(p));
+  const confirmed = ranked.filter((p) => p.confirmed && RECALL_KINDS.includes(p.kind)).slice(0, RECALL_MAX_ITEMS);
+  // D3（§21 2026-10-13）：有用户原话依据的未确认规则/决定，最多 1 条，排在已确认之后
+  const extra = confirmed.length < RECALL_MAX_ITEMS ? ranked.find(recallableUnconfirmed) : undefined;
+  const picked = extra ? [...confirmed, extra] : confirmed;
   if (!picked.length) return "";
   const head = "<agentbrain-recall>\n";
   const tail = "\n</agentbrain-recall>\n";
   const rows: string[] = [];
   for (const p of picked) {
     const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
-    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${disputed(p)}: ${body}`;
+    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${p.confirmed ? "" : "（未确认）"}${disputed(p)}: ${body}`;
     const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
     const room = RECALL_MAX_CHARS - used;
     if (room <= 0) break;
@@ -947,7 +950,7 @@ const USAGE = `用法:
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
-  ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆
+  ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆；另可带 1 条有用户原话的未确认规则/决定
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
