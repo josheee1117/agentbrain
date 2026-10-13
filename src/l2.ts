@@ -137,6 +137,8 @@ export interface Proposition {
   related: { outcome: RelateBody["outcome"]; target: string | null } | null;
   /** 判定为重复、已并入的条目。 */
   merged_into: string | null;
+  /** 关系判定判为与之冲突的条目；只标记，从不替代对方。 */
+  conflicts_with: string | null;
 }
 
 export interface Projection {
@@ -204,6 +206,7 @@ export function fold(rows: EventRow[]): Projection {
         expired: false,
         related: null,
         merged_into: null,
+        conflicts_with: null,
       });
       continue;
     }
@@ -246,13 +249,19 @@ export function fold(rows: EventRow[]): Projection {
       target.related = { outcome: b.outcome, target: b.target };
       // 第 2 层判出了确定关系才解除"关系未判定"；unsure 照旧，之后只有用户能解除
       if (b.outcome !== "unsure") target.unreconciled = false;
-      if (b.outcome === "conflicts" && b.target && !target.supersedes) target.supersedes = b.target; // 走待确认纠正，不盖掉旧条目
+      // 冲突只标出来，不写 supersedes：本条日后被印证或代码核验转正也不会自动盖掉对方（§21 2026-10-13 修正）
+      target.conflicts_with = b.outcome === "conflicts" ? b.target : null;
       continue;
     }
     target.state = r.kind === "archive" ? "archived" : "active";
     const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
     target.expired = ab?.reason === "expired";
     target.merged_into = ab?.reason === "duplicate" ? (ab.into ?? null) : null;
+  }
+  for (const p of props.values()) {
+    if (!p.conflicts_with || p.state !== "active") continue;
+    const target = props.get(p.conflicts_with);
+    if (target && target.state === "active" && !target.pending_corrections.includes(p.id)) target.pending_corrections.push(p.id);
   }
   // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
   for (const p of props.values()) {
