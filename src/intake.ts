@@ -8,11 +8,6 @@ import type { Host } from "./l2.ts";
 import type { WorkError } from "./llm.ts";
 
 export const LEASE_TTL_MS = 10 * 60_000;
-export const DAILY_MAX_CALLS = 60;
-export const DAILY_MAX_TOKENS = 2_500_000;
-/** 日预算里留给代码核验的部分：抽取用到 (上限 - 保留) 即停，核验可用满（§21 2026-10-12 质量修正）。 */
-export const VERIFY_RESERVED_CALLS = 12;
-export const VERIFY_RESERVED_TOKENS = 300_000;
 export const MAX_ATTEMPTS = 4;
 const BACKOFF_MIN = [1, 5, 30, 120];
 const WINDOW_RETENTION_DAYS = 30;
@@ -212,16 +207,10 @@ export function localDay(now: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** 当日用量只做记录（doctor 显示），不再拦截：用户决定不设日上限（§21 2026-10-13）。 */
 export function budget(db: DatabaseSync, now: Date): { calls: number; tokens: number } {
   const row = db.prepare("SELECT calls,tokens FROM work_budget WHERE day=?").get(localDay(now)) as { calls: number; tokens: number } | undefined;
   return row ?? { calls: 0, tokens: 0 };
-}
-
-export function budgetLeft(db: DatabaseSync, now: Date, purpose: "extract" | "verify"): boolean {
-  const b = budget(db, now);
-  const calls = purpose === "extract" ? DAILY_MAX_CALLS - VERIFY_RESERVED_CALLS : DAILY_MAX_CALLS;
-  const tokens = purpose === "extract" ? DAILY_MAX_TOKENS - VERIFY_RESERVED_TOKENS : DAILY_MAX_TOKENS;
-  return b.calls < calls && b.tokens < tokens;
 }
 
 export function spend(db: DatabaseSync, now: Date, calls: number, tokens: number): void {

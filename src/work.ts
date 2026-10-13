@@ -639,14 +639,10 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   }
   for (const c of chunks.slice(0, MAX_WINDOWS_PER_SESSION_RUN)) {
     const prev = intake.getWindow(db, c.id);
-    if (prev?.state === "deferred" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
+    // 旧版日预算留下的 budget_exhausted 延后已无意义，立即重做
+    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
     if (capped && backlog.left <= 0) {
       report.backlogLeft++;
-      break;
-    }
-    if (!intake.budgetLeft(db, deps.now(), "extract")) {
-      intake.deferWindow(db, row, c, "budget_exhausted", deps.now(), false, intake.tomorrow(deps.now()));
-      report.windows.deferred++;
       break;
     }
     if (capped) backlog.left--;
@@ -718,7 +714,6 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
   }
   const todo = relateTodo(deps.store);
   for (let i = 0, calls = 0; i < todo.length && calls < MAX_RELATE_CALLS_PER_RUN; i += RELATE_BATCH, calls++) {
-    if (!intake.budgetLeft(db, deps.now(), "extract")) break;
     const batch = todo.slice(i, i + RELATE_BATCH);
     let verdicts;
     try {
@@ -777,7 +772,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     .sort((a, b) => a.seq - b.seq);
   let done = 0;
   for (const p of todo) {
-    if (done >= MAX_VERIFY_PER_RUN || !intake.budgetLeft(db, deps.now(), "verify")) break;
+    if (done >= MAX_VERIFY_PER_RUN) break;
     const entry = deps.registry.find((e) => e.name === names.get(p.project_id!));
     if (!entry?.path || !existsSync(entry.path)) continue;
     const tools = new RepoTools(entry.path);

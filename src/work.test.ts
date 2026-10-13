@@ -318,7 +318,7 @@ test("模型未配置：窗口延后且不消耗重试次数；embedding 故障�
   assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u1", "毒化窗口不卡住后续内容");
 });
 
-test("限流 429 延后；日预算用完延后到次日", async () => {
+test("限流 429 延后；日用量只记录不拦截；旧的 budget_exhausted 延后立即重做", async () => {
   const e = env();
   e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
   await runWork(e.deps(fakeChat(() => {
@@ -327,25 +327,21 @@ test("限流 429 延后；日预算用完延后到次日", async () => {
   assert.equal(e.store.workDb.prepare("SELECT error_code FROM capture_windows").get()!.error_code, "http_429");
   const e2 = env();
   e2.register("s1", e2.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
-  intake.spend(e2.store.workDb, new Date(), intake.DAILY_MAX_CALLS, 0);
+  intake.spend(e2.store.workDb, new Date(), 10_000, 100_000_000);
+  await runWork(e2.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流");
+  })), { sweep: false, dryRun: false });
+  e2.store.workDb.prepare("UPDATE capture_windows SET error_code='budget_exhausted', next_at=?").run(new Date(Date.now() + 86_400_000).toISOString());
   const chat = fakeChat(() => json({ candidates: [] }));
   const r = await runWork(e2.deps(chat), { sweep: false, dryRun: false });
-  assert.equal(chat.calls.length, 0);
-  assert.equal(r.windows.deferred, 1);
-  assert.equal(e2.store.workDb.prepare("SELECT error_code FROM capture_windows").get()!.error_code, "budget_exhausted");
-});
-
-test("日预算给代码核验留了份额：抽取停在 上限-保留，核验仍能跑", async () => {
-  const e = env();
-  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
-  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
-  intake.spend(e.store.workDb, new Date(), intake.DAILY_MAX_CALLS - intake.VERIFY_RESERVED_CALLS, 0);
-  const chat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
-  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
-  assert.equal(r.windows.deferred, 1, "抽取让出预算");
-  assert.equal(r.verify.verified, 1, "核验用保留份额");
-  assert.equal(e.store.project().props.get(id)!.confirmed_by, "code");
-  assert.ok(!chat.calls.some((c) => c[0].content!.includes("记忆抽取器")), "没有抽取调用");
+  assert.equal(chat.calls.length, 1, "超过旧上限也照常调用");
+  assert.equal(r.windows.done, 1);
+  assert.equal(r.windows.deferred, 0);
+  const id = unconfirmed(e2, "向量门槛 VEC_MIN_SIM 是 0.45");
+  const vchat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const r2 = await runWork(e2.deps(vchat), { sweep: true, dryRun: false });
+  assert.equal(r2.verify.verified, 1, "核验也不受日用量限制");
+  assert.equal(e2.store.project().props.get(id)!.confirmed_by, "code");
 });
 
 test("补登记会话每次 sweep 最多处理 BACKLOG_WINDOWS_PER_SWEEP 个窗口；hook 登记的先处理、不受限", async () => {
