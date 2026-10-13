@@ -5,7 +5,7 @@
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
@@ -18,6 +18,7 @@ import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./reg
 import { chatClient, loadChatConfig } from "./llm.ts";
 import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
+import { buildViewData, renderHtml } from "./view.ts";
 
 const BRIEF_MAX_CHARS = 2000;
 const RECALL_MAX_ITEMS = 3;
@@ -680,6 +681,29 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
+function cmdView(argv: string[]): void {
+  const { values } = parseArgs({
+    args: argv,
+    options: { out: { type: "string" }, "no-open": { type: "boolean", default: false } },
+    strict: true,
+  });
+  const out = values.out ?? join(home(), "view.html");
+  const store = open();
+  let data;
+  try {
+    data = buildViewData(store);
+  } finally {
+    store.close();
+  }
+  writeFileSync(out, renderHtml(data), { mode: 0o600 });
+  chmodSync(out, 0o600);
+  console.log(`已生成 ${out}：共 ${data.counts.total} 条（有效 ${data.counts.active}），有向量 ${data.counts.vectors} 条`);
+  if (!values["no-open"]) {
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
+    spawn(opener, [out], { stdio: "ignore", detached: true }).on("error", () => console.log(`没能自动打开，请手动打开 ${out}`)).unref();
+  }
+}
+
 // ---------- capture / work（切片 3） ----------
 
 function parseSessionKey(raw: string): { host: Host; session_id: string } {
@@ -956,6 +980,7 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
+  ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab capture --hook --host <claude|codex|pi>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
@@ -991,6 +1016,7 @@ async function main(): Promise<void> {
     if (cmd === "status" || cmd === "doctor") return cmdStatus();
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);
+    if (cmd === "view") return cmdView(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;
