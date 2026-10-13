@@ -184,3 +184,24 @@ test("去重：近邻是未确认自动条目就并进导入条；是用户确�
   assert.equal(rep.relate.mergedIntoExisting, 1);
   store.close();
 });
+
+test("关系判定出错时记下原因；再跑同一命令，未变但没判过关系的导入条会补判", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const pid = store.ensureProject("alpha");
+  const src = { host: null, session_id: null, transcript: null, anchor: null, summary: "x" };
+  const auto = store.remember(pid, null, false, { kind: "pitfall", text: "字典同步禁止用源库空 label 覆盖本地 label：同步曾以源库 label 为准，源库为空会把本地补全的 label 改回空。", confirmed: false, origin: "extract", source: src });
+  const r = repo({ "knowledge/k/content.md": KNOW });
+  const bad = (async () => { throw new Error("HTTP 400 bad request"); }) as unknown as Chat;
+  const first = await importPensieve(deps(store, bad), planImport([{ root: r, project: "alpha" }], new Map()));
+  assert.equal(first.relate.errors, 1);
+  assert.match(first.relate.errorDetails[0], /HTTP 400/);
+  const good = (async () => ({ message: { role: "assistant", content: JSON.stringify({ results: [{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }] }) }, tokens: 1 })) as unknown as Chat;
+  const second = await importPensieve(deps(store, good), planImport([{ root: r, project: "alpha" }], new Map()));
+  assert.deepEqual([second.created.length, second.unchanged, second.relate.mergedExisting], [0, 1, 1]);
+  assert.equal(store.project().props.get(auto)!.state, "archived");
+  const third = await importPensieve(deps(store, bad), planImport([{ root: r, project: "alpha" }], new Map()));
+  assert.equal(third.relate.errors, 0, "判过的不再判");
+  store.close();
+});

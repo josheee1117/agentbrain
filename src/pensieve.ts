@@ -226,7 +226,7 @@ export interface ImportReport {
   unchanged: number;
   archivedSkip: number;
   skipped: Skipped[];
-  relate: { mergedExisting: number; mergedIntoExisting: number; refines: number; conflicts: string[]; unrelated: number; unsure: number; errors: number };
+  relate: { mergedExisting: number; mergedIntoExisting: number; refines: number; conflicts: string[]; unrelated: number; unsure: number; errors: number; errorDetails: string[] };
 }
 
 export interface ImportDeps {
@@ -240,7 +240,8 @@ export interface ImportDeps {
 }
 
 export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof planImport>): Promise<ImportReport> {
-  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0 } };
+  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0, errorDetails: [] } };
+  const pending: string[] = []; // 未变但还没做过关系判定的（上次判定出错或中断），本次补判
   for (const it of plan.items) {
     const pid = it.project === null ? null : deps.projectId(it.project);
     const props = deps.store.project().props;
@@ -251,6 +252,7 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
     }
     if (old && old.import_ref?.sha256 === it.doc.sha256) {
       report.unchanged++;
+      if (!old.related) pending.push(old.id);
       continue;
     }
     const body: RememberBody = {
@@ -266,7 +268,8 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
     const id = deps.store.remember(pid, null, false, body);
     (old ? report.corrected : report.created).push(id);
   }
-  if (deps.embedder && deps.chat && (report.created.length || report.corrected.length)) await relateImports(deps, [...report.created, ...report.corrected], report);
+  const toRelate = [...report.created, ...report.corrected, ...pending];
+  if (deps.embedder && deps.chat && toRelate.length) await relateImports(deps, toRelate, report);
   return report;
 }
 
@@ -274,8 +277,9 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
 async function relateImports(deps: ImportDeps, ids: string[], report: ImportReport): Promise<void> {
   try {
     await deps.store.syncVectors(deps.embedder!, deps.embedder!.model!);
-  } catch {
+  } catch (e) {
     report.relate.errors++;
+    report.relate.errorDetails.push(`向量: ${(e as Error).message}`.slice(0, 300));
     return;
   }
   const items: RelateItem[] = [];
@@ -292,8 +296,9 @@ async function relateImports(deps: ImportDeps, ids: string[], report: ImportRepo
     try {
       const r = await deps.chat!.chat(buildRelateMessages(batch), { json: true });
       verdicts = parseRelate(parseJsonLoose(r.message.content), batch);
-    } catch {
+    } catch (e) {
       report.relate.errors++;
+      if (report.relate.errorDetails.length < 5) report.relate.errorDetails.push(`判定: ${(e as Error).message}`.slice(0, 300));
       continue;
     }
     batch.forEach((b, k) => {
