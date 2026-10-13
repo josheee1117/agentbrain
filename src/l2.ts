@@ -55,7 +55,7 @@ export interface RememberBody {
   evidence?: EvidenceRef[];
   window_id?: string;
   relation?: { type: RelationType; target: string | null };
-  /** 邻居检查没做完整或模型拿不准（§9.4.4）。只有用户能解除（confirm 或 archive）。 */
+  /** 第 1 层没判定关系（§9.4.4 pending）。第 2 层 relate 判出确定关系即解除；判 unsure 后只有用户能解除（§21 2026-10-13）。 */
   unreconciled?: boolean;
 }
 
