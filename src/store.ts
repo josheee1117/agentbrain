@@ -386,6 +386,17 @@ export class Store {
     return { embedded, pending: this.pendingVectors().length };
   }
 
+  /** 所有与当前文本一致的已存向量（只读，不发网络请求）；供 ab view 画图和算近邻。 */
+  currentVectors(): Map<string, Float32Array> {
+    const props = this.project().props;
+    const out = new Map<string, Float32Array>();
+    for (const r of this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[]) {
+      const p = props.get(r.id);
+      if (p && r.text_hash === textHash(indexText(p))) out.set(r.id, fromBlob(r.vec));
+    }
+    return out;
+  }
+
   /** 用 index.db 里已存的向量找近邻，不发网络请求。范围限本条所在项目加全局，只看 active。本条没有当前向量时返回 null。 */
   neighbors(id: string): { prop: Proposition; similarity: number }[] | null {
     const props = this.project().props;
