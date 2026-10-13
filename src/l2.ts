@@ -217,7 +217,7 @@ export function fold(rows: EventRow[]): Projection {
     }
     if (r.kind === "confirm") {
       const b = JSON.parse(r.body) as ConfirmBody;
-      if (!target.confirmed) target.confirmed_by = b.by ?? "user";
+      if (!target.confirmed || (b.by ?? "user") === "user") target.confirmed_by = b.by ?? "user"; // 用户确认覆盖自动转正的来源
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
       continue;
@@ -264,10 +264,11 @@ export function fold(rows: EventRow[]): Projection {
     if (target && target.state === "active" && !target.pending_corrections.includes(p.id)) target.pending_corrections.push(p.id);
   }
   // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
+  // 纠正只有用户确认才生效（§8.4"待确认的纠正不走自动转正"）；被印证或代码核验转正的纠正仍只是待确认。
   for (const p of props.values()) {
     if (!p.supersedes || p.state !== "active") continue;
     const target = props.get(p.supersedes);
-    if (!p.confirmed) {
+    if (!p.confirmed || p.confirmed_by !== "user") {
       target?.pending_corrections.push(p.id);
       continue;
     }
