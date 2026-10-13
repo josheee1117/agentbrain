@@ -56,6 +56,14 @@ test("Codex：丢 environment_context 等宿主注入，function_call 压成一�
   ]);
 });
 
+test("Codex 子 agent 会话（guardian / thread_spawn）标为 subagent；普通会话不是", () => {
+  const msg = { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "[#3 user] 嵌套的另一份记录" }] } };
+  const g = cleanTranscript("codex", file("g.jsonl", [{ type: "session_meta", payload: { cwd: "/r", source: { subagent: { other: "guardian" } } } }, msg]));
+  const t = cleanTranscript("codex", file("t.jsonl", [{ type: "session_meta", payload: { cwd: "/r", source: { subagent: { thread_spawn: { depth: 1 } } } } }, msg]));
+  const v = cleanTranscript("codex", file("v.jsonl", [{ type: "session_meta", payload: { cwd: "/r", source: "vscode" } }, msg]));
+  assert.deepEqual([g.subagent, t.subagent, v.subagent], [true, true, false]);
+});
+
 test("Pi：沿当前分支（最后一条往回）读，自定义注入消息不读", () => {
   const p = file("p.jsonl", [
     { type: "session", id: "h", cwd: "/repo3" },

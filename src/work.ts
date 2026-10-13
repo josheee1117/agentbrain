@@ -11,7 +11,8 @@ import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./st
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
 import { addHits, sanitize } from "./sanitize.ts";
-import { cleanTranscript, type Turn } from "./transcript.ts";
+import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
+import { locateTranscript } from "./host.ts";
 import { buildMessages, KIND_FOR_BASIS, MAX_EVIDENCE, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
@@ -194,7 +195,7 @@ export function scan(deps: WorkDeps): number {
       if (!id || intake.knownSession(db, host, id)) continue;
       const head = headLines(f);
       const cwd = head.map((e) => e?.cwd ?? e?.payload?.cwd).find((c) => typeof c === "string") as string | undefined;
-      if (!cwd || head.some((e) => e?.isSidechain === true)) continue;
+      if (!cwd || head.some((e) => e?.isSidechain === true) || isCodexSubagent(head)) continue;
       let project: { name: string } | null = null;
       try {
         project = deps.resolveProject(cwd);
@@ -549,6 +550,15 @@ const isBacklog = (s: intake.SessionRow) => s.via === "scan" || s.via === "backf
 async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOptions, report: WorkReport, holder: string, backlog: Backlog): Promise<void> {
   const db = deps.store.workDb;
   const now = deps.now();
+  if (!s.ephemeral && s.project && !s.transcript) {
+    // hook 来时 transcript 还没落盘（Codex 常见）：按 session id 再找一次
+    const found = locateTranscript(s.host, s.session_id);
+    const ok = found ? allowedTranscript(s.host, found) : null;
+    if (ok) {
+      intake.setTranscript(db, s, ok);
+      s = { ...s, transcript: ok };
+    }
+  }
   if (s.ephemeral || !s.project || !s.transcript) {
     report.windows.skipped++;
     return;
@@ -567,6 +577,11 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   let stripped = 0;
   try {
     const cleaned = cleanTranscript(s.host, s.transcript);
+    if (cleaned.subagent) {
+      intake.markEphemeral(db, s);
+      report.windows.skipped++;
+      return;
+    }
     turns = cleaned.turns;
     stripped = cleaned.stripped;
   } catch {

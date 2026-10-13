@@ -1420,6 +1420,11 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- **2026-10-13（切片 3：Codex 子 agent 会话不抽取；hook 时未落盘的 transcript 事后补找）**：用户 2026-10-13 让排查 Codex 窗口证据编号越界。依据 Mac 真实数据（Codex 88 个窗口）：
+  1. **根因**。17 条"证据编号越界"全部来自 Codex guardian 审批会话（`session_meta.payload.source.subagent.other = "guardian"`）。这类会话的"user"消息是 Codex 塞给审批模型的另一份完整会话记录（单条 4 万字），里面带着自己的编号，模型照着内层编号引用，于是越界；同理带来角色不符和引文对不上。`thread_spawn` 子 agent 的"user"是父 agent，也不是用户原话。`src/transcript.ts` 的编号本身没有错。
+  2. **决定**。凡 `source.subagent` 存在的 Codex 会话都按 ephemeral 处理：`ab work` 读到就标 ephemeral、不调模型；扫描兜底不补登记；doctor 的"疑似漏登记"不计 ephemeral（之前 14 个里 12 个是 thread_spawn 子 agent，子 agent 本就不触发 hook）。与 Claude 的 `isSidechain` 同一思路。已经由这类会话产生的未确认条目不追删，等定期代码核验或 90 天过期。
+  3. **transcript 为 null**。hook 登记时 rollout 还没落盘的 Codex 会话，`ab work` 处理时按 session id 在 `~/.codex/sessions` 下再找一次 `rollout-*-<id>.jsonl`，找到就补上路径（仍过 `allowedTranscript`）；找不到照旧跳过。`~/.codex/memories*` 下的 Codex 内部会话没有 rollout 文件、也不在登记项目里，本就跳过，不另加规则。
+
 - **2026-10-12（切片 3 质量修正：证据、近重复、预算）**：用户 2026-10-12 授权"把切片 3 完整做完"，依据 2026-10-12 首次真实运行（Mac，qwen-plus，60 次调用，83 条候选：提议 17、丢弃 66——引文对不上 34、证据编号越界 17、角色不符 13、过长 2）。均在 LOCKED 规则之内：
   1. **证据逐条判定**。过不了校验的证据条目只丢那一条；剩下的证据仍满足 basis 的要求（user_directive / user_confirmed 要有用户原文，observed_failure 要有工具输出，rule 要有用户原文）就保留候选。留下的每条引文仍由代码逐字核对（§8.1 硬门不变），丢掉的引文不进 L1。丢弃计数拆成两层：证据级（anchor_outside / role_mismatch / quote_mismatch / quote_length / secret）与候选级（新增 no_evidence、basis_unsupported）。锚点解析放宽到 `#3`、`[#3 user]`、`#3 user` 三种写法，引文去掉首尾引号与省略号后再核对；核对本身不放宽。prompt 改为引文 ≤80 字、逐字照抄连续片段、给出锚点正反例。
   2. **近重复**。(a) 同一窗口内的候选两两比较正文向量，余弦 ≥0.80 且关系相同（同为新提议，或指向同一旧条目的同一种关系）视为同一件事，只留一条——关系不同不合并，免得纠正信号被新提议吞掉：优先 kind 与 basis 对得上的（user_directive→rule、user_confirmed→decision、observed_failure→pitfall），其次证据多的，证据取并集。(b) 与已有条目：原先只有"没给模型看过的"高相似近邻才判 unreconciled；实测模型看过近邻仍标 new（P13/P16 余弦 0.917 都进了库），改为不论是否给模型看过，模型标 new / unsure 而已有条目余弦 ≥0.80 时判 unreconciled（§9.4.4：关系未判定，不进 brief/recall），不由向量自动合并。(c) 门槛 0.80 用 17 条真实提议复核（候选正文向量 vs 已存 text+why 向量，即复查同口径）：同一件事的对 0.917、0.846/0.839、0.815、0.795；相关但不同的对 0.836/0.816（告警判定 vs 通知展示）、0.757、0.623；无关对中位数 0.391、p90 0.533。0.80 能分开大多数，0.795 那对漏判、0.836 那对会被判 unreconciled（可接受：只是不进 brief，等用户裁决）。维持 0.80，不改常量。

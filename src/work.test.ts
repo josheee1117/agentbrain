@@ -411,6 +411,58 @@ test("ephemeral、未登记目录、已 purge 的会话跳过，不调模型", a
   assert.equal(r.windows.skipped, 3);
 });
 
+test("Codex 子 agent 会话：不调模型、标 ephemeral、不算疑似漏登记；扫描也不补登记它", async () => {
+  const e = env();
+  const meta = (source: unknown) => ({ type: "session_meta", payload: { cwd: e.repo, timestamp: new Date().toISOString(), source } });
+  const msg = { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "以后 hook 命令都写 node 绝对路径" }] } };
+  const f = e.transcript("g1", [meta({ subagent: { other: "guardian" } }), msg]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: "g1", transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "scan" }, () => "alpha", new Date());
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.calls.length, 0);
+  assert.equal(r.windows.skipped, 1);
+  assert.equal(intake.sessions(e.store.workDb)[0].ephemeral, 1);
+  assert.equal(intake.stats(e.store.workDb, new Date()).sessions.scanned, 0);
+
+  const home = join(base, "subhome");
+  const id = "01a11967-19b1-7063-8631-c3dfad45ef88";
+  mkdirSync(join(home, ".codex/sessions/2026/10/08"), { recursive: true });
+  writeFileSync(join(home, `.codex/sessions/2026/10/08/rollout-2026-10-08T10-45-49-${id}.jsonl`), JSON.stringify(meta({ subagent: { thread_spawn: { depth: 1 } } })) + "\n");
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.equal(scan(e.deps(null)), 0);
+    assert.equal(intake.knownSession(e.store.workDb, "codex", id), false);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("hook 登记时 transcript 还没落盘：处理时按 session id 找到 rollout 并补上", async () => {
+  const e = env();
+  const home = join(base, "latehome");
+  const id = "01a132dc-4d5f-7d62-840d-69f94d09f7c7";
+  const dir = join(home, ".codex/sessions/2026/10/12");
+  mkdirSync(dir, { recursive: true });
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: null, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const f = join(dir, `rollout-2026-10-12T10-00-00-${id}.jsonl`);
+  writeFileSync(f, [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "以后 hook 命令都写 node 绝对路径" }] } },
+  ].map((l) => JSON.stringify(l)).join("\n") + "\n");
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    assert.equal(intake.sessions(e.store.workDb)[0].transcript, realpathSync(f));
+    assert.equal(props(e.store).length, 1);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
 test("单实例：租约被占时直接返回 busy；持有者进程已死则接管并计数", async () => {
   const e = env();
   e.store.workDb.prepare("INSERT INTO work_lease(name,holder,pid,expires_at) VALUES('work','x',?,?)").run(process.pid, new Date(Date.now() + 60_000).toISOString());
