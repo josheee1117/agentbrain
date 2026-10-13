@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
@@ -461,6 +461,26 @@ test("hook 登记时 transcript 还没落盘：处理时按 session id 找到 ro
   } finally {
     process.env.HOME = old;
   }
+});
+
+test("debugDir：每个窗口写一份脱敏后的轮次与模型原始回复；不设就不写", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，key sk-abcdefghijklmnopqrstuvwxyz0123456789")]);
+  e.register("s1", f, true);
+  const dir = join(base, "dbg");
+  const chat = fakeChat(() => json({ candidates: [RULE], note: "sk-abcdefghijklmnopqrstuvwxyz0123456789" }));
+  await runWork(e.deps(chat, { debugDir: dir }), { sweep: false, dryRun: false });
+  const files = readdirSync(dir);
+  assert.equal(files.length, 1);
+  const d = JSON.parse(readFileSync(join(dir, files[0]), "utf8"));
+  assert.equal(d.session, "claude:s1");
+  assert.equal(d.turns[0].n, "#1");
+  assert.match(d.raw, /以后 hook 命令都写 node 绝对路径/);
+  assert.doesNotMatch(JSON.stringify(d), /sk-abcdefghij/, "原始回复与轮次都脱敏");
+  const e2 = env();
+  e2.register("s1", e2.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);
+  await runWork(e2.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
+  assert.equal(readdirSync(dir).length, 1);
 });
 
 test("单实例：租约被占时直接返回 busy；持有者进程已死则接管并计数", async () => {
