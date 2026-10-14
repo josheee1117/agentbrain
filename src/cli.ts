@@ -26,7 +26,7 @@ import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
-import { loadReviewConfig, type CallStat } from "./review.ts";
+import { loadReviewConfig, QuotaExhausted, type CallStat } from "./review.ts";
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
@@ -999,7 +999,13 @@ async function cmdCurate(argv: string[]): Promise<void> {
     const apply = values.apply && full;
     const stats: CallStat[] = [];
     const inputs = cands.map((p) => candidateInput(store, p, props, names));
-    const results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats);
+    let results: Awaited<ReturnType<typeof runPanel>>;
+    try {
+      results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats);
+    } catch (e) {
+      if (e instanceof QuotaExhausted) die(`审稿团停下了，什么都没写：${e.message}`);
+      throw e;
+    }
     const actions = planAll(results, props);
     const run = `curate-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     const report: RunReport = {
@@ -1015,11 +1021,12 @@ async function cmdCurate(argv: string[]): Promise<void> {
     const path = saveReport(root, report);
     const count = (op: string) => actions.filter((a) => a.op === op).length;
     const routes = results.map((r) => r.decision.route);
+    const arb = routes.filter((r) => r === "arbiter" || r === "arbiter_wording").length;
     console.log(
       [
         `${apply ? "已执行" : "dry-run（没写库）"}：${cands.length} 条候选`,
         `  沉淀 ${count("promote")}，改写 ${count("rewrite")}，并入 ${count("merge")}，丢弃 ${count("discard")}，跳过 ${count("skip")}`,
-        `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${routes.filter((r) => r === "arbiter").length}，未决 ${routes.filter((r) => r === "undecided").length}`,
+        `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
         `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}`,
         missing.length ? `  审稿团缺人（只出报告，不写库）：${missing.join("；")}` : "",
         values.apply && !full ? "  --apply 被忽略：审稿团不满 3 家" : "",

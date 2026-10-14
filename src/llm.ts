@@ -54,10 +54,34 @@ export type WorkError =
 
 export class WorkFailure extends Error {
   code: WorkError;
-  constructor(code: WorkError, message: string) {
+  /** 429 时：建议等多久（毫秒），来自 Retry-After 头或错误正文里的重置时间。 */
+  retryAfterMs?: number;
+  constructor(code: WorkError, message: string, retryAfterMs?: number) {
     super(message);
     this.code = code;
+    if (typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs >= 0) this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** 从 Retry-After 头（秒数或 HTTP 日期）或正文（"reset at 2026-10-14 20:21:56 +0800"、"retry after 30s"）解析要等多久。 */
+export function parseRetryAfterMs(header: string | null, body: string | undefined, now = Date.now()): number | undefined {
+  if (header) {
+    const sec = Number(header);
+    if (Number.isFinite(sec) && sec >= 0) return Math.round(sec * 1000);
+    const at = Date.parse(header);
+    if (Number.isFinite(at)) return Math.max(0, at - now);
+  }
+  if (!body) return undefined;
+  const reset = /reset at (\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})\s*([+-]\d{2}):?(\d{2})/i.exec(body);
+  if (reset) {
+    const at = Date.parse(`${reset[1]}T${reset[2]}${reset[3]}:${reset[4]}`);
+    if (Number.isFinite(at)) return Math.max(0, at - now);
+  }
+  const m = /(?:retry[_ -]?after|try again in)[=:\s]+(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds?|m|min|minutes?|h|hours?)?/i.exec(body);
+  if (!m) return undefined;
+  const u = (m[2] ?? "s").toLowerCase();
+  const mult = u === "ms" ? 1 : u.startsWith("h") ? 3_600_000 : u.startsWith("m") ? 60_000 : 1000;
+  return Math.round(Number(m[1]) * mult);
 }
 
 export function loadChatConfig(home: string): ChatConfig | { error: string } {
@@ -104,7 +128,8 @@ export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetc
       usage?: { total_tokens?: number };
       error?: { message?: string };
     } | null;
-    if (res.status === 429) throw new WorkFailure("http_429", `模型接口限流 429${parsed?.error?.message ? `: ${parsed.error.message.slice(0, 200)}` : ""}`);
+    if (res.status === 429)
+      throw new WorkFailure("http_429", `模型接口限流 429${parsed?.error?.message ? `: ${parsed.error.message.slice(0, 200)}` : ""}`, parseRetryAfterMs(res.headers.get("retry-after"), parsed?.error?.message));
     if (!res.ok) throw new WorkFailure("http_error", `模型接口 HTTP ${res.status}${parsed?.error?.message ? `: ${parsed.error.message}` : ""}`);
     const message = parsed?.choices?.[0]?.message;
     if (!message || typeof message !== "object") throw new WorkFailure("invalid_output", "模型返回里没有 message");

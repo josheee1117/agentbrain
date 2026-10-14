@@ -8,6 +8,7 @@ import { retryPolicy, judgeBatch, normalize, planAction, renderCandidates, unani
 import { applyActions, connectPanel, planAll, runPanel, undoRun } from "./curate.ts";
 
 retryPolicy.backoffMs = [0, 0];
+retryPolicy.maxWaitMs = 1000;
 const src: RememberBody["source"] = { host: "pi", session_id: "s", transcript: null, anchor: null, summary: "x" };
 const cand = (id: string, over: Partial<CandidateInput> = {}): CandidateInput => ({ id, kind: "rule", scope: "global", project: null, text: `正文${id}`, context: null, worker: false, neighbors: [], ...over });
 const reply = (verdicts: object[]): Chat => async () => ({ message: { role: "assistant", content: JSON.stringify({ verdicts }) }, tokens: 10 });
@@ -95,9 +96,16 @@ test("审稿人调用失败：重试一次后算弃权，交仲裁", async () =>
   assert.equal(stats.filter((s) => !s.ok).length, 1);
 });
 
-test("近邻编号跨候选共享、提示里标出用户确认和子代理来源", () => {
-  const r = renderCandidates([cand("a", { neighbors: [{ id: "N", text: "邻", confirmed_by_user: true }], worker: true }), cand("b", { neighbors: [{ id: "N", text: "邻", confirmed_by_user: true }] })]);
-  assert.equal(r.neighborIds.size, 1);
+test("近邻按候选各自编号，merge 只能并入本条的近邻；提示里标出用户确认和子代理来源", async () => {
+  const { parseJudgements } = await import("./review.ts");
+  const batch = [cand("a", { neighbors: [{ id: "N", text: "邻", confirmed_by_user: true }], worker: true }), cand("b", { neighbors: [{ id: "M", text: "邻2", confirmed_by_user: false }, { id: "N", text: "邻", confirmed_by_user: true }] })];
+  const r = renderCandidates(batch);
+  assert.equal(r.neighborIds.get("c1:n1"), "N");
+  assert.equal(r.neighborIds.get("c2:n2"), "N");
+  const inv = new Map<string, string>();
+  const got = parseJudgements(JSON.stringify({ verdicts: [{ id: "c1", verdict: "merge", class: "B", scenario: "当x时", text: "t", into: "n2" }, { id: "c2", verdict: "merge", class: "B", scenario: "当x时", text: "t", into: "n1" }] }), r.ids, r.neighborIds, batch, inv);
+  assert.equal(inv.get("a"), "merge_bad_target", "c1 没有 n2");
+  assert.equal(got.get("b")?.into, "M");
   assert.match(r.prompt, /n1（用户确认）：邻/);
   assert.match(r.prompt, /派活提示/);
 });
@@ -195,16 +203,52 @@ test("429 退避重试后成功，不算失败；limit 限住并发", async () =
   assert.equal(peak, 1);
 });
 
-test("额度用完的 429 不退避重试；无效票记下原因", async () => {
+test("额度用完（要等的时间超过上限）：整次运行停下并报告恢复时间；普通 429 退避后成功", async () => {
+  const { QuotaExhausted } = await import("./review.ts");
   let n = 0;
   const dead: Chat = async () => {
     n++;
-    throw Object.assign(new Error("模型接口限流 429: You have exceeded the 5-hour usage quota"), { code: "http_429" });
+    throw Object.assign(new Error("模型接口限流 429: You have exceeded the 5-hour usage quota"), { code: "http_429", retryAfterMs: 3_600_000 });
   };
   const ok = reply([{ id: "c1", verdict: "keep", class: "A" }]);
-  const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: dead }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: reply([]) }, []);
-  assert.equal(n, 1);
-  assert.equal(r.votes[0].invalid, "call_failed");
-  assert.equal(r.votes[1].invalid, "no_scenario");
+  await assert.rejects(
+    judgeBatch([cand("a")], [{ name: "x", chat: dead }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: reply([]) }, []),
+    (e: any) => e instanceof QuotaExhausted && e.member === "x" && typeof e.resetAt === "string",
+  );
+  assert.equal(n, 1, "不原地空转");
+  let m = 0;
+  const noHint: Chat = async () => {
+    m++;
+    throw Object.assign(new Error("模型接口限流 429"), { code: "http_429" });
+  };
+  await assert.rejects(judgeBatch([cand("a")], [{ name: "x", chat: noHint }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: reply([]) }, []), QuotaExhausted);
+  assert.equal(m, 3, "退避表用完仍 429 才停");
+});
+
+test("无效票记下原因；三票都要留但写法不同 → 仲裁只定写法，判丢弃不执行", async () => {
+  const ok = reply([{ id: "c1", verdict: "keep", class: "A" }]);
+  const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: ok }, { name: "y", chat: ok }, { name: "z", chat: reply([{ id: "c1", verdict: "discard", class: "none" }]) }], { name: "y", chat: reply([]) }, []);
+  assert.equal(r.votes[0].invalid, "no_scenario");
   assert.equal(r.decision.route, "undecided");
+  const rw = (t: string) => reply([{ id: "c1", verdict: "rewrite", class: "A", scenario: "当汇报时", text: t }]);
+  let sys = "";
+  const arb = (content: object): Chat => async (m) => {
+    sys = m[0].content!;
+    return { message: { role: "assistant", content: JSON.stringify({ verdicts: [content] }) }, tokens: 1 };
+  };
+  const panel = [{ name: "x", chat: rw("a") }, { name: "y", chat: rw("b") }, { name: "z", chat: rw("c") }];
+  const [w] = await judgeBatch([cand("a")], panel, { name: "x", chat: arb({ id: "c1", verdict: "rewrite", class: "A", scenario: "当汇报时", text: "b" }) }, []);
+  assert.equal(w.decision.route, "arbiter_wording");
+  assert.match(sys, /不要再判 discard/);
+  const [d] = await judgeBatch([cand("a")], panel, { name: "x", chat: arb({ id: "c1", verdict: "discard", class: "none" }) }, []);
+  assert.equal(d.decision.route, "undecided");
+});
+
+test("parseRetryAfterMs：头里的秒数、正文里的重置时间、retry after", async () => {
+  const { parseRetryAfterMs } = await import("./llm.ts");
+  assert.equal(parseRetryAfterMs("5346", undefined), 5_346_000);
+  const now = Date.parse("2026-10-14T19:00:00+08:00");
+  assert.equal(parseRetryAfterMs(null, "It will reset at 2026-10-14 20:21:56 +0800 CST.", now), (60 + 21) * 60_000 + 56_000);
+  assert.equal(parseRetryAfterMs(null, "please retry after 30s"), 30_000);
+  assert.equal(parseRetryAfterMs(null, "nothing"), undefined);
 });

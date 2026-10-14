@@ -133,6 +133,8 @@ export function isScenario(s: unknown): s is string {
 
 const OUTPUT = `只输出 JSON：{"verdicts":[{"id":"c1","verdict":"keep|rewrite|merge|discard","class":"A|B|C|none","scenario":"当…时","text":"改写后的正文（rewrite/merge 必填）","into":"n1（merge 必填，填近邻编号）","guidance":false,"reason":"一句话理由"}]}`;
 
+const EVIDENCE_NOTE = `关于证据：引文是否逐字出自会话，程序在写入时已经核对过；会话片段"拿不到"只是没附上，不等于没有证据。不要以"片段里看不到用户原话/工具输出"为理由丢弃。子代理会话里的派活提示只意味着它不能当作"用户要求"，内容本身值不值得记照常按标准判断。`;
+
 export const JUDGE_SYSTEM = `你是记忆库的审稿人。下面是《好记忆的标准》全文，严格按它判断每条候选该不该进正式库。
 
 ${GOOD_MEMORY_STANDARD}
@@ -154,23 +156,21 @@ ${GOOD_MEMORY_STANDARD}
 - merge 只用于候选本身合格、只是和近邻重复的情况；候选本身不合格就 discard，不要因为有相似近邻而 merge。
 - class 为 none 时 verdict 必须是 discard。
 
+${EVIDENCE_NOTE}
+
 ${OUTPUT}`;
 
 export function renderCandidates(batch: CandidateInput[]): { prompt: string; ids: Map<string, string>; neighborIds: Map<string, string> } {
   const ids = new Map<string, string>();
+  /** 近邻编号按候选各自编（每条候选的近邻都从 n1 起），键为 `<候选编号>:<近邻编号>`：merge 只能并入本条自己的近邻。 */
   const neighborIds = new Map<string, string>();
-  const nbKey = new Map<string, string>();
   const parts: string[] = [];
   batch.forEach((c, i) => {
     const cid = `c${i + 1}`;
     ids.set(cid, c.id);
-    const nbs = c.neighbors.map((n) => {
-      let k = nbKey.get(n.id);
-      if (!k) {
-        k = `n${nbKey.size + 1}`;
-        nbKey.set(n.id, k);
-        neighborIds.set(k, n.id);
-      }
+    const nbs = c.neighbors.map((n, j) => {
+      const k = `n${j + 1}`;
+      neighborIds.set(`${cid}:${k}`, n.id);
       return `  ${k}${n.confirmed_by_user ? "（用户确认）" : ""}：${n.text}`;
     });
     parts.push(
@@ -196,10 +196,12 @@ export function parseJudgements(raw: string | null, ids: Map<string, string>, ne
   const list = Array.isArray(o?.verdicts) ? o!.verdicts : [];
   const byId = new Map(batch.map((c) => [c.id, c]));
   for (const v of list as any[]) {
-    const id = ids.get(String(v?.id));
+    const cid = String(v?.id);
+    const id = ids.get(cid);
     if (!id || out.has(id)) continue;
     const why: string[] = [];
-    const j = normalize(v, byId.get(id)!, neighborIds, why);
+    const scoped = new Map([...neighborIds].filter(([k]) => k.startsWith(`${cid}:`)).map(([k, x]) => [k.slice(cid.length + 1), x]));
+    const j = normalize(v, byId.get(id)!, scoped, why);
     if (j) out.set(id, j);
     else invalid?.set(id, why[0] ?? "invalid");
   }
@@ -236,8 +238,9 @@ export function normalize(v: any, c: CandidateInput, neighborIds: Map<string, st
 
 // ---------- 计票 ----------
 
+/** arbiter_wording：三票都同意留下、只是写法/去向不同，仲裁只定写法（不能改成丢弃）。arbiter：去留有分歧，仲裁定去留。 */
 export type Decision =
-  | { route: "unanimous" | "arbiter"; final: Judgement }
+  | { route: "unanimous" | "arbiter" | "arbiter_wording"; final: Judgement }
   | { route: "undecided"; final: null; why: string };
 
 /** 三票（或更多）全部有效且结论相同（改写/合并时正文也要相同）才直接执行；否则交仲裁。 */
@@ -254,17 +257,32 @@ export function unanimous(votes: (Judgement | null)[]): Judgement | null {
   return { ...a, guidance: (votes as Judgement[]).some((v) => v.guidance) };
 }
 
-export const ARBITER_SYSTEM = `你是记忆库的仲裁人。审稿团三位审稿人对同一条候选意见不一致（或都要改写但写法不同）。
+/** 三票全部有效且都主张留下（keep/rewrite/merge）。 */
+export function allAdmit(votes: (Judgement | null)[]): boolean {
+  return votes.length > 0 && votes.every((v) => v && v.verdict !== "discard");
+}
+
+export const ARBITER_SYSTEM = `你是记忆库的仲裁人。审稿团三位审稿人对同一条候选的去留意见不一致。
 按下面的《好记忆的标准》，参考三位的结论和理由，给出最终结论；可以采纳其中一位，也可以自己写更好的改写。
 
 ${GOOD_MEMORY_STANDARD}
 
+${EVIDENCE_NOTE}
+
 ${OUTPUT}
 （verdicts 里只放这一条，id 用 c1。）`;
 
+export const WORDING_SYSTEM = `你是记忆库的仲裁人。审稿团三位审稿人都同意这条候选应该留下，只是写法或去向（原样保留/改写/并入近邻）不同。
+去留已经定了，不要再判 discard。你只负责按下面的《好记忆的标准》定最终写法：在 keep、rewrite、merge 中选一个，可以采纳其中一位，也可以综合写一条更好的。
+
+${GOOD_MEMORY_STANDARD}
+
+${OUTPUT}
+（verdicts 里只放这一条，id 用 c1；verdict 只能是 keep、rewrite 或 merge。）`;
+
 export function renderArbiter(c: CandidateInput, votes: { name: string; j: Judgement | null }[]): { prompt: string; ids: Map<string, string>; neighborIds: Map<string, string> } {
   const r = renderCandidates([c]);
-  const back = new Map([...r.neighborIds].map(([k, v]) => [v, k]));
+  const back = new Map([...r.neighborIds].map(([k, v]) => [v, k.split(":")[1]]));
   const lines = votes.map(({ name, j }, i) => {
     if (!j) return `审稿人${i + 1}（${name}）：输出无效或缺失`;
     const into = j.into ? `　并入：${back.get(j.into) ?? j.into}` : "";
@@ -296,8 +314,23 @@ export interface Judge {
   chat: Chat;
 }
 
-/** 429 退避重试（默认 10s/30s/60s），其他错误重试一次。测试可把 backoff 设成 0。 */
-export const retryPolicy = { backoffMs: [10_000, 30_000, 60_000], otherRetries: 1 };
+/**
+ * 429：按 retry-after（没有就按 backoffMs）退避重试，不算失败。
+ * 要等的时间超过 maxWaitMs（套餐额度要几小时后才重置），或退避用完仍是 429，就抛 QuotaExhausted 让整次运行停下，
+ * 并报告什么时候恢复，不原地空转。其他错误重试一次后算这一票失败。测试可把时间都设成 0。
+ */
+export const retryPolicy = { backoffMs: [10_000, 30_000, 60_000, 120_000, 300_000], otherRetries: 1, maxWaitMs: 5 * 60_000 };
+
+export class QuotaExhausted extends Error {
+  member: string;
+  /** 预计恢复时间（ISO）；不知道为 null。 */
+  resetAt: string | null;
+  constructor(member: string, resetAt: string | null, detail: string) {
+    super(`${member} 额度用完${resetAt ? `，预计 ${resetAt} 恢复` : ""}：${detail}`);
+    this.member = member;
+    this.resetAt = resetAt;
+  }
+}
 
 async function timed(member: string, role: CallStat["role"], f: () => ReturnType<Chat>, stats: CallStat[]): Promise<string | null> {
   let other = 0;
@@ -309,16 +342,23 @@ async function timed(member: string, role: CallStat["role"], f: () => ReturnType
       stats.push({ member, role, ms: Date.now() - t0, tokens: r.tokens, ok: true });
       return r.message.content;
     } catch (e) {
-      const code = (e as { code?: string }).code;
-      // 额度用完（套餐 5 小时额度、账号冷却）退避也没用，直接算失败
-      const exhausted = /quota|usage.?limit|cooldown|exceeded/i.test((e as Error).message);
-      const again = exhausted ? false : code === "http_429" ? throttled < retryPolicy.backoffMs.length : other < retryPolicy.otherRetries;
-      if (!again) {
-        stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: (e as Error).message.slice(0, 200) });
+      const err = e as Error & { code?: string; retryAfterMs?: number };
+      if (err.code === "http_429") {
+        const wait = typeof err.retryAfterMs === "number" ? err.retryAfterMs : retryPolicy.backoffMs[throttled];
+        if (wait === undefined || wait > retryPolicy.maxWaitMs) {
+          stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: err.message.slice(0, 200) });
+          const resetAt = typeof err.retryAfterMs === "number" ? new Date(Date.now() + err.retryAfterMs).toISOString() : null;
+          throw new QuotaExhausted(member, resetAt, err.message.slice(0, 200));
+        }
+        throttled++;
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+      if (other >= retryPolicy.otherRetries) {
+        stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: err.message.slice(0, 200) });
         return null;
       }
-      if (code === "http_429") await new Promise((r) => setTimeout(r, retryPolicy.backoffMs[throttled++]));
-      else other++;
+      other++;
     }
   }
 }
@@ -339,11 +379,13 @@ export async function judgeBatch(batch: CandidateInput[], panel: Judge[], arbite
       });
       const u = unanimous(votes.map((v) => v.j));
       if (u) return { id: c.id, votes, decision: { route: "unanimous", final: u } };
+      const wording = allAdmit(votes.map((v) => v.j));
       const a = renderArbiter(c, votes);
-      const txt = await timed(arbiter.name, "arbiter", () => arbiter.chat([{ role: "system", content: ARBITER_SYSTEM }, { role: "user", content: a.prompt }], { json: true }), stats);
+      const sys = wording ? WORDING_SYSTEM : ARBITER_SYSTEM;
+      const txt = await timed(arbiter.name, "arbiter", () => arbiter.chat([{ role: "system", content: sys }, { role: "user", content: a.prompt }], { json: true }), stats);
       const fin = parseJudgements(txt, a.ids, a.neighborIds, [c]).get(c.id);
-      if (!fin) return { id: c.id, votes, decision: { route: "undecided", final: null, why: txt === null ? "仲裁调用失败" : "仲裁输出无效" } };
-      return { id: c.id, votes, decision: { route: "arbiter", final: fin } };
+      if (!fin || (wording && fin.verdict === "discard")) return { id: c.id, votes, decision: { route: "undecided", final: null, why: !fin ? "仲裁输出无效" : "三票都要留，仲裁却判丢弃：不执行" } };
+      return { id: c.id, votes, decision: { route: wording ? "arbiter_wording" : "arbiter", final: fin } };
     }),
   );
 }

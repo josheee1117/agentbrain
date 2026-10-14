@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { Store } from "../src/store.ts";
-import { loadReviewConfig, type CallStat } from "../src/review.ts";
+import { loadReviewConfig, QuotaExhausted, type CallStat } from "../src/review.ts";
 import { candidateInput, connectPanel, runPanel } from "../src/curate.ts";
 
 const [itemsPath, outPath, ...sets] = process.argv.slice(2);
@@ -27,7 +27,15 @@ const { panel, arbiter, missing } = connectPanel(cfg);
 if (missing.length || !arbiter) throw new Error(`审稿团缺人：${missing.join("；")}`);
 const stats: CallStat[] = [];
 const t0 = Date.now();
-const results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 3);
+let results: Awaited<ReturnType<typeof runPanel>>;
+try {
+  results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 2);
+} catch (e) {
+  if (!(e instanceof QuotaExhausted)) throw e;
+  writeFileSync(outPath, JSON.stringify({ aborted: e.message, resetAt: e.resetAt, stats }, null, 1));
+  console.log(`QUOTA_EXHAUSTED ${e.message}`);
+  process.exit(3);
+}
 const wall = Date.now() - t0;
 const admitOf = (v: string | undefined) => (v ? v !== "discard" : undefined);
 const rows = results.map((r, k) => ({
@@ -55,7 +63,11 @@ const split = (s: string | null) => {
     discard_useless: pct(useless.filter((r) => r.admit === false).length, useless.length),
     keep_useful: pct(useful.filter((r) => r.admit === true).length, useful.length),
     undecided: xs.filter((r) => r.admit === undefined).length,
-    arbiter_rate: pct(xs.filter((r) => r.route === "arbiter").length, xs.length),
+    arbiter_rate: pct(xs.filter((r) => r.route === "arbiter" || r.route === "arbiter_wording").length, xs.length),
+    arbiter_decides_fate: pct(xs.filter((r) => r.route === "arbiter").length, xs.length),
+    arbiter_wording_only: pct(xs.filter((r) => r.route === "arbiter_wording").length, xs.length),
+    unanimous: pct(xs.filter((r) => r.route === "unanimous").length, xs.length),
+    panel_admit_split: pct(xs.filter((r) => { const a = Object.values(r.votes).filter((v) => v).map((v) => v !== "discard"); return a.includes(true) && a.includes(false); }).length, xs.length),
     per_model: Object.fromEntries(
       panel.map((m) => {
         const v = xs.map((r) => ({ a: admitOf(r.votes[m.name] ?? undefined), g: r.gold }));
