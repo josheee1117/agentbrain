@@ -812,7 +812,7 @@ test("候选区（默认）：自动抽取写成候选，不进召回/搜索；�
 
 test("候选区不外泄：候选不进每轮召回、常驻偏好、brief、全文/向量检索；带 supersedes 的候选不给正式条目挂待确认纠正", async () => {
   const { recall, guidanceBlock } = await import("./recall.ts");
-  const { brief } = await import("./brief.ts");
+  const { active } = await import("./present.ts");
   const e = env();
   const old = e.store.remember(e.pid, "s0", false, { kind: "rule", text: "hook 命令 lockfile 旧规则", confirmed: true, source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" } });
   const cand = e.store.remember(null, "s1", false, { kind: "rule", text: "hook 命令 lockfile 候选规则", confirmed: false, candidate: true, guidance: true, supersedes: old, source: { host: "claude", session_id: "s1", transcript: null, anchor: null, summary: "x" } });
@@ -822,7 +822,7 @@ test("候选区不外泄：候选不进每轮召回、常驻偏好、brief、全
   const out = await recall(e.store, "hook 命令 lockfile", e.repo, () => null, [], [], () => ({ name: "alpha", path: e.repo }));
   assert.ok(!out.includes(cand.slice(0, 8)), out);
   assert.equal(guidanceBlock(props.values(), false).includes(cand.slice(0, 8)), false);
-  assert.ok(!brief(e.store, e.repo, "alpha", false).includes(cand.slice(0, 8)));
+  assert.ok(!active(e.store).some((p) => p.id === cand), "brief 读的 active() 不含候选");
   const { hits } = await e.store.searchHybrid("lockfile", { projects: [e.pid], includeGlobal: true, limit: 10 }, null);
   assert.ok(!hits.some((h) => h.id === cand));
 });
