@@ -97,7 +97,7 @@ export interface Judgement {
   reason: string;
 }
 
-const SCENARIO = /^当.{2,}时/s;
+const SCENARIO = /^当.+时/s;
 export function isScenario(s: unknown): s is string {
   return typeof s === "string" && SCENARIO.test(s.trim());
 }
