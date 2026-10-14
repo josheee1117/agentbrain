@@ -242,6 +242,7 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
 export function isWorkerTranscript(file: string | null | undefined, maxBytes = 16_384): boolean {
   if (!file) return false;
   let head: any[];
+  let raw = "";
   try {
     const fd = openSync(file, "r");
     const buf = Buffer.alloc(maxBytes);
@@ -251,7 +252,8 @@ export function isWorkerTranscript(file: string | null | undefined, maxBytes = 1
     } finally {
       closeSync(fd);
     }
-    head = buf.subarray(0, n).toString("utf8").split("\n").slice(0, 20).flatMap((l) => {
+    raw = buf.subarray(0, n).toString("utf8");
+    head = raw.split("\n").slice(0, 20).flatMap((l) => {
       try {
         return [JSON.parse(l)];
       } catch {
@@ -263,6 +265,10 @@ export function isWorkerTranscript(file: string | null | undefined, maxBytes = 1
   }
   if (head.some((e) => e?.isSidechain === true)) return true;
   const meta = head.find((e) => e?.type === "session_meta")?.payload;
-  if (!meta) return false;
+  if (!meta) {
+    // Codex 的 session_meta 一行常带几十 KB 的 base_instructions，读到的开头解析不了；originator/source 排在前面，按原文匹配
+    if (!/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw)) return false;
+    return /"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw);
+  }
   return !!meta.source?.subagent || meta.source === "exec" || meta.originator === "Claude Code" || meta.originator === "codex_exec";
 }

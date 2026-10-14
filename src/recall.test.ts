@@ -264,6 +264,9 @@ test("worker 会话（Claude 委派的 Codex、codex exec、子代理）仍按�
   assert.equal(isWorkerTranscript(meta({ source: "vscode", originator: "Codex Desktop" })), false);
   assert.equal(isWorkerTranscript(join(dir, "missing.jsonl")), false, "读不了按主会话");
   assert.equal(isWorkerTranscript(null), false);
+  const big = (payload: object) => { const f = join(dir, `b${Math.random()}.jsonl`); writeFileSync(f, JSON.stringify({ timestamp: "t", type: "session_meta", payload: { ...payload, base_instructions: "x".repeat(40_000) } }) + "\n"); return f; };
+  assert.equal(isWorkerTranscript(big({ id: "1", originator: "Claude Code", source: "vscode" })), true, "session_meta 超过读取上限也能认出");
+  assert.equal(isWorkerTranscript(big({ id: "1", originator: "Codex Desktop", source: "vscode" })), false);
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");
   s.remember(null, "s", false, { kind: "rule", text: "lockfile global plain", confirmed: true, source: src });
