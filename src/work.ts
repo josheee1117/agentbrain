@@ -40,7 +40,6 @@ const REGISTRY_MAX_CHARS = 3000;
 const CONFIRMED_MAX_CHARS = 3000;
 export const MAX_VERIFY_PER_RUN = 3;
 const VERIFY_RECHECK_MS = 24 * 3_600_000;
-export const PROPOSAL_EXPIRE_DAYS = 90;
 const SCAN_DAYS = 7;
 const SCAN_HEAD_BYTES = 64 * 1024;
 const CODE_VERIFIABLE = new Set(["pitfall", "note"]);
@@ -82,7 +81,6 @@ export interface WorkReport {
   backlogLeft: number;
   receipt: intake.Receipt;
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
-  expired: number;
   relate: Record<RelateOutcome | "corroborated" | "errors", number>;
   dry: { session: string; windows: number; chars: number }[];
 }
@@ -481,6 +479,7 @@ export function admit(
       evidence: c.evidence,
       window_id: windowId,
       relation: { type: c.relation.type, target: target ? target.id : null },
+      ...(c.valid_days ? { valid_days: c.valid_days } : {}),
     };
     if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
       body.unreconciled = true;
@@ -796,15 +795,6 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   }
 }
 
-/** 自动沉淀的提议 90 天没被确认，归档为 expired（§9.1 admission 终态）。 */
-function expirePass(deps: WorkDeps, report: WorkReport): void {
-  const cutoff = deps.now().getTime() - PROPOSAL_EXPIRE_DAYS * 86_400_000;
-  const old = [...deps.store.project().props.values()].filter((p) => p.origin === "extract" && !p.confirmed && p.state === "active" && Date.parse(p.ts) < cutoff);
-  if (!old.length) return;
-  deps.store.commit(old.map((p) => ({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: { reason: "expired" } })), () => {});
-  report.expired += old.length;
-}
-
 export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkReport> {
   const report: WorkReport = {
     busy: false,
@@ -813,7 +803,6 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     backlogLeft: 0,
     receipt: intake.emptyReceipt(),
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
-    expired: 0,
     relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
   };
@@ -837,7 +826,6 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     if (!opts.dryRun) await relatePass(deps, report, holder);
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);
-      expirePass(deps, report);
       intake.prune(db, deps.now());
     }
     if (!opts.dryRun) intake.setMeta(db, "last_run", deps.now().toISOString());

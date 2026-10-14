@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS work_lease(name TEXT PRIMARY KEY, holder TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS work_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL, tokens INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS verify_attempts(prop_id TEXT PRIMARY KEY, head TEXT NOT NULL, outcome TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS work_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS prop_usage(prop_id TEXT PRIMARY KEY, last_used TEXT NOT NULL, uses INTEGER NOT NULL);
 `;
 
 export interface PendingAppend {
@@ -186,6 +187,19 @@ export class Store {
   }
 
   /** work store（§19.2）与 L1 同库。只给 intake.ts 用。 */
+  /** 记一次"被注入"（recall / brief 输出了这条）。不进 L1：只是运维统计，用于到期复审。 */
+  markUsed(ids: readonly string[], now: Date): void {
+    if (!ids.length) return;
+    const st = this.db.prepare("INSERT INTO prop_usage(prop_id,last_used,uses) VALUES(?,?,1) ON CONFLICT(prop_id) DO UPDATE SET last_used=excluded.last_used, uses=uses+1");
+    const at = now.toISOString();
+    for (const id of ids) st.run(id, at);
+  }
+
+  usage(): Map<string, { last_used: string; uses: number }> {
+    const rows = this.db.prepare("SELECT prop_id,last_used,uses FROM prop_usage").all() as { prop_id: string; last_used: string; uses: number }[];
+    return new Map(rows.map((r) => [r.prop_id, { last_used: r.last_used, uses: r.uses }]));
+  }
+
   get workDb(): DatabaseSync {
     return this.db;
   }

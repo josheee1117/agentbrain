@@ -17,8 +17,8 @@ export function isConfirmedCorrection(p: Proposition): boolean {
   return p.confirmed && !!p.supersedes;
 }
 
-/** 命中时返回 <agentbrain-recall> 块；跳过或没有命中返回空串。 */
-export async function recall(store: Store, query: string, cwd: string, getEmbedder: () => Embedder | null): Promise<string> {
+/** 命中时返回 <agentbrain-recall> 块；跳过或没有命中返回空串。shown（可选）收集实际输出的条目 id。 */
+export async function recall(store: Store, query: string, cwd: string, getEmbedder: () => Embedder | null, shown: string[] = []): Promise<string> {
   const prompt = query.trim();
   if (prompt.length < 4 || prompt.startsWith("/")) return "";
   const here = resolveProject(cwd);
@@ -61,9 +61,11 @@ export async function recall(store: Store, query: string, cwd: string, getEmbedd
       if (room < 2) break;
       line = line.slice(0, room - 1) + "…";
       rows.push(line);
+      shown.push(p.id);
       break;
     }
     rows.push(line);
+    shown.push(p.id);
   }
   if (!rows.length) return "";
   return head + rows.join("\n") + tail;

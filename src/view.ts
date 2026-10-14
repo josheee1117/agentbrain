@@ -5,6 +5,7 @@
 import type { Store } from "./store.ts";
 import type { Proposition } from "./l2.ts";
 import { cosine } from "./embed.ts";
+import { reviewList, validDays } from "./expiry.ts";
 
 export type ViewStatus = "user" | "code" | "corroboration" | "unconfirmed" | "stale";
 
@@ -24,6 +25,10 @@ export interface ViewEntry {
   created: string;
   for_workers: boolean;
   expired: boolean;
+  /** 到期待复审（未确认、过期、期间没被注入）。 */
+  review_due: boolean;
+  valid_days: number;
+  last_used: string | null;
   unreconciled: boolean;
   evidence: { role: string; anchor: string; quote_sha256: string }[];
   code: { head: string; refs: string[]; stale: boolean } | null;
@@ -84,6 +89,8 @@ export function pca2(vecs: Float32Array[]): [number, number][] {
 export function buildViewData(store: Store, now: Date = new Date()): ViewData {
   const props = store.project().props;
   const names = new Map(store.listProjects().map((p) => [p.id, p.name]));
+  const usage = store.usage();
+  const due = new Set(reviewList(props.values(), usage, now).map((d) => d.prop.id));
   const vecs = store.currentVectors();
   const ids = [...props.keys()].filter((id) => vecs.has(id));
   const xy = new Map(pca2(ids.map((id) => vecs.get(id)!)).map((p, i) => [ids[i], p]));
@@ -135,6 +142,9 @@ export function buildViewData(store: Store, now: Date = new Date()): ViewData {
       created: p.ts,
       for_workers: p.for_workers,
       expired: p.expired,
+      review_due: due.has(p.id),
+      valid_days: validDays(p),
+      last_used: usage.get(p.id)?.last_used ?? null,
       unreconciled: p.unreconciled,
       evidence: p.evidence.map((e) => ({ role: e.role, anchor: e.anchor, quote_sha256: e.quote_sha256 })),
       code: code ? { head: code.head, refs: code.refs.map(refText), stale: !!p.stale } : null,
@@ -208,7 +218,7 @@ const short=id=>id.slice(0,8);
 const ref=id=>{const e=byId.get(id);return '<a data-go="'+id+'">['+short(id)+']</a> '+(e?esc(e.text.split('\\n')[0].slice(0,60)):'')};
 function card(e){return '<div class="card'+(e.state!=='active'?' inactive':'')+'" id="c-'+e.id+'" style="border-left-color:'+color(e.project)+'">'+
 '<div><span class="tag">'+esc(e.project)+'</span><span class="tag">'+KIND[e.kind]+'</span><span class="tag st-'+e.status+'">'+ST[e.status]+'</span>'+
-(e.state!=='active'?'<span class="tag">'+STATE[e.state]+'</span>':'')+(e.unreconciled?'<span class="tag">关系未判定</span>':'')+(e.expired?'<span class="tag">过期归档</span>':'')+
+(e.state!=='active'?'<span class="tag">'+STATE[e.state]+'</span>':'')+(e.unreconciled?'<span class="tag">关系未判定</span>':'')+(e.expired?'<span class="tag">到期归档</span>':'')+(e.review_due?'<span class="tag">到期待复审</span>':'')+
 '<span class="meta">['+short(e.id)+'] '+(e.origin==='extract'?'自动沉淀':e.origin==='import'?'导入':'手动')+' · '+esc(e.host||'未知宿主')+' · '+e.created.slice(0,16).replace('T',' ')+'</span></div>'+
 '<div style="white-space:pre-wrap;margin-top:4px">'+esc(e.text)+'</div>'+
 (e.why?'<div class="why">为什么：'+esc(e.why)+'</div>':'')+'<div class="meta">背景：'+esc(e.summary)+(e.trigger?' · 触发：'+esc(e.trigger):'')+'</div>'+

@@ -3,6 +3,7 @@
  * 运行：node --test src/work.test.ts
  */
 import { test } from "node:test";
+import { reviewList } from "./expiry.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
@@ -751,12 +752,12 @@ test("代码核验 not_verifiable 记在 work store，不写 L1；待确认的�
   assert.equal(e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='verify'").get()!.n, 0);
 });
 
-test("自动沉淀的提议 90 天未确认 → 归档为过期", async () => {
+test("到期不再自动归档：sweep 后未确认提议仍 active，只进到期复审清单（§21 2026-10-14）", async () => {
   const e = env();
   const id = unconfirmed(e, "很久以前的坑");
   const later = new Date(Date.now() + 91 * 86_400_000);
-  const r = await runWork(e.deps(verifierChat({ verdict: "not_verifiable" }), { now: () => later }), { sweep: true, dryRun: false });
-  assert.equal(r.expired, 1);
+  await runWork(e.deps(verifierChat({ verdict: "not_verifiable" }), { now: () => later }), { sweep: true, dryRun: false });
   const p = e.store.project().props.get(id)!;
-  assert.deepEqual([p.state, p.expired], ["archived", true]);
+  assert.deepEqual([p.state, p.expired], ["active", false]);
+  assert.deepEqual(reviewList(e.store.project().props.values(), e.store.usage(), later).map((d) => d.prop.id), [id]);
 });
