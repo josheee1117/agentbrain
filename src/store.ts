@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS work_lease(name TEXT PRIMARY KEY, holder TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS work_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL, tokens INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS verify_attempts(prop_id TEXT PRIMARY KEY, head TEXT NOT NULL, outcome TEXT NOT NULL, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS work_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS verify_queue(prop_id TEXT PRIMARY KEY, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS prop_usage(prop_id TEXT PRIMARY KEY, last_used TEXT NOT NULL, uses INTEGER NOT NULL);
 `;
 
@@ -195,6 +196,13 @@ export class Store {
     const st = this.db.prepare("INSERT INTO prop_usage(prop_id,last_used,uses) VALUES(?,?,1) ON CONFLICT(prop_id) DO UPDATE SET last_used=excluded.last_used, uses=uses+1");
     const at = now.toISOString();
     for (const id of ids) st.run(id, at);
+  }
+
+  /** 召回时引文核对失败的条目排队，下次 ab work 优先重新核验（verify_queue，运维表，不进 L1）。 */
+  queueReverify(ids: readonly string[], now: Date): void {
+    if (!ids.length) return;
+    const st = this.db.prepare("INSERT OR IGNORE INTO verify_queue(prop_id,at) VALUES(?,?)");
+    for (const id of ids) st.run(id, now.toISOString());
   }
 
   usage(): Map<string, { last_used: string; uses: number }> {

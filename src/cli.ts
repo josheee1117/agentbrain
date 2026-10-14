@@ -140,9 +140,17 @@ async function cmdRecall(argv: string[]): Promise<void> {
   const store = open();
   try {
     const used: string[] = [];
-    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used);
+    const stale: string[] = [];
+    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale);
     if (!block) return;
     markUsed(store, used);
+    if (stale.length) {
+      try {
+        store.queueReverify(stale, new Date());
+      } catch {
+        // 库忙或只读时跳过，下次召回会再排
+      }
+    }
     if (values.hook) {
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
