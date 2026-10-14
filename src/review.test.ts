@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import { Store } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
 import type { Chat } from "./llm.ts";
-import { judgeBatch, normalize, planAction, renderCandidates, unanimous, validateReviewConfig, type CandidateInput, type CallStat, type Judgement } from "./review.ts";
+import { retryPolicy, judgeBatch, normalize, planAction, renderCandidates, unanimous, validateReviewConfig, type CandidateInput, type CallStat, type Judgement } from "./review.ts";
 import { applyActions, connectPanel, planAll, runPanel, undoRun } from "./curate.ts";
 
+retryPolicy.backoffMs = [0, 0];
 const src: RememberBody["source"] = { host: "pi", session_id: "s", transcript: null, anchor: null, summary: "x" };
 const cand = (id: string, over: Partial<CandidateInput> = {}): CandidateInput => ({ id, kind: "rule", scope: "global", project: null, text: `正文${id}`, context: null, worker: false, neighbors: [], ...over });
 const reply = (verdicts: object[]): Chat => async () => ({ message: { role: "assistant", content: JSON.stringify({ verdicts }) }, tokens: 10 });
@@ -174,4 +175,22 @@ test("curate 事件：promote 后再 unpromote 回候选；用户确认的忽略
   assert.equal(s.project().props.get(c)!.state, "active");
   s.lifecycle("curate", c, null, { action: "unpromote", run: "r" });
   assert.equal(s.project().props.get(c)!.state, "candidate");
+});
+
+test("429 退避重试后成功，不算失败；limit 限住并发", async () => {
+  let n = 0;
+  const flaky: Chat = async () => {
+    if (n++ < 2) throw Object.assign(new Error("模型接口限流 429"), { code: "http_429" });
+    return { message: { role: "assistant", content: JSON.stringify({ verdicts: [{ id: "c1", verdict: "discard", class: "none" }] }) }, tokens: 1 };
+  };
+  const ok = reply([{ id: "c1", verdict: "discard", class: "none" }]);
+  const stats: CallStat[] = [];
+  const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: flaky }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: ok }, stats);
+  assert.equal(r.decision.route, "unanimous");
+  assert.equal(stats.filter((s) => !s.ok).length, 0);
+  const { limit } = await import("./review.ts");
+  const gate = limit(1);
+  let active = 0, peak = 0;
+  await Promise.all([1, 2, 3].map(() => gate(async () => { active++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 5)); active--; })));
+  assert.equal(peak, 1);
 });

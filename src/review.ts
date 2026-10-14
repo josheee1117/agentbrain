@@ -17,6 +17,10 @@ export interface PanelMember {
   /** 钥匙串 service 名；配置文件只记名字，key 不进文件。 */
   keyService: string;
   timeoutMs?: number;
+  /** 同时在途的请求数（默认 1：代理/套餐常按并发限流）。 */
+  concurrency?: number;
+  /** 并进请求体的额外字段。 */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ReviewConfig {
@@ -52,7 +56,16 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     }
     if (names.has(m.name)) return { error: `${path} 的 panel 成员重名: ${m.name}` };
     names.add(m.name);
-    panel.push({ name: m.name, baseUrl: m.baseUrl, model: m.model, keyService: m.keyService, timeoutMs: typeof m.timeoutMs === "number" ? m.timeoutMs : undefined });
+    if (m.extraBody !== undefined && (typeof m.extraBody !== "object" || m.extraBody === null || Array.isArray(m.extraBody))) return { error: `${path} 的 ${m.name}.extraBody 必须是对象` };
+    panel.push({
+      name: m.name,
+      baseUrl: m.baseUrl,
+      model: m.model,
+      keyService: m.keyService,
+      timeoutMs: typeof m.timeoutMs === "number" && m.timeoutMs > 0 ? m.timeoutMs : undefined,
+      concurrency: typeof m.concurrency === "number" && m.concurrency >= 1 ? Math.floor(m.concurrency) : undefined,
+      extraBody: m.extraBody,
+    });
   }
   if (typeof o.arbiter !== "string" || !names.has(o.arbiter)) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name` };
   const int = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
@@ -60,7 +73,23 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
 }
 
 export function memberChatConfig(m: PanelMember): ChatConfig {
-  return { baseUrl: m.baseUrl, model: m.model, keyService: m.keyService };
+  return { baseUrl: m.baseUrl, model: m.model, keyService: m.keyService, extraBody: m.extraBody };
+}
+
+/** 每个成员一个并发闸：同一家同时最多 n 个请求在途。 */
+export function limit(n: number): <T>(f: () => Promise<T>) => Promise<T> {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  return async <T>(f: () => Promise<T>) => {
+    if (active >= n) await new Promise<void>((r) => queue.push(r));
+    active++;
+    try {
+      return await f();
+    } finally {
+      active--;
+      queue.shift()?.();
+    }
+  };
 }
 
 // ---------- 输入 ----------
@@ -258,18 +287,29 @@ export interface Judge {
   chat: Chat;
 }
 
+/** 429 退避重试（默认 10s/30s/60s），其他错误重试一次。测试可把 backoff 设成 0。 */
+export const retryPolicy = { backoffMs: [10_000, 30_000, 60_000], otherRetries: 1 };
+
 async function timed(member: string, role: CallStat["role"], f: () => ReturnType<Chat>, stats: CallStat[]): Promise<string | null> {
-  const t0 = Date.now();
-  for (let attempt = 0; attempt < 2; attempt++) {
+  let other = 0;
+  let throttled = 0;
+  for (;;) {
+    const t0 = Date.now();
     try {
       const r = await f();
       stats.push({ member, role, ms: Date.now() - t0, tokens: r.tokens, ok: true });
       return r.message.content;
     } catch (e) {
-      if (attempt === 1) stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: (e as Error).message.slice(0, 200) });
+      const code = (e as { code?: string }).code;
+      const again = code === "http_429" ? throttled < retryPolicy.backoffMs.length : other < retryPolicy.otherRetries;
+      if (!again) {
+        stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: (e as Error).message.slice(0, 200) });
+        return null;
+      }
+      if (code === "http_429") await new Promise((r) => setTimeout(r, retryPolicy.backoffMs[throttled++]));
+      else other++;
     }
   }
-  return null;
 }
 
 /** 审稿团判一批：各成员并行、互不可见；再对不一致的逐条仲裁。 */

@@ -12,7 +12,7 @@ import { sanitize } from "./sanitize.ts";
 import type { Store } from "./store.ts";
 import { isWorkerTranscript } from "./transcript.ts";
 import type { Action, CallStat, CandidateInput, CurateResult, Judge, ReviewConfig } from "./review.ts";
-import { judgeBatch, memberChatConfig, planAction } from "./review.ts";
+import { judgeBatch, limit, memberChatConfig, planAction } from "./review.ts";
 
 export const CONTEXT_MAX_CHARS = 1500;
 export const NEIGHBORS = 5;
@@ -54,7 +54,9 @@ export function connectPanel(cfg: ReviewConfig, keys: Keys = { read: readKey }):
       missing.push(`${m.name}: ${k.error}`);
       continue;
     }
-    panel.push({ name: m.name, chat: chatClient(memberChatConfig(m), k, m.timeoutMs ?? 180_000) });
+    const chat = chatClient(memberChatConfig(m), k, m.timeoutMs ?? 300_000);
+    const gate = limit(m.concurrency ?? 1);
+    panel.push({ name: m.name, chat: (msgs, o) => gate(() => chat(msgs, o)) });
   }
   return { panel, arbiter: panel.find((j) => j.name === cfg.arbiter) ?? null, missing };
 }

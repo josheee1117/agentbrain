@@ -16,6 +16,8 @@ export interface ChatConfig {
   model: string;
   /** 读 key 用的钥匙串 service。 */
   keyService: string;
+  /** 并进请求体的额外字段（如 DashScope 的 enable_thinking:false）；来自配置，不写死。 */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ToolCall {
@@ -82,7 +84,7 @@ export type Chat = (messages: ChatMessage[], opts?: { tools?: ToolSpec[]; json?:
 export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetchImpl: typeof fetch = fetch): Chat {
   return async (messages, opts) => {
     const url = `${cfg.baseUrl.replace(/\/+$/, "")}/chat/completions`;
-    const body: Record<string, unknown> = { model: cfg.model, messages, temperature: 0 };
+    const body: Record<string, unknown> = { ...(cfg.extraBody ?? {}), model: cfg.model, messages, temperature: 0 };
     if (opts?.tools) body.tools = opts.tools;
     if (opts?.json) body.response_format = { type: "json_object" };
     let res: Response;
