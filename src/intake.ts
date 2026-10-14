@@ -245,6 +245,15 @@ export function recordVerify(db: DatabaseSync, propId: string, head: string, out
   db.prepare("INSERT OR REPLACE INTO verify_attempts(prop_id,head,outcome,at) VALUES(?,?,?,?)").run(propId, head, outcome, now.toISOString());
 }
 
+/** 召回时引文核对失败而排队的条目（见 Store.queueReverify）。 */
+export function queuedReverify(db: DatabaseSync): Set<string> {
+  return new Set((db.prepare("SELECT prop_id FROM verify_queue").all() as { prop_id: string }[]).map((r) => r.prop_id));
+}
+
+export function dequeueReverify(db: DatabaseSync, propId: string): void {
+  db.prepare("DELETE FROM verify_queue WHERE prop_id=?").run(propId);
+}
+
 /** §13.4：终态窗口与久未活动的会话坐标有界保留。 */
 export function prune(db: DatabaseSync, now: Date): void {
   const w = new Date(now.getTime() - WINDOW_RETENTION_DAYS * 86_400_000).toISOString();

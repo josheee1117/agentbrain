@@ -763,9 +763,17 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   if ("error" in deps.chat) return;
   const db = deps.store.workDb;
   const names = new Map(deps.store.listProjects().map((p) => [p.id, p.name]));
-  const todo = [...deps.store.project().props.values()]
-    .filter((p) => p.state === "active" && !p.confirmed && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
-    .sort((a, b) => a.seq - b.seq);
+  const queued = intake.queuedReverify(db);
+  const all = [...deps.store.project().props.values()];
+  // 召回时引文核对失败的条目（已按代码确认过）排在最前，重新核验
+  const requeued = all.filter((p) => queued.has(p.id) && p.state === "active" && p.project_id !== null && !!p.code_evidence && !p.stale);
+  for (const id of queued) if (!requeued.some((p) => p.id === id)) intake.dequeueReverify(db, id);
+  const todo = [
+    ...requeued.sort((a, b) => a.seq - b.seq),
+    ...all
+      .filter((p) => p.state === "active" && !p.confirmed && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
+      .sort((a, b) => a.seq - b.seq),
+  ];
   let done = 0;
   for (const p of todo) {
     if (done >= MAX_VERIFY_PER_RUN) break;
@@ -775,7 +783,13 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     const head = tools.head();
     if (!head) continue;
     const last = intake.lastVerify(db, p.id);
-    if (last && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
+    if (queued.has(p.id)) {
+      // 这个 HEAD 上已经有过确定结论，不重复花钱；上次是出错（限流/网络）的照样重试
+      if (last && last.head === head && !last.outcome.startsWith("error:")) {
+        intake.dequeueReverify(db, p.id);
+        continue;
+      }
+    } else if (last && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
     done++;
     let result;
     try {
@@ -787,6 +801,8 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } finally {
       intake.renewLease(db, holder, deps.now());
     }
+    // 核验有了结果才出队；出错时留在队里，下次 ab work 再试
+    intake.dequeueReverify(db, p.id);
     intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
     if (result.verdict === "verified" || result.verdict === "contradicted") {

@@ -130,3 +130,30 @@ test("shown 收集实际输出的条目 id（到期复审记最近注入用）",
   assert.ok(shown.length >= 2);
   for (const id of shown) assert.ok(out.includes(`[${id.slice(0, 8)}]`));
 });
+
+test("用前核对：代码引文还在照常输出；文件删了或片段没了标可能过时并收集 id", async () => {
+  const { citationsStale } = await import("./citecheck.ts");
+  const { rmSync } = await import("node:fs");
+  writeFileSync(join(alpha, "lock.ts"), "// header\nexport const LOCK = 'pnpm-lock.yaml';\n");
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  const id = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile citation pitfall", confirmed: false, source: src });
+  const refs = [{ path: "lock.ts", line_start: 2, line_end: 2, quote: "export const LOCK = 'pnpm-lock.yaml';" }];
+  s.commit([{ kind: "verify", project_id: pid, session_id: null, target_id: id, body: { outcome: "verified", head: "h", refs, model: "m" } }], () => {});
+  const stale: string[] = [];
+  let out = await recall(s, "lockfile", alpha, noEmbed, [], stale);
+  assert.match(out, /坑: lockfile citation pitfall/);
+  assert.deepEqual(stale, []);
+  writeFileSync(join(alpha, "lock.ts"), "// moved\n\n\nexport const LOCK = 'pnpm-lock.yaml';\n");
+  assert.equal(citationsStale(alpha, refs, performance.now() + 50), false, "行号漂移不算过时");
+  writeFileSync(join(alpha, "lock.ts"), "export const LOCK = 'bun.lockb';\n");
+  out = await recall(s, "lockfile", alpha, noEmbed, [], stale);
+  assert.match(out, /坑（可能过时）: lockfile citation pitfall/);
+  assert.deepEqual(stale, [id]);
+  rmSync(join(alpha, "lock.ts"));
+  assert.equal(citationsStale(alpha, refs, performance.now() + 50), true, "文件没了");
+  assert.equal(citationsStale(alpha, refs, performance.now() - 1), false, "超预算放行");
+  assert.equal(citationsStale(join(dir, "nope"), refs, performance.now() + 50), false, "仓库不在放行");
+  s.queueReverify([id, id], new Date());
+  assert.equal((s.workDb.prepare("SELECT count(*) n FROM verify_queue").get() as { n: number }).n, 1);
+});
