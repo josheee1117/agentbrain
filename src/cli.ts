@@ -21,8 +21,10 @@ import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
 import { guidanceBlock, recall } from "./recall.ts";
-import { workerQuoteAudit } from "./audit.ts";
-import { isWorkerTranscript } from "./transcript.ts";
+import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
+import { sha256 } from "./extract.ts";
+import { sanitize } from "./sanitize.ts";
+import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
@@ -542,7 +544,8 @@ function cmdAudit(argv: string[]): void {
   if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply]");
   const store = open();
   try {
-    const plan = workerQuoteAudit(store.project().props.values(), sessionTranscript(store), isWorkerTranscript);
+    const saidInMain = mainSessionQuotes(store);
+    const plan = workerQuoteAudit(store.project().props.values(), sessionTranscript(store), isWorkerTranscript, saidInMain);
     const names = namesOf(store);
     const line = (p: Proposition) => `  [${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${p.confirmed ? `（已确认:${p.confirmed_by}）` : "（未确认）"}: ${p.text.split("\n")[0]}`;
     console.log(`只靠 worker 派活提示当"用户原话"的条目：撤销 ${plan.demote.length} 条，需用户复核 ${plan.review.length} 条（用户确认过的不自动改）。`);
@@ -555,6 +558,46 @@ function cmdAudit(argv: string[]): void {
   } finally {
     store.close();
   }
+}
+
+/**
+ * 用户主会话里说过的话（所有登记会话里非 worker 会话的 user 轮），以及每个 worker 会话的 user 轮（派活提示）。
+ * 返回判定函数：一条记忆的用户原话哈希能在它的 worker 派活提示里找到对应片段、且这段原文主会话里也逐字出现过 → true。
+ * 只在审计时读 transcript；读不了的会话跳过。
+ */
+function mainSessionQuotes(store: Store): (p: Proposition) => boolean {
+  let built: { main: MainSaid; worker: Map<string, string[]> } | null = null;
+  const build = () => {
+    const main = new MainSaid();
+    const worker = new Map<string, string[]>();
+    const rows = store.workDb.prepare("SELECT host,session_id,transcript FROM capture_sessions WHERE transcript IS NOT NULL").all() as { host: Host; session_id: string; transcript: string }[];
+    for (const r of rows) {
+      let cleaned;
+      try {
+        cleaned = cleanTranscript(r.host, r.transcript);
+      } catch {
+        continue;
+      }
+      if (cleaned.subagent) continue;
+      const users = cleaned.turns.filter((t) => t.role === "user").map((t) => sanitize(t.text).text);
+      if (cleaned.worker || isWorkerTranscript(r.transcript)) worker.set(`${r.host}:${r.session_id}`, users);
+      else for (const u of users) main.add(u);
+    }
+    // 用户自己维护的全局指令文件也是用户的话：派活提示照抄其中的规则时不算 worker-only
+    for (const f of [join(homedir(), ".codex/AGENTS.md"), join(homedir(), ".claude/CLAUDE.md"), join(homedir(), ".pi/agent/AGENTS.md")]) {
+      try {
+        main.add(sanitize(readFileSync(f, "utf8")).text);
+      } catch {
+        // 没有这个文件
+      }
+    }
+    return { main, worker };
+  };
+  return (p) => {
+    built ??= build();
+    const texts = [p.source, ...p.extra_sources].flatMap((s) => built!.worker.get(`${s.host}:${s.session_id}`) ?? []);
+    return built.main.quotedIn(texts, userQuoteHashes(p), sha256);
+  };
 }
 
 /** capture_sessions 里登记的 transcript 路径。 */
