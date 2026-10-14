@@ -126,8 +126,9 @@ test("没写场景、场景只是抄正文、太短：no_scenario；旧输出的
 test("阶段性用法 phase、agent 自己查得到的 findable、正文是一次性叙事 narrative：整条丢", () => {
   assert.deepEqual(validate({ candidates: [{ ...rule, durability: "phase" }] }, win, [], "w").dropped, { phase: 1 });
   assert.deepEqual(validate({ candidates: [{ ...rule, findable: true }] }, win, [], "w").dropped, { findable: 1 });
-  for (const t of ["本次汇报直接写在回复正文里", "2026-10-12 起汇报写在回复正文里", "刚才那个汇报要写在回复里"])
+  for (const t of ["本次汇报直接写在回复正文里", "2026-10-12 起汇报写在回复正文里", "刚才那个汇报要写在回复里", "默认不加测试（本次即槽位测试）"])
     assert.deepEqual(validate({ candidates: [{ ...rule, text: t }] }, win, [], "w").dropped, { narrative: 1 }, t);
+  assert.deepEqual(validate({ candidates: [{ ...rule, text: "引入设计模式前要过准入：已有代码在用且本次是扩展它" }] }, win, [], "w").dropped, {}, "条件句里的本次不算叙事");
 });
 
 test("探索经验：存成 note，正文带探索前缀，不带 guidance", () => {
