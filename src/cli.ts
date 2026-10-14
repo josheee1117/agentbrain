@@ -21,7 +21,7 @@ import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
 import { recall } from "./recall.ts";
-import { reviewList } from "./expiry.ts";
+import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
@@ -502,19 +502,21 @@ function cmdArchive(argv: string[]): void {
 function cmdReview(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { archive: { type: "boolean", default: false }, all: { type: "boolean", default: false } },
+    options: { archive: { type: "boolean", default: false }, all: { type: "boolean", default: false }, limit: { type: "string", default: "20" } },
     strict: true,
     allowPositionals: true,
   });
   const store = open();
   try {
     const names = namesOf(store);
-    const due = reviewList(store.project().props.values(), store.usage(), new Date());
+    const due = reviewList(store.project().props.values(), store.usage(), new Date(), sourceClock());
     if (!values.archive) {
       if (!due.length) return console.log("没有到期待复审的条目。");
       console.log(`到期待复审 ${due.length} 条（未确认、过了预计有效期、期间没被注入过；已确认的不会出现在这里）：`);
-      for (const d of due)
+      const limit = Math.max(1, Number.parseInt(values.limit ?? "20", 10) || 20);
+      for (const d of due.slice(0, limit))
         console.log(`  [${short(d.prop.id)}] ${SCOPE_LABEL(d.prop, names)} ${KIND_LABEL[d.prop.kind]}${marks(d.prop)}: ${d.prop.text.split("\n")[0]}（有效 ${d.validDays} 天，超期 ${d.overdueDays} 天，${d.lastUsed ? `最近注入 ${d.lastUsed.slice(0, 10)}` : "从未被注入"}）`);
+      if (due.length > limit) console.log(`  …还有 ${due.length - limit} 条（按超期天数排序），用 --limit ${due.length} 看全部，或处理完这批再看。`);
       console.log("确认有用：ab confirm <id>；不要了：ab review --archive <id…> 或 --all（归档可用 ab archive --reactivate 撤销）。");
       return;
     }
@@ -828,7 +830,7 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab review [--archive <id 前缀…> | --archive --all]
+  ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正

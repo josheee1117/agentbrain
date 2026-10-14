@@ -13,6 +13,8 @@ export interface Turn {
   anchor: string;
   role: TurnRole;
   text: string;
+  /** 这一轮的时间（宿主记录的 ISO 时间戳）；没有就缺省。 */
+  ts?: string;
 }
 
 export interface Cleaned {
@@ -103,11 +105,12 @@ class Builder {
   turns: Turn[] = [];
   stripped = 0;
   abCalls = new Set<string>();
-  push(anchor: string, role: TurnRole, parts: string[]): void {
+  push(anchor: string, role: TurnRole, parts: string[], ts?: unknown): void {
     const joined = parts.filter(Boolean).join("\n");
     const s = stripInjected(joined);
     this.stripped += s.stripped;
-    if (s.text) this.turns.push({ anchor, role, text: s.text });
+    const at = typeof ts === "string" && Number.isFinite(Date.parse(ts)) ? new Date(ts).toISOString() : undefined;
+    if (s.text) this.turns.push({ anchor, role, text: s.text, ...(at ? { ts: at } : {}) });
   }
   call(id: unknown, name: string, input: unknown): string {
     const c = callLine(name, input);
@@ -141,7 +144,7 @@ function readClaude(lines: any[], b: Builder): void {
     if ((e.type !== "user" && e.type !== "assistant") || !e.uuid || e.isMeta || e.isSidechain) continue;
     const content = e.message?.content;
     if (typeof content === "string") {
-      b.push(e.uuid, e.type, [content]);
+      b.push(e.uuid, e.type, [content], e.timestamp);
       continue;
     }
     if (!Array.isArray(content)) continue;
@@ -156,7 +159,7 @@ function readClaude(lines: any[], b: Builder): void {
         parts.push(b.output(c.tool_use_id, blockText(c.content), c.is_error === true));
       }
     }
-    b.push(e.uuid, tool ? "tool" : e.type, parts);
+    b.push(e.uuid, tool ? "tool" : e.type, parts, e.timestamp);
   }
 }
 
@@ -170,12 +173,12 @@ function readCodex(lines: any[], b: Builder): void {
       const texts = (Array.isArray(p.content) ? p.content : []).map((c: any) => (typeof c?.text === "string" ? c.text : "")).filter(Boolean);
       const kept = p.role === "user" ? texts.filter((t: string) => !CODEX_INJECTED.some((m) => t.trimStart().startsWith(m))) : texts;
       b.stripped += texts.length - kept.length;
-      b.push(anchor, p.role, kept);
+      b.push(anchor, p.role, kept, e.timestamp);
     } else if (p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") {
-      b.push(anchor, "assistant", [b.call(p.call_id, String(p.name ?? "shell"), p.arguments ?? p.input ?? p.action)]);
+      b.push(anchor, "assistant", [b.call(p.call_id, String(p.name ?? "shell"), p.arguments ?? p.input ?? p.action)], e.timestamp);
     } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
       const out = typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? "");
-      b.push(anchor, "tool", [b.output(p.call_id, out, false)]);
+      b.push(anchor, "tool", [b.output(p.call_id, out, false)], e.timestamp);
     }
   });
 }
@@ -199,7 +202,7 @@ function readPi(lines: any[], b: Builder): void {
   for (const e of chain) {
     if (e.type !== "message" || !e.message) continue;
     const m = e.message;
-    if (m.role === "user") b.push(e.id, "user", [blockText(m.content)]);
+    if (m.role === "user") b.push(e.id, "user", [blockText(m.content)], e.timestamp);
     else if (m.role === "assistant") {
       const content = Array.isArray(m.content) ? m.content : [m.content];
       const parts = content.map((c: any) => {
@@ -208,9 +211,9 @@ function readPi(lines: any[], b: Builder): void {
         if (c?.type === "toolCall") return b.call(c.id, String(c.name ?? "tool"), c.arguments);
         return "";
       });
-      b.push(e.id, "assistant", parts);
+      b.push(e.id, "assistant", parts, e.timestamp);
     } else if (m.role === "toolResult") {
-      b.push(e.id, "tool", [b.output(m.toolCallId, blockText(m.content), m.isError === true)]);
+      b.push(e.id, "tool", [b.output(m.toolCallId, blockText(m.content), m.isError === true)], e.timestamp);
     }
   }
 }
