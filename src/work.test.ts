@@ -768,7 +768,7 @@ test("用前核对排队：已转正的条目代码变了 → 下次 ab work 优
   await runWork(e.deps(verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] })), { sweep: true, dryRun: false });
   assert.equal(e.store.project().props.get(id)!.confirmed_by, "code");
   writeFileSync(join(e.repo, "store.ts"), "export const VEC_MIN_SIM = 0.5;\n");
-  execFileSync("git", ["-C", e.repo, "commit", "-qam", "bump"]);
+  execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump"]);
   e.store.queueReverify([id], new Date());
   const queued = () => e.store.workDb.prepare("SELECT count(*) AS n FROM verify_queue").get()!.n;
   const boom = fakeChat(() => { throw new Error("429"); });
