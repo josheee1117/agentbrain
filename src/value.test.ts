@@ -80,8 +80,8 @@ test("worker 会话：引派活提示的证据以 worker_prompt 丢弃，规则�
   assert.deepEqual(v.dropped, { no_evidence: 1 });
   assert.deepEqual(v.candidates.map((c) => c.kind), ["pitfall"]);
   const msgs = buildMessages(workerWin, { name: "p", docs: "", registry: "", confirmed: "" }, []);
-  assert.match(msgs[1].content, /子代理（worker）会话/);
-  assert.doesNotMatch(buildMessages({ ...workerWin, worker: false }, { name: "p", docs: "", registry: "", confirmed: "" }, [])[1].content, /子代理（worker）会话/);
+  assert.match(String(msgs[1].content), /子代理（worker）会话/);
+  assert.doesNotMatch(buildMessages({ ...workerWin, worker: false }, { name: "p", docs: "", registry: "", confirmed: "" }, [])[1].content ?? "", /子代理（worker）会话/);
 });
 
 // ---------- A：价值标准 ----------
@@ -118,7 +118,7 @@ test("合格的偏好：场景存进 trigger，guidance 标记带上", () => {
 test("没写场景、场景只是抄正文、太短：no_scenario；旧输出的 trigger 仍当场景用", () => {
   const { scenario: _drop, ...noScenario } = rule;
   const cases = [noScenario, { ...rule, scenario: "汇报时" }, { ...rule, scenario: "当最终汇报直接写在回复正文里，文件只作补充时" }];
-  for (const c of cases) assert.deepEqual(validate({ candidates: [c] }, win, [], "w").dropped, { no_scenario: 1 }, JSON.stringify(c.scenario));
+  for (const c of cases) assert.deepEqual(validate({ candidates: [c] }, win, [], "w").dropped, { no_scenario: 1 }, JSON.stringify((c as { scenario?: string }).scenario));
   assert.equal(validate({ candidates: [{ ...noScenario, trigger: rule.scenario }] }, win, [], "w").candidates.length, 1);
   assert.equal(isScenario("当给 ai-data 写 e2e 测试时", "e2e 测试不能伪造数据"), true);
 });
