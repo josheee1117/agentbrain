@@ -1,0 +1,10 @@
+{
+  "panel": [
+    {"name": "sol", "baseUrl": "http://127.0.0.1:8317/v1", "model": "gpt-6.1-sol", "keyService": "codex-cpa-local-api-key", "concurrency": 2},
+    {"name": "ark", "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3", "model": "deepseek-v4-pro", "keyService": "agentbrain-extract", "concurrency": 2},
+    {"name": "qwen", "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen3.8-max-0902", "keyService": "agentbrain-embedding", "concurrency": 2, "extraBody": {"enable_thinking": false}}
+  ],
+  "arbiter": "sol",
+  "batchSize": 10,
+  "maxBatches": 3
+}

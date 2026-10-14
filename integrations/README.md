@@ -122,3 +122,15 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 ## 每轮召回装完后的验收（设计 §15.3）
 
 在三个宿主里各做一次：在已登记仓库里 `ab remember --confirmed --kind pitfall …` 记一个坑，开新会话，发一句和这个坑相关的话，确认模型收到了 `<agentbrain-recall>` 块。某个宿主做不到时记为该宿主的显式降级，不算通过。
+
+## v3 第 2 阶段：审稿团 `ab curate` 与上手向导 `ab setup`
+
+- `ab setup` 一步步问快模型、审稿团（建议 3 家不同厂商）与仲裁、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,panel,keys,hosts,test` 只重做其中几步。
+- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。每个成员可选 `timeoutMs`（默认 300000）、`concurrency`（默认 1，cpa 代理并发高了会 429）、`extraBody`（并进请求体，例如 DashScope 的 `{"enable_thinking": false}`：开着思考时一批 10 条要好几分钟）。
+- `ab curate` 默认 dry-run，只把每条候选的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在审稿团满 3 家都连得上时生效：
+  - 一致沉淀 → `curate` 事件把候选转正（A 类同时打 guidance 标记）；
+  - 改写 → 新条目（origin=curate，仍未确认），原候选归档并指向新条目；
+  - 并入 → 候选归档并指向目标，**不改目标正文**；目标是用户确认的，合并建议只进报告的复核清单；
+  - 丢弃 → 归档（reason=curate，带理由）。
+  - 用户确认过的条目一律跳过。`ab curate --undo <run>` 整次撤销。
+- 离线评测：`AB_HOME=<库副本> node scripts/curate-eval.ts <items.json> <out.json>`，只读。
