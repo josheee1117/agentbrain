@@ -331,7 +331,7 @@ async function relateImports(deps: ImportDeps, ids: string[], report: ImportRepo
       } else {
         appends.push({ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel });
         if (v.outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
-        else report.relate[v.outcome]++;
+        else if (v.outcome !== "duplicate") report.relate[v.outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
       }
       deps.store.commit(appends, () => {});
     });

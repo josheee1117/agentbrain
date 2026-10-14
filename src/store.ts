@@ -34,7 +34,7 @@ export interface SearchHit {
 
 export interface SearchOpts {
   /** 项目 id 列表，或 "all" 搜全部项目。 */
-  projects: string[] | "all";
+  projects: readonly string[] | "all";
   includeGlobal: boolean;
   kind?: PropKind;
   includeArchived?: boolean;

@@ -83,13 +83,13 @@ test("cosine：相同为 1，正交为 0，零向量为 0，维度不同抛错",
 test("loadEmbedConfig：缺文件、坏 JSON、缺字段返回 error，合法文件返回配置", () => {
   const d = mkdtempSync(join(tmpdir(), "ab-embed-"));
   try {
-    assert.match(loadEmbedConfig(d).error ?? "", /没有/);
+    assert.match((loadEmbedConfig(d) as { error?: string }).error ?? "", /没有/);
     writeFileSync(join(d, "embedding.json"), "{");
-    assert.match(loadEmbedConfig(d).error ?? "", /JSON/);
+    assert.match((loadEmbedConfig(d) as { error?: string }).error ?? "", /JSON/);
     writeFileSync(join(d, "embedding.json"), JSON.stringify({ baseUrl: "https://x" }));
-    assert.match(loadEmbedConfig(d).error ?? "", /model/);
+    assert.match((loadEmbedConfig(d) as { error?: string }).error ?? "", /model/);
     writeFileSync(join(d, "embedding.json"), JSON.stringify({ baseUrl: " https://x ", model: "" }));
-    assert.match(loadEmbedConfig(d).error ?? "", /model/);
+    assert.match((loadEmbedConfig(d) as { error?: string }).error ?? "", /model/);
     writeFileSync(join(d, "embedding.json"), JSON.stringify({ baseUrl: "https://x/v1", model: "m" }));
     assert.deepEqual(loadEmbedConfig(d), { baseUrl: "https://x/v1", model: "m" });
   } finally {
