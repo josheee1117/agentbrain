@@ -96,36 +96,111 @@ export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex"
 
 // ---------- 污染防护（§21 2026-10-14）：用户的话只认用户自己打的字；一次性授权不成规则 ----------
 
-/** 用户消息里不是用户自己写的部分：代码块、宿主/工具注入的标签块、引用行（贴进来的文件、网页、工具输出、助手原话）。 */
-const PASTED = [
-  /```[\s\S]*?(?:```|$)/g,
-  /~~~[\s\S]*?(?:~~~|$)/g,
-  /<([A-Za-z][\w:-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g,
-  /^[ \t]*>.*$/gm,
-];
+/**
+ * 用户消息里不是用户自己写的部分：代码块、宿主/工具注入的标签块、引用行（贴进来的文件、网页、工具输出、助手原话）。
+ * 例外：提问卡片的回答（answer）和斜杠命令参数（command-args）是用户自己打的字，保留。
+ */
+const OWN_TAGS = new Set(["command-args"]);
+const QUESTION_REPLY = /<send_user_message_question_reply>([\s\S]*?)<\/send_user_message_question_reply>/g;
+const CLOSED_FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+/** 没闭合的代码块只吃到下一个空行（或结尾），不吃掉后面用户自己写的段落。 */
+const OPEN_FENCE = /(?:```|~~~)[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*/g;
+const TAG_BLOCK = /<([A-Za-z][\w:-]*)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g;
+const QUOTE_LINE = /^[ \t]*>.*$/gm;
+
+/** 提问卡片回答里的 answer 字段（JSON 解析失败时按正则兜底）。 */
+function replyAnswers(inner: string): string {
+  try {
+    const list = JSON.parse(inner.trim()) as { answer?: unknown }[];
+    if (Array.isArray(list)) return list.map((x) => (typeof x?.answer === "string" ? x.answer : "")).join("\n");
+  } catch {
+    // 落到正则
+  }
+  return [...inner.matchAll(/"answer"\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"')).join("\n");
+}
+
+/** 去掉贴进来的部分；每块换成分隔符 "\u0000"，便于按段核对。 */
+function stripPasted(text: string): string {
+  return text
+    .replace(QUESTION_REPLY, (_m, inner: string) => `\u0000${replyAnswers(inner)}\u0000`)
+    .replace(CLOSED_FENCE, "\u0000")
+    .replace(OPEN_FENCE, "\u0000")
+    .replace(TAG_BLOCK, (_m, tag: string, inner: string) => (OWN_TAGS.has(tag) ? `\u0000${inner}\u0000` : "\u0000"))
+    .replace(QUOTE_LINE, "\u0000");
+}
+
+/** 用户本人写的各段（规范化后）。 */
+export function ownUserSegments(text: string): string[] {
+  return stripPasted(text).split("\u0000").map(norm).filter(Boolean);
+}
 
 /** 用户轮里用户本人写的文字：去掉贴进来的块后的正文。引用户的证据只能对这部分核对。 */
 export function ownUserText(text: string): string {
-  let out = text;
-  for (const re of PASTED) out = out.replace(re, " ");
-  return norm(out);
+  return ownUserSegments(text).join(" ");
+}
+
+/**
+ * 引文落在用户轮里时，返回其中用户本人写的部分：整段都是自己的就原样返回；
+ * 跨过引用行/贴进来的块时，取与某个自己写的段重合的开头或结尾部分，够长（≥ MIN_QUOTE_CHARS）才算；否则 null。
+ */
+export function ownPartOfQuote(turnText: string, quote: string): string | null {
+  const segs = ownUserSegments(turnText);
+  if (segs.some((s) => s.includes(quote))) return quote;
+  const full = norm(turnText);
+  const qi = full.indexOf(quote);
+  if (qi < 0) return null;
+  let best = "";
+  for (const s of segs) {
+    const si = full.indexOf(s);
+    if (si < 0) continue;
+    // 引文的后半段正好从这一段的开头起（前面是引用行/贴的内容）
+    if (si > qi && si < qi + quote.length) {
+      const tail = quote.slice(si - qi).trim();
+      if (tail.length > best.length && tail.length >= MIN_QUOTE_CHARS && s.startsWith(tail)) best = tail;
+    }
+    // 引文的前半段正好在这一段的结尾止（后面接贴的内容）
+    const end = si + s.length;
+    if (end > qi && end < qi + quote.length) {
+      const head = quote.slice(0, end - qi).trim();
+      if (head.length > best.length && head.length >= MIN_QUOTE_CHARS && s.endsWith(head)) best = head;
+    }
+  }
+  return best || null;
 }
 
 /** 面向以后的标记：有这些就不是一次性授权。 */
-const FUTURE = /以后|今后|往后|每次|每回|一律|总是|始终|默认|永远|都要|都用|都别|都不|不要再|别再|记住|规则|习惯|偏好|always|never|every ?time|from now on|by default|in (the )?future|going forward|remember/i;
-/** 一次性的执行授权：只是批准这一次的动作（push、合并、删除、发布……）。 */
-const ONE_OFF_ACTION = /(push|推送|推上去|推一下|合并|合了|merge|发布|部署|deploy|release|删(掉|除)|delete|提交|commit|ship|发出去|发吧|执行|跑吧|go ahead|do it|proceed|approved?|lgtm|批准|同意|可以了?|行了?|好的?|ok(ay)?|继续)/i;
-const ONE_OFF_MARK = /这次|这一次|这个|这条|这一条|这个 ?pr|本次|先这样|this (one|time|pr)|just this|for now|once/i;
-const MAX_ONE_OFF_CHARS = 30;
-/** 去掉动作词后允许剩下的虚词与标点；剩下别的字（如"你合并要推送啊"里的"要"）就可能是偏好，不算一次性授权。 */
-const FILLER = /[吧了吗呢啊呀嘛哈的就先直接现在也都这那个一下它你我帮把给请吧]|\b(please|now|it|this|that|the|then|yes|yeah|sure|and)\b|[\s，,。.!！~?？、]/gi;
+const FUTURE = /以后|今后|往后|每次|每回|一律|总是|始终|默认|永远|都要|都用|都别|都不|不要再|别再|记住|习惯|偏好|always|\bnever\b(?!\s*mind)|every ?time|from now on|by default|in (the )?future|going forward/i;
+/** 问句不是授权。 */
+const QUESTION = /[?？]|吗|是不是|有没有|能不能|可不可以|要不要|为什么|怎么/;
+/** "测试完成后""没问题的话就"这类前提，不改变"只批准这一次"的性质。先去掉再看。 */
+const CONDITION = /(?:你\s*)?(?:先\s*)?做个?(?:整体|全面)?验证|测试(?:完成|通过|完)(?:后|之后|以后)?|验证(?:完成|通过)(?:后|之后|以后)?|没问题(?:的话)?|确认无误(?:后)?/g;
+/** 带去向的动作："合并到 dev_jdk""发布到 dev""cherrypick 到 dev 分支"。 */
+const TARGETED = /(?:cherry-?pick|cheery-?pick|合并|合入|合到|推送|push|merge|发布|部署|deploy|release)\s*(?:代码|改动|分支)?\s*(?:到|至|进|to|into|onto)\s*[A-Za-z0-9_./-]+(?:\s*分支)?/gi;
+// 注意："按你说的方案做""按你的来"是认可助手的方案（user_confirmed 决定），不是一次性授权，不在这里拦。
+/** 执行类动作（明确的动词，子串匹配无歧义）。 */
+const ACTION = /cherry-?pick|cheery-?pick|提交|推送|推上去|push|合并|合入|merge|发布|部署|deploy|release|ship|commit|删除|删掉|删|修复|继续|开始|执行|试试看|试一下|跑|改|修|干|做/gi;
+/** 动作的宾语、连接词、语气词、称呼：去掉动作后允许剩下的部分。 */
+const FILLER = /代码|改动|更新|bug|这个|那个|一下|帮我|给我|那就|然后|并且|[并再和就先把它你我吧了啊呀嘛哈呗。，,.!！~、\s]|never ?mind|\b(?:please|now|it|this|that|the|then|and)\b/gi;
+/** 单独的认可词：只有整句（去掉虚词后）就是它们时才算，避免"这个方案可以""浪费token"误判。 */
+const BARE_APPROVAL = /^(?:可以|行|好的?|好了|ok(?:ay)?|lgtm|approved?|同意|批准|goahead|doit|proceed|yes|嗯|对)+$/i;
+/** 明确的"只这一次"标记。"这个/这条"不算（"这个方案可以"是对方案的认可，可能是决定）。 */
+const ONE_OFF_MARK = /这次|这一次|本次|先这样|this time|this one|just this|for now|\bonce\b/i;
+const MAX_ONE_OFF_CHARS = 40;
 
-/** 一句话是否只是一次性授权：短、含批准/执行动作或"这次"标记、没有任何面向以后的说法。 */
+/** 一句话是否只是一次性授权（只看用户原话，不看模型写的正文）。 */
 export function isOneOffAuthorization(quote: string): boolean {
-  const q = norm(quote);
-  if (!q || FUTURE.test(q)) return false;
-  if (q.length <= MAX_ONE_OFF_CHARS && ONE_OFF_ACTION.test(q) && !q.replace(new RegExp(ONE_OFF_ACTION.source, "gi"), "").replace(FILLER, "")) return true;
-  return ONE_OFF_MARK.test(q) && ONE_OFF_ACTION.test(q) && q.length <= MAX_ONE_OFF_CHARS * 2;
+  const q = norm(quote).replace(CONDITION, " ");
+  if (!q.trim() || FUTURE.test(q) || QUESTION.test(q)) return false;
+  if (q.length <= MAX_ONE_OFF_CHARS) {
+    const hasAction = new RegExp(ACTION.source, "i").test(q) || new RegExp(TARGETED.source, "i").test(q);
+    const rest = q.replace(TARGETED, "").replace(ACTION, "").replace(FILLER, "");
+    if (rest === "" ? hasAction : BARE_APPROVAL.test(rest)) return true;
+  }
+  if (q.length <= MAX_ONE_OFF_CHARS * 2 && ONE_OFF_MARK.test(q)) {
+    const rest = q.replace(new RegExp(ONE_OFF_MARK.source, "gi"), "").replace(TARGETED, "").replace(ACTION, "").replace(FILLER, "");
+    return rest === "" || BARE_APPROVAL.test(rest);
+  }
+  return false;
 }
 
 /** 只复述"用户要求"、不说背景的 why，视同没写。 */
@@ -290,19 +365,24 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
         evDrop("quote_mismatch");
         continue;
       }
-      if (turn.role === "user" && !ownUserText(turn.text).includes(quote)) {
-        evDrop("quote_not_own");
-        continue;
+      let kept = quote;
+      if (turn.role === "user") {
+        const own = ownPartOfQuote(turn.text, quote);
+        if (!own) {
+          evDrop("quote_not_own");
+          continue;
+        }
+        kept = own; // 跨过贴进来的部分时只留用户自己写的那段（哈希也按这段算）
       }
-      if (hasSecret(quote)) {
+      if (hasSecret(kept)) {
         evDrop("secret");
         continue;
       }
-      const h = sha256(quote);
+      const h = sha256(kept);
       if (seenEv.has(`${turn.anchor}|${h}`)) continue;
       seenEv.add(`${turn.anchor}|${h}`);
       evidence.push({ anchor: turn.anchor, role: turn.role, quote_sha256: h });
-      if (turn.role === "user") userQuotes.push(quote);
+      if (turn.role === "user") userQuotes.push(kept);
     }
     if (!evidence.length) {
       drop("no_evidence");
@@ -314,8 +394,8 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       drop("basis_unsupported");
       continue;
     }
-    // 一次性授权不成规则/决定：用户原话全是"push 吧"一类、正文也没说以后，整条丢
-    if ((c.kind === "rule" || c.kind === "decision") && userQuotes.length && userQuotes.every(isOneOffAuthorization) && !FUTURE.test(text)) {
+    // 一次性授权不成规则/决定：用户原话全是"push 吧"一类就整条丢。只看用户原话：正文是模型写的，不能靠它放行
+    if ((c.kind === "rule" || c.kind === "decision") && userQuotes.length && userQuotes.every(isOneOffAuthorization)) {
       drop("one_off");
       continue;
     }
