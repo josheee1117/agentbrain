@@ -21,6 +21,7 @@ import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
 import { recall } from "./recall.ts";
+import { isWorkerTranscript } from "./transcript.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
@@ -127,11 +128,13 @@ async function cmdRecall(argv: string[]): Promise<void> {
   });
   let query: string;
   let cwd: string;
+  let worker = false;
   if (values.hook) {
-    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown };
+    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown };
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
     cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
+    worker = isWorkerTranscript(typeof raw.transcript_path === "string" ? raw.transcript_path : null);
   } else {
     query = positionals.join(" ");
     cwd = process.cwd();
@@ -141,7 +144,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
   try {
     const used: string[] = [];
     const stale: string[] = [];
-    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale);
+    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
     if (!block) return;
     markUsed(store, used);
     if (stale.length) {

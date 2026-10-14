@@ -254,3 +254,37 @@ test("向量可用但某条还没向量（刚写入、未同步）：这条退�
   const out = await recall(s, "本地编译用JDK", alpha, get);
   assert.match(out, new RegExp(fresh.slice(0, 8)));
 });
+
+test("worker 会话（Claude 委派的 Codex、codex exec、子代理）仍按旧规矩：全局只看 for_workers，未确认只放有用户原话的规则/决定", async () => {
+  const { isWorkerTranscript } = await import("./transcript.ts");
+  const meta = (payload: object) => { const f = join(dir, `t${Math.random()}.jsonl`); writeFileSync(f, JSON.stringify({ type: "session_meta", payload }) + "\n"); return f; };
+  assert.equal(isWorkerTranscript(meta({ source: "vscode", originator: "Claude Code" })), true);
+  assert.equal(isWorkerTranscript(meta({ source: "exec", originator: "codex_exec" })), true);
+  assert.equal(isWorkerTranscript(meta({ source: { subagent: "thread_spawn" } })), true);
+  assert.equal(isWorkerTranscript(meta({ source: "vscode", originator: "Codex Desktop" })), false);
+  assert.equal(isWorkerTranscript(join(dir, "missing.jsonl")), false, "读不了按主会话");
+  assert.equal(isWorkerTranscript(null), false);
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  s.remember(null, "s", false, { kind: "rule", text: "lockfile global plain", confirmed: true, source: src });
+  s.remember(null, "s", false, { kind: "rule", text: "lockfile global for workers", confirmed: true, for_workers: true, source: src });
+  const guess = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile agent guess pitfall", confirmed: false, source: src });
+  const out = await recall(s, "lockfile", alpha, noEmbed, [], [], undefined, true);
+  assert.match(out, /global for workers/);
+  assert.doesNotMatch(out, /global plain/);
+  assert.ok(!out.includes(guess.slice(0, 8)), "worker 不放 agent 推断的未确认坑");
+  const main = await recall(s, "lockfile", alpha, noEmbed);
+  assert.match(main, /global plain/);
+});
+
+test("放宽后排除仍严：归档的、未确认纠正的、关系未判定的未确认条目不进主会话", async () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  const target = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile old fact", confirmed: true, source: src });
+  const corr = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile unconfirmed correction", confirmed: false, supersedes: target, source: src });
+  const unrec = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile undetermined relation", confirmed: false, unreconciled: true, source: src });
+  const arch = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile archived guess", confirmed: false, source: src });
+  s.lifecycle("archive", arch, null);
+  const out = await recall(s, "lockfile", alpha, noEmbed);
+  for (const [n, id] of Object.entries({ corr, unrec, arch })) assert.ok(!out.includes(`- [${id.slice(0, 8)}]`), n + "\n" + out);
+});
