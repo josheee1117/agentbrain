@@ -170,7 +170,7 @@ export async function recall(
 // ---------- 常驻偏好（§21 2026-10-14 价值审计 C） ----------
 
 /** 每轮常驻注入的偏好块上限（字符，含首尾标签）。放不下的整条不放。 */
-export const GUIDANCE_MAX_CHARS = 500;
+export const GUIDANCE_MAX_CHARS = 800;
 
 /**
  * 每轮常驻的"怎么干活"偏好：用户确认过的全局 guidance 条目（说人话、结论写在回复正文里……），不看相似度。

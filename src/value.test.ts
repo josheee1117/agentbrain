@@ -178,3 +178,31 @@ test("常驻偏好：只放用户确认的全局 guidance；有上限；子代�
   assert.ok(guidanceBlock(props(), false).length <= GUIDANCE_MAX_CHARS);
   assert.equal(guidanceBlock([], false), "");
 });
+
+test("audit worker-quotes：派活提示里转抄的是用户主会话的原话 → 不撤销；只在派活提示里出现的照常撤销", async () => {
+  const { MainSaid, userQuoteHashes } = await import("./audit.ts");
+  const { sha256 } = await import("./extract.ts");
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("p");
+  const relayed = s.remember(pid, "w1", false, auto({ text: "e2e 必须真实跑", evidence: [{ anchor: "a", role: "user", quote_sha256: sha256("e2e 测试必须真实跑通，不能 mock") }] }));
+  const workerOnly = s.remember(pid, "w1", false, auto({ text: "只在派活提示里", evidence: [{ anchor: "a", role: "user", quote_sha256: sha256("改完只汇报 diff 摘要") }] }));
+  const main = new MainSaid();
+  main.add("另外，e2e 测试必须真实跑通，不能 mock，之前被坑过");
+  const workerPrompt = ["任务：修 bug。约束：e2e 测试必须真实跑通，不能 mock。改完只汇报 diff 摘要。先跑 ab brief --worker"];
+  const saidInMain = (p: any) => main.quotedIn(workerPrompt, userQuoteHashes(p), sha256);
+  const plan = workerQuoteAudit(s.project().props.values(), () => null, () => true, saidInMain);
+  assert.deepEqual(plan.demote.map((p) => p.id), [workerOnly]);
+  assert.ok(!plan.demote.some((p) => p.id === relayed));
+  assert.equal(main.quotedIn(workerPrompt, new Set([sha256("改完只汇报 diff 摘要")]), sha256), false, "主会话没说过");
+});
+
+test("audit worker-quotes：关系判定为重复/细化一条用户亲自确认的条目 → 同一条规则，不撤销", () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("p");
+  const userRule = s.remember(pid, "m", false, { kind: "rule", text: "review 按严重程度分挡", confirmed: true, source: src("m") });
+  const relayed = s.remember(pid, "w1", false, auto({ text: "review 输出按阻断/重要/次要排列" }));
+  s.commit([{ kind: "relate", project_id: pid, session_id: null, target_id: relayed, body: { outcome: "refines", target: userRule, model: "m" } as never }], () => {});
+  const lone = s.remember(pid, "w1", false, auto({ text: "只在派活提示里的规则" }));
+  const plan = workerQuoteAudit(s.project().props.values(), () => null, () => true);
+  assert.deepEqual(plan.demote.map((p) => p.id), [lone]);
+});
