@@ -166,3 +166,43 @@ export async function recall(
   if (!rows.length) return "";
   return head + rows.join("\n") + tail;
 }
+
+// ---------- 常驻偏好（§21 2026-10-14 价值审计 C） ----------
+
+/** 每轮常驻注入的偏好块上限（字符，含首尾标签）。放不下的整条不放。 */
+export const GUIDANCE_MAX_CHARS = 500;
+
+/**
+ * 每轮常驻的"怎么干活"偏好：用户确认过的全局 guidance 条目（说人话、结论写在回复正文里……），不看相似度。
+ * 只放用户确认的（自动转正的不算）、没有争议的；子代理只看 for_workers 的。exclude 里的（本轮召回已给出的）不重复。
+ */
+export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exclude: ReadonlySet<string> = new Set(), shown: string[] = []): string {
+  const rows = [...props]
+    .filter(
+      (p) =>
+        p.state === "active" &&
+        p.project_id === null &&
+        p.guidance &&
+        p.confirmed &&
+        p.confirmed_by === "user" &&
+        !p.pending_corrections.length &&
+        !p.conflicts_with &&
+        (!worker || p.for_workers) &&
+        !exclude.has(p.id),
+    )
+    .sort((a, b) => b.seq - a.seq);
+  if (!rows.length) return "";
+  const head = "<agentbrain-prefs>\n用户的干活偏好（每轮常驻）：\n";
+  const tail = "\n</agentbrain-prefs>\n";
+  const lines: string[] = [];
+  let used = head.length + tail.length;
+  for (const p of rows) {
+    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}`;
+    const add = line.length + (lines.length ? 1 : 0);
+    if (used + add > GUIDANCE_MAX_CHARS) continue;
+    lines.push(line);
+    shown.push(p.id);
+    used += add;
+  }
+  return lines.length ? head + lines.join("\n") + tail : "";
+}

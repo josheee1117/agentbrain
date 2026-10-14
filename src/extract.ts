@@ -27,6 +27,8 @@ export interface ExtractWindow {
   turns: Turn[];
   /** 窗口前的几轮，只供理解，不能当证据。 */
   context: Turn[];
+  /** 被委派的 worker 会话：user 轮是父 agent 的派活提示，不算用户原话（§21 2026-10-14 价值审计 B）。 */
+  worker?: boolean;
 }
 
 export interface ProjectContext {
@@ -59,7 +61,7 @@ export interface Candidate {
 /** 候选级丢弃原因：整条候选不要。 */
 export type DropReason = "bad_shape" | "bad_kind" | "too_long" | "secret" | "echo" | "no_evidence" | "basis_unsupported" | "no_why" | "one_off";
 /** 证据级丢弃原因：只丢这一条证据，候选可能保留（§21 2026-10-12 质量修正）。 */
-export type EvidenceDropReason = "anchor_outside" | "role_mismatch" | "quote_mismatch" | "quote_length" | "secret" | "quote_not_own";
+export type EvidenceDropReason = "anchor_outside" | "role_mismatch" | "quote_mismatch" | "quote_length" | "secret" | "quote_not_own" | "worker_prompt";
 
 export interface Validated {
   candidates: Candidate[];
@@ -309,6 +311,9 @@ valid_days（可选）：你估计这条多少天内仍然有效（7 到 730 的
 {"candidates":[{"kind":"pitfall|decision|rule","scope":"project|global","text":"≤200 字，一句话可执行","trigger":"仅 pitfall","why":"背景：当时发生了什么、为什么这样定（decision/rule 必填）","basis":"…","evidence":[{"anchor":"#3","role":"user","quote":"逐字复制的原文片段"}],"relation":{"type":"new","target":null},"valid_days":180}]}
 最多 ${MAX_CANDIDATES_PER_WINDOW} 条。`;
 
+/** worker 会话附加说明：user 轮是父 agent 写的派活提示。 */
+const WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话：不能当用户原话证据，basis 不能填 user_directive / user_confirmed，也不要从派活提示里抽规则。只记工具输出证实的坑（observed_failure）。`;
+
 function renderTurns(turns: Turn[], prefix: string): string {
   return turns.map((t, i) => `[#${prefix}${i + 1} ${t.role}] ${t.text}`).join("\n\n");
 }
@@ -324,6 +329,7 @@ export function buildMessages(win: ExtractWindow, ctx: ProjectContext, neighbors
     ctx.registry ? `<project_profile>\n${ctx.registry}\n</project_profile>` : "",
     ctx.confirmed ? `<confirmed_memories>\n${ctx.confirmed}\n</confirmed_memories>` : "",
     `<existing_memories>\n${neighbors.length ? neighbors.map((p, i) => `${neighborLabel(i)} [${p.kind}${p.confirmed ? "" : "，未确认"}] ${sanitize(p.text).text}`).join("\n") : "（无）"}\n</existing_memories>`,
+    win.worker ? WORKER_NOTE : "",
     win.context.length ? `<context_only 仅供理解，不能当证据>\n${renderTurns(win.context, "c")}\n</context_only>` : "",
     `<transcript>\n${renderTurns(win.turns, "")}\n</transcript>`,
   ].filter(Boolean);
@@ -411,6 +417,10 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
         continue;
       }
       let kept = quote;
+      if (turn.role === "user" && win.worker) {
+        evDrop("worker_prompt"); // worker 会话的 user 轮是父 agent 的派活提示，不是用户原话
+        continue;
+      }
       if (turn.role === "user") {
         const own = ownPartOfQuote(turn.text, quote);
         if (!own) {
