@@ -270,3 +270,11 @@ test("没闭合的 ``` 只吃到下一个空行，后面的段落仍算用户的
   assert.equal(ownUserText("看下报错\n```\nTypeError: x\n  at y\n\n以后报错先贴完整栈"), "看下报错 以后报错先贴完整栈");
   assert.equal(ownUserText("前\n```js\nconst a = 1;\n\nconst b = 2;\n```\n后"), "前 后");
 });
+
+// ---------- 留出集（held-out 160 条，先标注后跑代码）暴露的问题 ----------
+test("留出集：'修复了'是已完成陈述不是授权；'确认''改回去吧''提交推送合并 dev''执行完成后提交并推送合并到 dev''把它关了'是一次性授权", () => {
+  for (const q of ["修复了", "改好了", "都改完了", "已经部署了"]) assert.equal(isOneOffAuthorization(q), false, q);
+  for (const q of ["确认", "改回去吧", "提交推送合并 dev", "执行完成后提交代码并推送然后合并到 dev 并推送", "把它关了吧"]) assert.equal(isOneOffAuthorization(q), true, q);
+  // 不因此误伤：带分支名的问题、陈述
+  for (const q of ["master 分支有没有？", "合并 dev 之后报错了", "确认一下这个字段的含义"]) assert.equal(isOneOffAuthorization(q), false, q);
+});
