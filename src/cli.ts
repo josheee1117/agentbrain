@@ -832,7 +832,7 @@ const USAGE = `用法:
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
-  ab recall [--hook] [文本…]            每轮召回：当前项目的坑/规则/决定 + 标了 for_workers 的全局记忆；另可带 1 条有用户原话的未确认规则/决定
+  ab recall [--hook] [文本…]            每轮召回：当前项目和全局的已确认坑/规则/决定；另可带 1 条无争议的未确认坑/规则/决定（标未确认）
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论

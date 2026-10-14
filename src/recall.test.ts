@@ -38,15 +38,24 @@ test("短提示词、斜杠命令直接跳过，且不去取 embedder", async ()
   assert.equal(called, 0);
 });
 
-test("项目内：已确认坑 + for_workers 全局；排除未确认推断、事实、未标 for_workers 的全局", async () => {
+test("项目内：已确认坑 + 全局（不论 for_workers）；事实不进；未确认最多 1 条且排最后", async () => {
   const out = await recall(seeded(), "lockfile", alpha, noEmbed);
   assert.match(out, /^<agentbrain-recall>\n/);
   assert.match(out, /坑: lockfile pitfall in alpha/);
-  assert.match(out, /规则: lockfile global for workers/);
-  assert.doesNotMatch(out, /unconfirmed guess|fact note|global plain/);
+  assert.doesNotMatch(out, /fact note/);
+  const rows = out.split("\n").filter((l) => l.startsWith("- ["));
+  assert.ok(rows.filter((l) => l.includes("（未确认）")).length <= 1);
 });
 
-test("未登记目录只召回 for_workers 全局；没命中返回空串", async () => {
+test("未标 for_workers 的全局条目进主会话每轮召回（§21 2026-10-14 放宽）", async () => {
+  const s = new Store(":memory:", ":memory:");
+  s.ensureProject("alpha");
+  s.remember(null, "s", false, { kind: "rule", text: "lockfile global plain", confirmed: true, source: src });
+  assert.match(await recall(s, "lockfile", alpha, noEmbed), /规则: lockfile global plain/);
+  assert.match(await recall(s, "lockfile", elsewhere, noEmbed), /global plain/);
+});
+
+test("未登记目录只召回全局，不召回项目条目；没命中返回空串", async () => {
   const out = await recall(seeded(), "lockfile", elsewhere, noEmbed);
   assert.doesNotMatch(out, /pitfall in alpha/);
   assert.match(out, /for workers/);
@@ -109,7 +118,7 @@ test("自己有待确认更正或冲突的纠正不占保底位（评估反例 a
   assert.match(out, /有待确认的纠正/);
 });
 
-test("纠正保底不破坏 D3：纠正 + 1 条已确认时，agent 自记的未确认规则仍不进", async () => {
+test("纠正保底 + 1 条已确认 + 1 条未确认：未确认排最后、标未确认，纠正不被挤掉", async () => {
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");
   const old = s.remember(pid, "s", false, { kind: "rule", text: "deploy on friday", confirmed: true, source: src });
@@ -119,8 +128,8 @@ test("纠正保底不破坏 D3：纠正 + 1 条已确认时，agent 自记的未
   const out = await recall(s, "deploy", alpha, await withVectors(s));
   const rows = out.split("\n").filter((l) => l.startsWith("- ["));
   assert.match(rows[0], /纠正/);
-  assert.ok(!out.includes(id.slice(0, 8)));
-  assert.equal(rows.length, 2);
+  assert.equal(rows.length, 3);
+  assert.match(rows[2], new RegExp(`${id.slice(0, 8)}\\] 规则（未确认）`));
 });
 
 test("shown 收集实际输出的条目 id（到期复审记最近注入用）", async () => {
@@ -178,13 +187,13 @@ test("短词不再退回不排序的 LIKE：闲聊/无关英文不注入任何�
   assert.equal(await recall(s, "结束了没，为什么都 1 个小时了", alpha, noEmbed), "");
 });
 
-test("资格过滤在截取前：大量不合格的高相似条目（归档、他项目、未标 for_workers 的全局）挤不掉合格的那条", async () => {
+test("资格过滤在截取前：大量不合格的高相似条目（他项目、事实类）挤不掉合格的那条", async () => {
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");
   const other = s.ensureProject("beta");
   for (let i = 0; i < 30; i++) {
     s.remember(other, "s", false, { kind: "pitfall", text: `lockfile HOT other ${i}`, confirmed: true, source: src });
-    s.remember(null, "s", false, { kind: "pitfall", text: `lockfile HOT global ${i}`, confirmed: true, source: src });
+    s.remember(pid, "s", false, { kind: "note", text: `lockfile HOT global ${i}`, confirmed: true, source: src });
   }
   const mine = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile WARM mine", confirmed: true, source: src });
   const out = await recall(s, "lockfile", alpha, await withVectors(s));
@@ -192,7 +201,7 @@ test("资格过滤在截取前：大量不合格的高相似条目（归档、�
   assert.doesNotMatch(out, /other|global/);
 });
 
-test("向量可用时，只靠字面沾边、向量不相关的已确认条目不进；最相关的用户原话未确认规则可占第 3 位但排在已确认之后", async () => {
+test("向量可用时，只靠字面沾边、向量不相关的已确认条目不进；未确认（含 agent 推断的坑）最多 1 条、排在已确认之后", async () => {
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");
   for (let i = 0; i < 3; i++) s.remember(pid, "s", false, { kind: "pitfall", text: `deploy unrelated note ${i}`, confirmed: true, source: src });
@@ -202,8 +211,23 @@ test("向量可用时，只靠字面沾边、向量不相关的已确认条目�
   const rows = (await recall(s, "deploy", alpha, await withVectors(s))).split("\n").filter((l) => l.startsWith("- ["));
   assert.equal(rows.length, 2, rows.join("\n"));
   assert.match(rows[0]!, new RegExp(conf.slice(0, 8)));
-  assert.match(rows[1]!, new RegExp(`${said.slice(0, 8)}\\] 规则（未确认）`));
-  assert.ok(!rows.join("\n").includes(agent.slice(0, 8)), "agent 推断的未确认坑仍不进（D3）");
+  assert.match(rows[1]!, /（未确认）/);
+  assert.equal(rows.filter((l) => l.includes("（未确认）")).length, 1, "未确认每轮最多 1 条");
+  assert.ok([said, agent].some((id) => rows[1]!.includes(id.slice(0, 8))));
+});
+
+test("agent 推断的未确认坑现在可进；有冲突、待确认纠正、关系未判定、与代码不符、本身是纠正的不进", async () => {
+  const { perTurnUnconfirmed } = await import("./recall.ts");
+  const ok = { confirmed: false, kind: "pitfall", basis: "agent_inferred", evidence: [{ role: "assistant" }], unreconciled: false, stale: null, conflicts_with: null, supersedes: undefined, pending_corrections: [] } as any;
+  assert.equal(perTurnUnconfirmed(ok), true);
+  assert.equal(perTurnUnconfirmed({ ...ok, kind: "decision" }), true);
+  for (const bad of [{ confirmed: true }, { kind: "note" }, { conflicts_with: "x" }, { pending_corrections: ["x"] }, { unreconciled: true }, { stale: { at: "t" } }, { supersedes: "x" }])
+    assert.equal(perTurnUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  const guess = s.remember(pid, "s", false, { kind: "pitfall", text: "lockfile agent guess pitfall", confirmed: false, source: src });
+  const out = await recall(s, "lockfile pitfall", alpha, noEmbed);
+  assert.match(out, new RegExp(`${guess.slice(0, 8)}\\] 坑（未确认）`));
 });
 
 test("向量调用失败时 fail-open 到字面通道（更严的门槛），不抛异常", async () => {
