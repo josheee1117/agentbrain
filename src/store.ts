@@ -30,6 +30,8 @@ export interface SearchHit {
   kind: PropKind;
   text: string;
   state: PropState;
+  /** 向量相似度（只有向量命中才有；纯全文检索命中没有）。 */
+  similarity?: number;
 }
 
 export interface SearchOpts {
@@ -471,7 +473,8 @@ export class Store {
           fused.set(hit.id, entry);
         });
       }
-      const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => p.hit);
+      const sim = new Map(dense.map((d) => [d.hit.id, d.similarity]));
+      const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => (sim.has(p.hit.id) ? { ...p.hit, similarity: sim.get(p.hit.id) } : p.hit));
       return { hits, degraded: reasons.length ? reasons.join("；") : null };
     } catch (e) {
       reasons.push(`向量检索不可用：${e instanceof Error ? e.message : String(e)}`);
