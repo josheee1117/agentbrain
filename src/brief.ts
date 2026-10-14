@@ -17,7 +17,7 @@ function counts(list: Proposition[]): string {
 }
 
 /** 换行（含连续空白行）压成 " / "，不丢后半段。放不下的整条不放，计入 hidden。 */
-function lines(list: Proposition[], kinds: PropKind[], budget: number): { text: string; hidden: number } {
+function lines(list: Proposition[], kinds: PropKind[], budget: number, used: string[]): { text: string; hidden: number } {
   const rows = list.filter((p) => kinds.includes(p.kind)).sort((a, b) => b.seq - a.seq);
   let text = "";
   let shown = 0;
@@ -25,6 +25,7 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number): { text: 
     const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${disputed(p)}\n`;
     if (text.length + line.length > budget) continue;
     text += line;
+    used.push(p.id);
     shown++;
   }
   return { text, hidden: rows.length - shown };
@@ -45,7 +46,8 @@ function contentBudgets(fixed: string[], titles: string[]): number[] {
   return titles.map(() => each);
 }
 
-export function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean): string {
+/** used（可选）收集实际输出的条目 id，供到期复审记"最近被注入"。 */
+export function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean, used: string[] = []): string {
   const all = active(store);
   const global = all.filter((p) => p.project_id === null);
   const pending: Proposition[] = [];
@@ -135,7 +137,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   let hidden = 0;
   const body: string[] = [];
   sections.forEach((s, i) => {
-    const got = lines(s.rows, s.kinds, budgets[i] ?? 0);
+    const got = lines(s.rows, s.kinds, budgets[i] ?? 0, used);
     hidden += got.hidden;
     if (got.text) body.push(s.title + "\n" + got.text.trimEnd());
   });

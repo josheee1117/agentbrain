@@ -16,11 +16,12 @@ import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 import { chatClient, loadChatConfig } from "./llm.ts";
-import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
+import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
 import { recall } from "./recall.ts";
+import { reviewList } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
@@ -138,8 +139,10 @@ async function cmdRecall(argv: string[]): Promise<void> {
   }
   const store = open();
   try {
-    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder);
+    const used: string[] = [];
+    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used);
     if (!block) return;
+    markUsed(store, used);
     if (values.hook) {
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
@@ -149,6 +152,15 @@ async function cmdRecall(argv: string[]): Promise<void> {
     }
   } finally {
     store.close();
+  }
+}
+
+/** 记"最近被注入"（到期复审用）。只是统计：失败不影响 brief/recall 的输出。 */
+function markUsed(store: Store, ids: string[]): void {
+  try {
+    store.markUsed(ids, new Date());
+  } catch {
+    // 库忙或只读时跳过
   }
 }
 
@@ -162,13 +174,15 @@ function cmdBrief(argv: string[]): void {
   const store = open();
   try {
     let out: string;
+    const used: string[] = [];
     try {
-      out = brief(store, process.cwd(), positionals[0], values.worker === true);
+      out = brief(store, process.cwd(), positionals[0], values.worker === true, used);
     } catch (e) {
       if (e instanceof BriefError) die(e.message);
       throw e;
     }
     process.stdout.write(out);
+    markUsed(store, used);
   } finally {
     store.close();
   }
@@ -351,7 +365,7 @@ function cmdGet(argv: string[]): void {
       `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
       p.confirmed && p.confirmed_by === "corroboration" ? "已由跨会话印证转正（两个以上会话里用户都这样说过）" : "",
-      p.expired ? `自动沉淀后 ${PROPOSAL_EXPIRE_DAYS} 天未确认，已归档` : "",
+      p.expired ? `到期未确认，已归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       p.trigger ? `触发: ${p.trigger}` : "",
       p.import_ref ? `导入自 Pensieve ${p.import_ref.id}: ${p.import_ref.path}${p.import_ref.also?.length ? `（另有 ${p.import_ref.also.length} 处相同副本）` : ""}` : "",
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
@@ -480,6 +494,42 @@ function cmdArchive(argv: string[]): void {
     const found = detectHost();
     store.lifecycle(values.reactivate ? "reactivate" : "archive", p.id, found.ok ? (found.detection?.session_id ?? null) : null);
     console.log(`${values.reactivate ? "已恢复" : "已归档"} [${short(p.id)}] ${p.text}`);
+  } finally {
+    store.close();
+  }
+}
+
+function cmdReview(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { archive: { type: "boolean", default: false }, all: { type: "boolean", default: false } },
+    strict: true,
+    allowPositionals: true,
+  });
+  const store = open();
+  try {
+    const names = namesOf(store);
+    const due = reviewList(store.project().props.values(), store.usage(), new Date());
+    if (!values.archive) {
+      if (!due.length) return console.log("没有到期待复审的条目。");
+      console.log(`到期待复审 ${due.length} 条（未确认、过了预计有效期、期间没被注入过；已确认的不会出现在这里）：`);
+      for (const d of due)
+        console.log(`  [${short(d.prop.id)}] ${SCOPE_LABEL(d.prop, names)} ${KIND_LABEL[d.prop.kind]}${marks(d.prop)}: ${d.prop.text.split("\n")[0]}（有效 ${d.validDays} 天，超期 ${d.overdueDays} 天，${d.lastUsed ? `最近注入 ${d.lastUsed.slice(0, 10)}` : "从未被注入"}）`);
+      console.log("确认有用：ab confirm <id>；不要了：ab review --archive <id…> 或 --all（归档可用 ab archive --reactivate 撤销）。");
+      return;
+    }
+    if (!values.all && !positionals.length) die("用法: ab review --archive <id 前缀…> | ab review --archive --all");
+    const picked = values.all ? due.map((d) => d.prop) : positionals.map((x) => findByPrefix(store, x));
+    const dueIds = new Set(due.map((d) => d.prop.id));
+    const notDue = picked.filter((p) => !dueIds.has(p.id));
+    if (notDue.length) die(`这些不在到期复审清单里（已确认、未到期或已不是 active），不归档: ${notDue.map((p) => short(p.id)).join(" ")}`);
+    const found = detectHost();
+    const session = found.ok ? (found.detection?.session_id ?? null) : null;
+    for (const p of picked) {
+      store.lifecycle("archive", p.id, session, { reason: "expired" });
+      console.log(`已归档（到期） [${short(p.id)}] ${p.text.split("\n")[0]}`);
+    }
+    if (picked.length) console.log("撤销：ab archive --reactivate <id>");
   } finally {
     store.close();
   }
@@ -662,7 +712,7 @@ async function cmdWork(argv: string[]): Promise<void> {
         `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
         Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
-        values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}；过期归档 ${r.expired}` : "",
+        values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}` : "",
       ].filter(Boolean).join("\n"),
     );
   } finally {
@@ -778,6 +828,8 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
+  ab review [--archive <id 前缀…> | --archive --all]
+                                    到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab capture --hook --host <claude|codex|pi>
@@ -789,7 +841,7 @@ const USAGE = `用法:
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
-                                    --sweep 另扫描漏登记的会话、按代码核验未确认的坑、归档过期提议（launchd 每 30 分钟）`;
+                                    --sweep 另扫描漏登记的会话、按代码核验未确认的坑（到期条目不再自动归档，见 ab review）（launchd 每 30 分钟）`;
 
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -818,6 +870,7 @@ async function main(): Promise<void> {
     if (cmd === "work") return await cmdWork(rest);
     if (cmd === "import") return await cmdImport(rest);
     if (cmd === "view") return cmdView(rest);
+    if (cmd === "review") return cmdReview(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;

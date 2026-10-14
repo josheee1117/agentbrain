@@ -509,6 +509,41 @@ test("recall：有用户原话依据的未确认规则/决定最多 1 条，排�
   assert.doesNotMatch(r.out, /推断的坑丙/);
 });
 
+test("ab review：列出到期未确认条目；--archive 只归档清单里的（可撤销），已确认/未到期的拒绝；brief 输出的条目记最近注入", async () => {
+  const own = join(dir, "review-store");
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: null, summary: "讨论" };
+  const pid = s.ensureProject("alpha");
+  const old = s.remember(pid, "s", false, { kind: "pitfall", text: "早就过时的坑", confirmed: false, source: src });
+  const keep = s.remember(pid, "s", false, { kind: "pitfall", text: "用户确认过的老坑", confirmed: true, source: src });
+  const fresh = s.remember(pid, "s", false, { kind: "pitfall", text: "刚记的坑", confirmed: false, source: src });
+  const long = new Date(Date.now() - 400 * 86_400_000).toISOString();
+  s.workDb.prepare("UPDATE events SET ts=? WHERE id IN (?,?)").run(long, old, keep);
+  s.close();
+  const list = ab(["review"], alpha, own);
+  assert.equal(list.code, 0, list.err);
+  assert.match(list.out, /到期待复审 1 条/);
+  assert.match(list.out, /早就过时的坑.*从未被注入/);
+  assert.doesNotMatch(list.out, /用户确认过的老坑|刚记的坑/);
+  const refuse = ab(["review", "--archive", keep.slice(0, 8), fresh.slice(0, 8)], alpha, own);
+  assert.equal(refuse.code, 1);
+  assert.match(refuse.err, /不在到期复审清单里/);
+  const doc = ab(["doctor"], alpha, own);
+  assert.match(doc.out, /到期待复审: 1/);
+  const arch = ab(["review", "--archive", "--all"], alpha, own);
+  assert.equal(arch.code, 0, arch.err);
+  assert.match(arch.out, /已归档（到期）.*早就过时的坑/);
+  assert.match(ab(["get", old.slice(0, 8)], alpha, own).out, /到期未确认，已归档/);
+  assert.equal(ab(["archive", "--reactivate", old.slice(0, 8)], alpha, own).code, 0);
+  ab(["brief"], alpha, own);
+  const s2 = new Store(join(own, "store.db"), join(own, "index.db"));
+  const usage = s2.usage();
+  s2.close();
+  assert.equal(usage.get(keep)?.uses, 1);
+  assert.equal(usage.has(old), false);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;

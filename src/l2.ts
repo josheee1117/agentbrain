@@ -68,6 +68,8 @@ export interface RememberBody {
   unreconciled?: boolean;
   /** 导入条目的出处（origin=import）。 */
   import_ref?: ImportRef;
+  /** 预计有效天数（抽取器可建议）；缺省按种类给默认值，见 expiry.ts。 */
+  valid_days?: number;
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -144,6 +146,8 @@ export interface Proposition {
   /** 代码与这条矛盾（未确认条目才会被核验）。 */
   stale: { head: string; refs: CodeRef[] } | null;
   expired: boolean;
+  /** 预计有效天数；null = 用种类默认值。 */
+  valid_days: number | null;
   /** 关系判定第 2 层的结论；没判过为 null。 */
   related: { outcome: RelateBody["outcome"]; target: string | null } | null;
   /** 判定为重复、已并入的条目。 */
@@ -216,6 +220,7 @@ export function fold(rows: EventRow[]): Projection {
         code_evidence: null,
         stale: null,
         expired: false,
+        valid_days: typeof b.valid_days === "number" ? b.valid_days : null,
         related: null,
         merged_into: null,
         conflicts_with: null,

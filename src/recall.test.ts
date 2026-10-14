@@ -89,3 +89,11 @@ test("纠正保底不破坏 D3：纠正 + 1 条已确认时，仍可带 1 条有
   assert.ok(!out.includes(id.slice(0, 8)));
   assert.equal(rows.length, 2);
 });
+
+test("shown 收集实际输出的条目 id（到期复审记最近注入用）", async () => {
+  const s = seeded();
+  const shown: string[] = [];
+  const out = await recall(s, "lockfile", alpha, noEmbed, shown);
+  assert.ok(shown.length >= 2);
+  for (const id of shown) assert.ok(out.includes(`[${id.slice(0, 8)}]`));
+});
