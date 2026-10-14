@@ -440,6 +440,23 @@ export class Store {
     }).sort((a, b) => b.similarity - a.similarity);
   }
 
+  /**
+   * 每轮召回用：查询向量与给定条目的余弦。只算 ids 里的条目（资格过滤在调用方先做完，见坑 43150a18）；
+   * 没有向量、或向量对应的正文已变（text_hash 不符）的条目不给值。
+   */
+  similarities(queryVec: Float32Array, ids: ReadonlySet<string>): Map<string, number> {
+    const props = this.project().props;
+    const out = new Map<string, number>();
+    const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
+    for (const row of rows) {
+      if (!ids.has(row.id)) continue;
+      const p = props.get(row.id);
+      if (!p || textHash(indexText(p)) !== row.text_hash) continue;
+      out.set(row.id, cosine(queryVec, fromBlob(row.vec)));
+    }
+    return out;
+  }
+
   async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; degraded: string | null }> {
     const limit = opts.limit ?? 8;
     const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });
