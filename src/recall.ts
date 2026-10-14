@@ -92,9 +92,10 @@ export async function recall(
     .map((p) => {
       const cov = qTokens.size ? lex.coverage(qTokens, p.id) : 0;
       const sim = sims?.get(p.id);
-      // 这条还没有（或正文变了、向量过期的）向量时，单条退回只看字面，不能因此永远召不回
+      // 这条还没有（或正文变了、向量过期的）向量时，单条退回只看字面，不能因此永远召不回；
+      // 过了字面门槛的按刚过向量门槛计分，免得被相对门槛（最高分 − REL_MARGIN）系统性挤掉
       const pass = sims && sim !== undefined ? sim >= T.MIN_SIM || (sim >= T.MIN_SIM_LEX && cov >= T.LEX_STRONG) : cov >= T.LEX_ONLY;
-      return { p, sim: sim ?? 0, score: (sims ? (sim ?? 0) : 0) + T.LEX_WEIGHT * cov, pass };
+      return { p, sim: sim ?? 0, score: (sims ? (sim ?? T.MIN_SIM) : 0) + T.LEX_WEIGHT * cov, pass };
     })
     .filter((x) => x.pass)
     .sort((a, b) => b.score - a.score);

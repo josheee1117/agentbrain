@@ -224,7 +224,7 @@ test("lexTokens：中文按二字切、英文去虚词、标识符拆开", async
 test("向量可用但某条还没向量（刚写入、未同步）：这条退回字面通道照样能召回，不被永久漏掉", async () => {
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");
-  s.remember(pid, "s", false, { kind: "pitfall", text: "deploy unrelated note", confirmed: true, source: src });
+  s.remember(pid, "s", false, { kind: "pitfall", text: "deploy WARM note", confirmed: true, source: src });
   const get = await withVectors(s);
   const fresh = s.remember(pid, "s", false, { kind: "pitfall", text: "本地编译 alpha 要用 JDK 11", confirmed: true, source: src });
   const out = await recall(s, "本地编译用JDK", alpha, get);
