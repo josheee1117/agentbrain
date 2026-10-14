@@ -64,6 +64,8 @@ export interface Receipt {
   corrections: number;
   unreconciled: number;
   corroborated: number;
+  /** 预检判定没有可抽取内容、未调模型的窗口数。 */
+  no_signal: number;
   tokens: number;
 }
 
@@ -272,11 +274,11 @@ export interface IntakeStats {
 }
 
 function emptyReceipt(): Receipt {
-  return { turns: 0, chars: 0, truncated: 0, stripped: 0, sanitizer: {}, candidates: 0, dropped: {}, evidence_dropped: {}, merged: 0, proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, tokens: 0 };
+  return { turns: 0, chars: 0, truncated: 0, stripped: 0, sanitizer: {}, candidates: 0, dropped: {}, evidence_dropped: {}, merged: 0, proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, no_signal: 0, tokens: 0 };
 }
 
 export function addReceipt(into: Receipt, r: Receipt): void {
-  for (const k of ["turns", "chars", "truncated", "stripped", "candidates", "merged", "proposals", "attached", "corrections", "unreconciled", "corroborated", "tokens"] as const) into[k] += r[k] ?? 0;
+  for (const k of ["turns", "chars", "truncated", "stripped", "candidates", "merged", "proposals", "attached", "corrections", "unreconciled", "corroborated", "no_signal", "tokens"] as const) into[k] += r[k] ?? 0;
   for (const [k, n] of Object.entries(r.evidence_dropped ?? {})) into.evidence_dropped[k] = (into.evidence_dropped[k] ?? 0) + n;
   for (const [k, n] of Object.entries(r.sanitizer ?? {})) into.sanitizer[k] = (into.sanitizer[k] ?? 0) + n;
   for (const [k, n] of Object.entries(r.dropped ?? {})) into.dropped[k] = (into.dropped[k] ?? 0) + n;

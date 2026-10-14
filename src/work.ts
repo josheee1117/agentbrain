@@ -14,7 +14,7 @@ import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
-import { buildMessages, KIND_FOR_BASIS, MAX_EVIDENCE, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
@@ -511,6 +511,10 @@ function settled(s: intake.SessionRow, now: Date): boolean {
 
 async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, projectId: string, receipt: intake.Receipt): Promise<Admission> {
   if ("error" in deps.chat) throw new WorkFailure(deps.chat.error, deps.chat.message);
+  if (!hasExtractableSignal(c.turns)) {
+    receipt.no_signal += 1;
+    return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
+  }
   const neighbors = await prefetchNeighbors(deps, c.turns, projectId);
   const win: ExtractWindow = { turns: c.turns, context: c.context };
   const messages = buildMessages(win, projectContext(deps, s.project, projectId), neighbors);

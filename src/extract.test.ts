@@ -270,3 +270,27 @@ test("没闭合的 ``` 只吃到下一个空行，后面的段落仍算用户的
   assert.equal(ownUserText("看下报错\n```\nTypeError: x\n  at y\n\n以后报错先贴完整栈"), "看下报错 以后报错先贴完整栈");
   assert.equal(ownUserText("前\n```js\nconst a = 1;\n\nconst b = 2;\n```\n后"), "前 后");
 });
+
+// ---------- 留出集（held-out 160 条，先标注后跑代码）暴露的问题 ----------
+test("留出集：'修复了'是已完成陈述不是授权；'确认''改回去吧''提交推送合并 dev''执行完成后提交并推送合并到 dev''把它关了'是一次性授权", () => {
+  for (const q of ["修复了", "改好了", "都改完了", "已经部署了"]) assert.equal(isOneOffAuthorization(q), false, q);
+  for (const q of ["确认", "改回去吧", "提交推送合并 dev", "执行完成后提交代码并推送然后合并到 dev 并推送", "把它关了吧"]) assert.equal(isOneOffAuthorization(q), true, q);
+  // 不因此误伤：带分支名的问题、陈述
+  for (const q of ["master 分支有没有？", "合并 dev 之后报错了", "确认一下这个字段的含义"]) assert.equal(isOneOffAuthorization(q), false, q);
+});
+
+import { hasExtractableSignal, substantiveUserText } from "./extract.ts";
+
+test("预检：只有应答/命令/省略的工具输出的窗口跳过，其余保守抽取", () => {
+  const u = (text: string) => ({ role: "user" as const, text, anchor: "a" });
+  const a = (text: string) => ({ role: "assistant" as const, text, anchor: "a" });
+  const tool = (text: string) => ({ role: "tool" as const, text, anchor: "a" });
+  for (const s of ["继续", "好的", "1", "ok", "谢谢", "可以，提交吧", "<command-name>/clear</command-name><command-args></command-args>"]) assert.equal(substantiveUserText(s), false, s);
+  for (const s of ["以后别用 npm，用 pnpm", "为什么测试挂了", "按你说的方案做"]) assert.equal(substantiveUserText(s), true, s);
+  assert.equal(hasExtractableSignal([u("你好"), a("你好。需要我做什么？")]), false, "寒暄无内容");
+  assert.equal(hasExtractableSignal([u("继续"), a("调用 Bash: ls"), tool("（工具输出 300 字，已省略）"), a("好了。")]), false);
+  assert.equal(hasExtractableSignal([u("继续"), a("调用 Bash: npm test"), tool("Error: cannot find module x")]), true, "报错输出可能是坑");
+  assert.equal(hasExtractableSignal([u("继续"), a("原因找到了：".padEnd(260, "说明"))]), true, "长正文可能有观察到的坑");
+  assert.equal(hasExtractableSignal([u(`<task>${"只读 review，不要改文件。".repeat(30)}</task>`)]), true, "长贴入提示保守抽取");
+  assert.equal(hasExtractableSignal([]), false);
+});
