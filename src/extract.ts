@@ -205,6 +205,33 @@ export function isOneOffAuthorization(quote: string): boolean {
   return false;
 }
 
+// ---------- 抽取前的便宜预检（§21 2026-10-14，参考 DeerFlow）：明显没有可记内容的窗口不调模型 ----------
+
+/** 工具输出被压成占位符的样子（非报错输出，见 transcript.ts compressOutput）。 */
+const TOOL_PLACEHOLDER = /^（工具输出 \d+ 字，已省略）$/;
+/** 纯应答：确认、继续、选项编号、致谢。 */
+const ACK = /^(?:继续|好的?|好了|嗯+|ok(?:ay)?|收到|谢谢|thanks?|thx|是的?|对|行|可以|[A-Za-z0-9]{1,2}|[?？.。!！]+)$/i;
+
+/** 用户这一轮有没有值得抽取的内容：去掉贴进来的部分后，不是空的、不是纯应答、不是一次性授权。 */
+export function substantiveUserText(text: string): boolean {
+  const own = ownUserText(text).replace(/[，,。.!！~\s]+$/g, "");
+  if (!own) return false;
+  if (ACK.test(own) || isOneOffAuthorization(own)) return false;
+  return true;
+}
+
+/**
+ * 保守预检：窗口里只要有一轮实质性的用户发言，或任何没被压成占位符的工具输出（报错，可能是坑），就要抽取。
+ * 只剩助手自言自语、被省略的工具输出、纯应答/一次性授权的窗口才跳过——这些按抽取规则本来也不会产出记忆。
+ */
+export function hasExtractableSignal(turns: readonly Turn[]): boolean {
+  for (const t of turns) {
+    if (t.role === "user" && substantiveUserText(t.text)) return true;
+    if (t.role === "tool" && !TOOL_PLACEHOLDER.test(t.text.trim())) return true;
+  }
+  return false;
+}
+
 /** 只复述"用户要求"、不说背景的 why，视同没写。 */
 const RESTATE = /^(这是|此为|因为)?(用户|他)(明确|亲口|直接|已)?(要求|指出|说|说明|强调|规定|指定|希望|认可|确认)(的|了|过)?[^，,；;。]{0,16}[。.]?$/;
 const RESTATE_NOUN = /^(这是)?(用户|他)的?[^，,；;。]{0,12}(要求|偏好|习惯|规定|指示)[。.]?$/;
