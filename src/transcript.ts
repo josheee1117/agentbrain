@@ -26,6 +26,37 @@ export interface Cleaned {
   cwd: string | null;
   /** Codex 子 agent 会话（guardian 审批、thread_spawn 等）：里面的 user 是另一个 agent，不是用户。 */
   subagent: boolean;
+  /**
+   * 被委派的 worker 会话（codex exec、Claude 子代理、pi worker 等）：user 轮是父 agent 写的派活提示，不是用户本人的话，
+   * 不能当用户原话证据（§21 2026-10-14 价值审计 B）。
+   */
+  worker: boolean;
+}
+
+/** worker 派活提示的约定标记：父 agent 让子代理先跑 `ab brief --worker`。 */
+const WORKER_PROMPT_MARK = /\bab brief --worker\b/;
+/** pi 会话名：pi-worker、pi-worker: xxx、worker。 */
+const PI_WORKER_NAME = /^(?:pi-)?worker\b/i;
+
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((c: any) => (typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "")).join("\n");
+}
+
+/** pi worker：会话名是 worker、带 parentSession、或第一条 user 消息是带 `ab brief --worker` 的派活提示。 */
+export function isPiWorker(lines: any[]): boolean {
+  for (const e of lines) {
+    if (e?.type === "session" && e.parentSession) return true;
+    if (e?.type === "session_info" && typeof e.name === "string" && PI_WORKER_NAME.test(e.name.trim())) return true;
+    if (e?.type === "message" && e.message?.role === "user") return WORKER_PROMPT_MARK.test(textOf(e.message.content));
+  }
+  return false;
+}
+
+/** Codex：session_meta 的 source 是子 agent 或 exec，或 originator 是 Claude Code / codex_exec。 */
+function isCodexWorkerMeta(meta: any): boolean {
+  return !!meta && (!!meta.source?.subagent || meta.source === "exec" || meta.originator === "Claude Code" || meta.originator === "codex_exec");
 }
 
 /** Codex rollout 的 session_meta.payload.source.subagent 存在即子 agent 会话（§21 2026-10-13）。 */
@@ -231,13 +262,18 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
     cwd = cwdOf(e);
     if (cwd) break;
   }
-  return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines) };
+  const worker =
+    host === "claude" ? lines.some((e) => e?.isSidechain === true)
+    : host === "codex" ? isCodexWorkerMeta(lines.find((e) => e?.type === "session_meta")?.payload)
+    : isPiWorker(lines);
+  return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines), worker };
 }
 
 /**
  * 每轮召回用：这个宿主会话是不是被委派的 worker（不是用户本人在对话）。只读文件开头一小段，读不了按主会话处理。
  * Codex：session_meta 里 source 是子 agent、或 source=exec（codex exec）、或 originator 是 Claude Code（Claude 委派给 Codex 的实现会话）。
  * Claude：开头条目带 isSidechain（子代理）。
+ * Pi：会话名是 worker、带 parentSession、或首条 user 消息是带 `ab brief --worker` 的派活提示（见 isPiWorker）。
  */
 export function isWorkerTranscript(file: string | null | undefined, maxBytes = 16_384): boolean {
   if (!file) return false;
@@ -264,11 +300,39 @@ export function isWorkerTranscript(file: string | null | undefined, maxBytes = 1
     return false;
   }
   if (head.some((e) => e?.isSidechain === true)) return true;
+  if (head[0]?.type === "session" && head[0]?.version !== undefined) return isPiWorkerFile(file, raw, head);
   const meta = head.find((e) => e?.type === "session_meta")?.payload;
   if (!meta) {
     // Codex 的 session_meta 一行常带几十 KB 的 base_instructions，读到的开头解析不了；originator/source 排在前面，按原文匹配
     if (!/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw)) return false;
     return /"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw);
   }
-  return !!meta.source?.subagent || meta.source === "exec" || meta.originator === "Claude Code" || meta.originator === "codex_exec";
+  return isCodexWorkerMeta(meta);
+}
+
+/** pi 的系统提示常有几十 KB，首条 user 消息不一定在开头 16KB 里：需要时再多读一段（仍有上限）。 */
+const PI_HEAD_MAX_BYTES = 262_144;
+function isPiWorkerFile(file: string, raw: string, head: any[]): boolean {
+  if (isPiWorker(head)) return true;
+  if (head.some((e) => e?.type === "message" && e.message?.role === "user")) return false;
+  let more = raw;
+  try {
+    const fd = openSync(file, "r");
+    const buf = Buffer.alloc(PI_HEAD_MAX_BYTES);
+    try {
+      more = buf.subarray(0, readSync(fd, buf, 0, PI_HEAD_MAX_BYTES, 0)).toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+  const lines = more.split("\n").flatMap((l) => {
+    try {
+      return [JSON.parse(l)];
+    } catch {
+      return [];
+    }
+  });
+  return isPiWorker(lines);
 }

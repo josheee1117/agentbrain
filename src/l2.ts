@@ -3,7 +3,7 @@
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
-export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate";
+export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag";
 export type Host = "claude" | "codex" | "pi";
 export type PropState = "active" | "archived" | "superseded";
 
@@ -72,6 +72,8 @@ export interface RememberBody {
   valid_days?: number;
   /** 证据原话的时间（抽取时取证据所在轮的时间）。重跑抽取不会改它，到期复审从这里起算。 */
   said_at?: string;
+  /** 指导 agent 怎么干活的偏好（汇报方式、语气、工作流）。已确认的全局偏好每轮常驻注入（§21 2026-10-14 价值审计 C）。 */
+  guidance?: boolean;
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -98,8 +100,25 @@ export interface ConfirmBody {
 
 /** archive 事件体。ab work 归档过期提议、或判定为重复后并入 into 时带 reason。用 reactivate 可撤销。 */
 export interface ArchiveBody {
-  reason?: "expired" | "duplicate";
+  reason?: "expired" | "duplicate" | "value-audit";
   into?: string;
+  /** 归档说明（value-audit 写不合格的原因）。 */
+  note?: string;
+}
+
+/**
+ * unconfirm 事件：撤销自动转正（跨会话印证、代码核验）。用于事后发现转正依据不成立，
+ * 例如"用户原话"其实是父 agent 写给 worker 的派活提示（§21 2026-10-14 价值审计 B）。
+ * 撤销后不再自动转正，也不再按"有用户原话"进每轮召回；只有用户 ab confirm 能再转正。用户确认过的条目不该写这个事件。
+ */
+export interface UnconfirmBody {
+  reason: "worker_prompt";
+  note?: string;
+}
+
+/** tag 事件：只改元数据标记，不改正文。 */
+export interface TagBody {
+  guidance?: boolean;
 }
 
 /** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
@@ -158,6 +177,10 @@ export interface Proposition {
   /** 关系判定判为与之冲突的条目；只标记，从不替代对方。 */
   conflicts_with: string | null;
   import_ref: ImportRef | null;
+  /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
+  guidance: boolean;
+  /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
+  demoted: UnconfirmBody["reason"] | null;
 }
 
 export interface Projection {
@@ -229,6 +252,8 @@ export function fold(rows: EventRow[]): Projection {
         merged_into: null,
         conflicts_with: null,
         import_ref: b.import_ref ?? null,
+        guidance: b.guidance === true,
+        demoted: null,
       });
       continue;
     }
@@ -242,6 +267,28 @@ export function fold(rows: EventRow[]): Projection {
       if (!target.confirmed || (b.by ?? "user") === "user") target.confirmed_by = b.by ?? "user"; // 用户确认覆盖自动转正的来源
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
+      if ((b.by ?? "user") === "user") target.demoted = null;
+      else if (target.demoted) {
+        // 撤销过的条目不再自动转正（旧版本写下的事件按顺序重放时也一样）
+        if (target.confirmed_by !== "user") {
+          target.confirmed = false;
+          target.confirmed_by = null;
+        }
+      }
+      continue;
+    }
+    if (r.kind === "unconfirm") {
+      const b = JSON.parse(r.body) as UnconfirmBody;
+      if (target.confirmed_by === "user") continue; // 用户确认过的不动：只能进复核清单
+      target.confirmed = false;
+      target.confirmed_by = null;
+      target.code_evidence = null;
+      target.demoted = b.reason;
+      continue;
+    }
+    if (r.kind === "tag") {
+      const b = JSON.parse(r.body) as TagBody;
+      if (typeof b.guidance === "boolean") target.guidance = b.guidance;
       continue;
     }
     if (r.kind === "evidence") {
@@ -257,8 +304,9 @@ export function fold(rows: EventRow[]): Projection {
     if (r.kind === "verify") {
       const b = JSON.parse(r.body) as VerifyBody;
       if (b.outcome === "verified") {
-        target.code_evidence = { head: b.head, refs: b.refs };
         target.stale = null;
+        if (target.demoted) continue; // 撤销过的条目代码核验也不再转正
+        target.code_evidence = { head: b.head, refs: b.refs };
         if (!target.confirmed) target.confirmed_by = "code";
         target.confirmed = true;
       } else {
@@ -318,6 +366,7 @@ export function recallableUnconfirmed(p: Proposition): boolean {
     !p.stale &&
     !p.conflicts_with &&
     !p.supersedes &&
-    !p.pending_corrections.length
+    !p.pending_corrections.length &&
+    !p.demoted
   );
 }

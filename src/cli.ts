@@ -20,8 +20,11 @@ import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM,
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
-import { recall } from "./recall.ts";
-import { isWorkerTranscript } from "./transcript.ts";
+import { guidanceBlock, recall } from "./recall.ts";
+import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
+import { sha256 } from "./extract.ts";
+import { sanitize } from "./sanitize.ts";
+import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
@@ -144,7 +147,17 @@ async function cmdRecall(argv: string[]): Promise<void> {
   try {
     const used: string[] = [];
     const stale: string[] = [];
-    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    const recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    // 常驻偏好不看相似度，每轮都给（斜杠命令除外）；本轮召回已给出的不重复
+    let prefs = "";
+    if (!query.trim().startsWith("/")) {
+      try {
+        prefs = guidanceBlock(store.project().props.values(), worker, new Set(used), used);
+      } catch {
+        prefs = ""; // fail-open
+      }
+    }
+    const block = prefs + recalled;
     if (!block) return;
     markUsed(store, used);
     if (stale.length) {
@@ -510,6 +523,93 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
+function cmdGuidance(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { off: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (!positionals[0]) die("用法: ab guidance <id 前缀> [--off]");
+  const store = open();
+  try {
+    const p = findByPrefix(store, positionals[0]);
+    const on = !values.off;
+    if (p.guidance === on) return console.log(`未变 [${short(p.id)}] ${p.text}`);
+    store.lifecycle("tag", p.id, null, { guidance: on });
+    const note = on && !(p.project_id === null && p.confirmed && p.confirmed_by === "user") ? "（只有用户确认过的全局条目才会每轮常驻）" : "";
+    console.log(`${on ? "已标为干活偏好" : "已取消干活偏好"} [${short(p.id)}] ${p.text}${note}`);
+  } finally {
+    store.close();
+  }
+}
+
+function cmdAudit(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { apply: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply]");
+  const store = open();
+  try {
+    const saidInMain = mainSessionQuotes(store);
+    const plan = workerQuoteAudit(store.project().props.values(), sessionTranscript(store), isWorkerTranscript, saidInMain);
+    const names = namesOf(store);
+    const line = (p: Proposition) => `  [${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${p.confirmed ? `（已确认:${p.confirmed_by}）` : "（未确认）"}: ${p.text.split("\n")[0]}`;
+    console.log(`只靠 worker 派活提示当"用户原话"的条目：撤销 ${plan.demote.length} 条，需用户复核 ${plan.review.length} 条（用户确认过的不自动改）。`);
+    for (const p of plan.demote) console.log(line(p));
+    if (plan.review.length) console.log("需用户复核（用户亲自确认过，不自动改；不要了用 ab archive）：");
+    for (const p of plan.review) console.log(line(p));
+    if (!values.apply) return console.log(plan.demote.length ? "预览，未写入。加 --apply 撤销上面这些条目的自动转正。" : "");
+    for (const p of plan.demote) store.lifecycle("unconfirm", p.id, null, { reason: "worker_prompt", note: "证据是父 agent 写给 worker 的派活提示，不是用户原话" });
+    console.log(`已撤销 ${plan.demote.length} 条。用户认可后可 ab confirm <id> 重新确认。`);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * 用户主会话里说过的话（所有登记会话里非 worker 会话的 user 轮），以及每个 worker 会话的 user 轮（派活提示）。
+ * 返回判定函数：一条记忆的用户原话哈希能在它的 worker 派活提示里找到对应片段、且这段原文主会话里也逐字出现过 → true。
+ * 只在审计时读 transcript；读不了的会话跳过。
+ */
+function mainSessionQuotes(store: Store): (p: Proposition) => boolean {
+  let built: { main: MainSaid; worker: Map<string, string[]> } | null = null;
+  const build = () => {
+    const main = new MainSaid();
+    const worker = new Map<string, string[]>();
+    const rows = store.workDb.prepare("SELECT host,session_id,transcript FROM capture_sessions WHERE transcript IS NOT NULL").all() as { host: Host; session_id: string; transcript: string }[];
+    for (const r of rows) {
+      let cleaned;
+      try {
+        cleaned = cleanTranscript(r.host, r.transcript);
+      } catch {
+        continue;
+      }
+      if (cleaned.subagent) continue;
+      const users = cleaned.turns.filter((t) => t.role === "user").map((t) => sanitize(t.text).text);
+      if (cleaned.worker || isWorkerTranscript(r.transcript)) worker.set(`${r.host}:${r.session_id}`, users);
+      else for (const u of users) main.add(u);
+    }
+    // 用户自己维护的全局指令文件也是用户的话：派活提示照抄其中的规则时不算 worker-only
+    for (const f of [join(homedir(), ".codex/AGENTS.md"), join(homedir(), ".claude/CLAUDE.md"), join(homedir(), ".pi/agent/AGENTS.md")]) {
+      try {
+        main.add(sanitize(readFileSync(f, "utf8")).text);
+      } catch {
+        // 没有这个文件
+      }
+    }
+    return { main, worker };
+  };
+  return (p) => {
+    built ??= build();
+    const texts = [p.source, ...p.extra_sources].flatMap((s) => built!.worker.get(`${s.host}:${s.session_id}`) ?? []);
+    return built.main.quotedIn(texts, userQuoteHashes(p), sha256);
+  };
+}
+
+/** capture_sessions 里登记的 transcript 路径。 */
+function sessionTranscript(store: Store): (host: Host | null, sessionId: string | null) => string | null {
+  const q = store.workDb.prepare("SELECT transcript FROM capture_sessions WHERE host=? AND session_id=?");
+  return (host, sid) => {
+    if (!host || !sid) return null;
+    const row = q.get(host, sid) as { transcript?: string | null } | undefined;
+    return row?.transcript ?? null;
+  };
+}
+
 function cmdReview(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -841,6 +941,8 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
+  ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
+  ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
@@ -878,6 +980,8 @@ async function main(): Promise<void> {
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "archive") return cmdArchive(rest);
+    if (cmd === "guidance") return cmdGuidance(rest);
+    if (cmd === "audit") return cmdAudit(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus();
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);

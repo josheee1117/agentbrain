@@ -159,8 +159,8 @@ export class Store {
     return this.append("remember", projectId, sessionId, ephemeral, null, body);
   }
 
-  /** archive/reactivate/confirm：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
-  lifecycle(kind: "archive" | "reactivate" | "confirm", targetId: string, sessionId: string | null, body: object = {}): string {
+  /** archive/reactivate/confirm/unconfirm/tag：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
+  lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag", targetId: string, sessionId: string | null, body: object = {}): string {
     const p = this.project().props.get(targetId);
     if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
