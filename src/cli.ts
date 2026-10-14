@@ -25,6 +25,9 @@ import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
+import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
+import { loadReviewConfig, type CallStat } from "./review.ts";
+import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
@@ -954,10 +957,86 @@ const USAGE = `用法:
                                     手动登记一个会话（hook 没生效时）
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
+  ab setup [--only fast,panel,keys,hosts,test]
+                                    上手向导：快模型、审稿团与仲裁、key 进钥匙串、接哪些宿主、连通测试；可重复运行
+  ab curate [--apply] [--limit N] | ab curate --undo <run>
+                                    审稿团（review.json 里的 3 家模型）按《好记忆的标准》审候选区：三票一致直接执行，分歧交仲裁
+                                    默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，用户确认过的条目不动；--undo 整次撤销
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
                                     --sweep 另扫描漏登记的会话、按代码核验未确认的坑（到期条目不再自动归档，见 ab review）（launchd 每 30 分钟）`;
+
+async function cmdCurate(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: { apply: { type: "boolean", default: false }, limit: { type: "string" }, undo: { type: "string" } },
+    strict: true,
+  });
+  const root = home();
+  if (values.undo) {
+    const report = loadReport(root, values.undo);
+    const store = open();
+    try {
+      console.log(`已撤销 ${report.run}：${undoRun(store, report)} 条恢复原状`);
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  const cfg = loadReviewConfig(root);
+  if ("error" in cfg) die(cfg.error);
+  const store = open();
+  try {
+    const props = store.project().props;
+    const names = namesOf(store);
+    const cap = values.limit ? Math.max(1, Number(values.limit) || 1) : cfg.batchSize * cfg.maxBatches;
+    const cands = [...props.values()].filter((p) => p.state === "candidate" && p.confirmed_by !== "user").sort((a, b) => a.seq - b.seq).slice(0, cap);
+    if (!cands.length) return console.log("候选区是空的，没有要审的。");
+    const { panel, arbiter, missing } = connectPanel(cfg);
+    if (!arbiter || panel.length === 0) die(`审稿团连不上：${missing.join("；") || "仲裁不可用"}`);
+    const full = missing.length === 0 && panel.length >= 3;
+    const apply = values.apply && full;
+    const stats: CallStat[] = [];
+    const inputs = cands.map((p) => candidateInput(store, p, props, names));
+    const results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats);
+    const actions = planAll(results, props);
+    const run = `curate-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const report: RunReport = {
+      run,
+      at: new Date().toISOString(),
+      dry_run: !apply,
+      panel: cfg.panel.map((m) => ({ name: m.name, model: m.model })),
+      arbiter: cfg.arbiter,
+      results: results.map((r, i) => ({ ...r, action: actions[i], text: props.get(r.id)!.text })),
+      stats,
+      applied: apply ? applyActions(store, run, actions, props) : [],
+    };
+    const path = saveReport(root, report);
+    const count = (op: string) => actions.filter((a) => a.op === op).length;
+    const routes = results.map((r) => r.decision.route);
+    console.log(
+      [
+        `${apply ? "已执行" : "dry-run（没写库）"}：${cands.length} 条候选`,
+        `  沉淀 ${count("promote")}，改写 ${count("rewrite")}，并入 ${count("merge")}，丢弃 ${count("discard")}，跳过 ${count("skip")}`,
+        `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${routes.filter((r) => r === "arbiter").length}，未决 ${routes.filter((r) => r === "undecided").length}`,
+        `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}`,
+        missing.length ? `  审稿团缺人（只出报告，不写库）：${missing.join("；")}` : "",
+        values.apply && !full ? "  --apply 被忽略：审稿团不满 3 家" : "",
+        `报告：${path}${apply ? `\n撤销：ab curate --undo ${run}` : ""}`,
+      ].filter(Boolean).join("\n"),
+    );
+  } finally {
+    store.close();
+  }
+}
+
+async function cmdSetup(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: { only: { type: "string" } }, strict: true });
+  const only = values.only ? (values.only.split(",").map((s) => s.trim()) as Step[]) : null;
+  if (only?.some((s) => !STEPS.includes(s))) die(`--only 只能是 ${STEPS.join(",")}`);
+  await runSetup(home(), only);
+}
 
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -989,6 +1068,8 @@ async function main(): Promise<void> {
     if (cmd === "import") return await cmdImport(rest);
     if (cmd === "view") return cmdView(rest);
     if (cmd === "review") return cmdReview(rest);
+    if (cmd === "curate") return await cmdCurate(rest);
+    if (cmd === "setup") return await cmdSetup(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;
