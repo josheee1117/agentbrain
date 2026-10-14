@@ -12,9 +12,12 @@ const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
 /** 用户纠正的保底位（§21 2026-10-14，参考 DeerMem 的 correction 预算）：相关的已确认纠正先占位、最先输出，不被其他条目挤掉。 */
 export const RECALL_CORRECTION_SLOTS = 1;
 
-/** 已确认的纠正：替代过旧条目的有效条目（任何种类，事实被纠正也要带上）。 */
+/**
+ * 能占保底位的纠正：已确认、替代过旧条目（任何种类，事实被纠正也要带上），
+ * 且自己没有待确认的更正、没有冲突（否则"纠正"本身就有争议，不该顶到第一位）。
+ */
 export function isConfirmedCorrection(p: Proposition): boolean {
-  return p.confirmed && !!p.supersedes;
+  return p.confirmed && !!p.supersedes && !p.pending_corrections.length && !p.conflicts_with;
 }
 
 /** 命中时返回 <agentbrain-recall> 块；跳过或没有命中返回空串。shown（可选）收集实际输出的条目 id。 */
@@ -39,7 +42,9 @@ export async function recall(store: Store, query: string, cwd: string, getEmbedd
     return true;
   };
   const ranked = hits.map((h) => props.get(h.id)).filter((p): p is Proposition => !!p && p.state === "active" && inScope(p));
-  const corrections = ranked.filter(isConfirmedCorrection).slice(0, RECALL_CORRECTION_SLOTS);
+  // 保底位只给向量相似度过门槛的纠正：纯全文检索命中（RRF 融合不受门槛约束）可能只是弱相关，不能跳到第一
+  const similar = new Set(hits.filter((h) => (h.similarity ?? 0) >= RECALL_MIN_SIM).map((h) => h.id));
+  const corrections = ranked.filter((p) => isConfirmedCorrection(p) && similar.has(p.id)).slice(0, RECALL_CORRECTION_SLOTS);
   const confirmed = [
     ...corrections,
     ...ranked.filter((p) => p.confirmed && RECALL_KINDS.includes(p.kind) && !corrections.includes(p)).slice(0, RECALL_MAX_ITEMS - corrections.length),
