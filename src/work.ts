@@ -780,8 +780,11 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     if (!head) continue;
     const last = intake.lastVerify(db, p.id);
     if (queued.has(p.id)) {
-      intake.dequeueReverify(db, p.id);
-      if (last && last.head === head) continue; // 这个 HEAD 上已经核过，不重复花钱
+      // 这个 HEAD 上已经有过确定结论，不重复花钱；上次是出错（限流/网络）的照样重试
+      if (last && last.head === head && !last.outcome.startsWith("error:")) {
+        intake.dequeueReverify(db, p.id);
+        continue;
+      }
     } else if (last && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
     done++;
     let result;
@@ -794,6 +797,8 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } finally {
       intake.renewLease(db, holder, deps.now());
     }
+    // 核验有了结果才出队；出错时留在队里，下次 ab work 再试
+    intake.dequeueReverify(db, p.id);
     intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
     if (result.verdict === "verified" || result.verdict === "contradicted") {

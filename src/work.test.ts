@@ -761,3 +761,22 @@ test("到期不再自动归档：sweep 后未确认提议仍 active，只进到�
   assert.deepEqual([p.state, p.expired], ["active", false]);
   assert.deepEqual(reviewList(e.store.project().props.values(), e.store.usage(), later).map((d) => d.prop.id), [id]);
 });
+
+test("用前核对排队：已转正的条目代码变了 → 下次 ab work 优先重新核验；出错留在队里重试，有结论后出队", async () => {
+  const e = env();
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
+  await runWork(e.deps(verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] })), { sweep: true, dryRun: false });
+  assert.equal(e.store.project().props.get(id)!.confirmed_by, "code");
+  writeFileSync(join(e.repo, "store.ts"), "export const VEC_MIN_SIM = 0.5;\n");
+  execFileSync("git", ["-C", e.repo, "commit", "-qam", "bump"]);
+  e.store.queueReverify([id], new Date());
+  const queued = () => e.store.workDb.prepare("SELECT count(*) AS n FROM verify_queue").get()!.n;
+  const boom = fakeChat(() => { throw new Error("429"); });
+  const r1 = await runWork(e.deps(boom), { sweep: true, dryRun: false });
+  assert.equal(r1.verify.errors, 1);
+  assert.equal(queued(), 1, "出错不出队");
+  const r2 = await runWork(e.deps(verifierChat({ verdict: "contradicted", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.5" }] })), { sweep: true, dryRun: false });
+  assert.equal(r2.verify.contradicted, 1);
+  assert.equal(queued(), 0);
+  assert.ok(e.store.project().props.get(id)!.stale, "标与代码不符");
+});
