@@ -74,7 +74,7 @@ writeFileSync(join(abHome, "extract.json"), JSON.stringify({ model: "fake-llm" }
 after(() => server.close());
 
 const CLI = join(import.meta.dirname, "cli.ts");
-const ENV = { ...process.env, AB_HOME: abHome, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}` };
+const ENV = { ...process.env, AB_HOME: abHome, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, AB_STAGING: "off" }; // 端到端用例测 v2 正式库流程；候选区见 work.test.ts
 
 /** 异步跑 ab：假服务在本进程里，同步调用会把它卡死。 */
 function ab(args: string[], opts: { cwd?: string; input?: string } = {}): Promise<{ out: string; err: string; code: number; ms: number }> {

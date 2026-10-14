@@ -361,7 +361,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       const p = props.get(h.id);
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p ? marks(p) : "";
-      const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : "";
+      const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : p?.state === "candidate" ? "（候选）" : "";
       console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${h.text.split("\n")[0]}`);
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
@@ -382,7 +382,7 @@ function cmdGet(argv: string[]): void {
   try {
     const p = findByPrefix(store, positionals[0]);
     const names = namesOf(store);
-    const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
+    const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : p.state === "candidate" ? "（候选，待审稿）" : "";
     const linesOut = [
       `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
@@ -734,6 +734,7 @@ function workDeps(store: Store): WorkDeps {
     chat = typeof key === "string" ? { chat: chatClient(cfg, key, EXTRACT_TIMEOUT_MS), model: cfg.model } : { error: "no_key", message: key.error };
   }
   return {
+    staging: process.env.AB_STAGING !== "off",
     store,
     now: () => new Date(),
     chat,
