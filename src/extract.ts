@@ -175,22 +175,26 @@ const FUTURE = /以后|今后|往后|每次|每回|一律|总是|始终|默认|�
 /** 问句不是授权。 */
 const QUESTION = /[?？]|吗|是不是|有没有|能不能|可不可以|要不要|为什么|怎么/;
 /** "测试完成后""没问题的话就"这类前提，不改变"只批准这一次"的性质。先去掉再看。 */
-const CONDITION = /(?:你\s*)?(?:先\s*)?做个?(?:整体|全面)?验证|测试(?:完成|通过|完)(?:后|之后|以后)?|验证(?:完成|通过)(?:后|之后|以后)?|没问题(?:的话)?|确认无误(?:后)?/g;
+const CONDITION = /(?:你\s*)?(?:先\s*)?做个?(?:整体|全面)?验证|(?:测试|执行)(?:完成|通过|完)(?:后|之后|以后)?|验证(?:完成|通过)(?:后|之后|以后)?|没问题(?:的话)?|确认无误(?:后)?/g;
 /** 带去向的动作："合并到 dev_jdk""发布到 dev""cherrypick 到 dev 分支"。 */
-const TARGETED = /(?:cherry-?pick|cheery-?pick|合并|合入|合到|推送|push|merge|发布|部署|deploy|release)\s*(?:代码|改动|分支)?\s*(?:到|至|进|to|into|onto)\s*[A-Za-z0-9_./-]+(?:\s*分支)?/gi;
+const TARGETED = /(?:cherry-?pick|cheery-?pick|合并|合入|合到|推送|push|merge|发布|部署|deploy|release)\s*(?:代码|改动|分支)?\s*(?:(?:到|至|进|to|into|onto)\s*[A-Za-z0-9_./-]+|\s+[A-Za-z][A-Za-z0-9_./-]*)(?:\s*分支)?/gi;
 // 注意："按你说的方案做""按你的来"是认可助手的方案（user_confirmed 决定），不是一次性授权，不在这里拦。
 /** 执行类动作（明确的动词，子串匹配无歧义）。 */
-const ACTION = /cherry-?pick|cheery-?pick|提交|推送|推上去|push|合并|合入|merge|发布|部署|deploy|release|ship|commit|删除|删掉|删|修复|继续|开始|执行|试试看|试一下|跑|改|修|干|做/gi;
+const ACTION = /cherry-?pick|cheery-?pick|提交|推送|推上去|push|合并|合入|merge|发布|部署|deploy|release|ship|commit|删除|删掉|删|改回去|回滚|revert|重启|restart|关掉|关了|停掉|kill|修复|继续|开始|执行|试试看|试一下|跑|改|修|干|做/gi;
 /** 动作的宾语、连接词、语气词、称呼：去掉动作后允许剩下的部分。 */
 const FILLER = /代码|改动|更新|bug|这个|那个|一下|帮我|给我|那就|然后|并且|[并再和就先把它你我吧了啊呀嘛哈呗。，,.!！~、\s]|never ?mind|\b(?:please|now|it|this|that|the|then|and)\b/gi;
 /** 单独的认可词：只有整句（去掉虚词后）就是它们时才算，避免"这个方案可以""浪费token"误判。 */
-const BARE_APPROVAL = /^(?:可以|行|好的?|好了|ok(?:ay)?|lgtm|approved?|同意|批准|goahead|doit|proceed|yes|嗯|对)+$/i;
+const BARE_APPROVAL = /^(?:可以|行|好的?|好了|ok(?:ay)?|lgtm|approved?|同意|批准|确认|goahead|doit|proceed|yes|嗯|对)+$/i;
 /** 明确的"只这一次"标记。"这个/这条"不算（"这个方案可以"是对方案的认可，可能是决定）。 */
 const ONE_OFF_MARK = /这次|这一次|本次|先这样|this time|this one|just this|for now|\bonce\b/i;
 const MAX_ONE_OFF_CHARS = 40;
+/** 已完成的陈述：动作 +（完/好）了，结尾没有"吧"。 */
+const DONE_STATEMENT = /^(?!好了)(?:已经?|都)?[\u4e00-\u9fa5]{1,4}(?:完|好)?了[。.!！~]?$/;
 
 /** 一句话是否只是一次性授权（只看用户原话，不看模型写的正文）。 */
 export function isOneOffAuthorization(quote: string): boolean {
+  // "修复了""改好了"：动作已完成的陈述，不是授权（授权是"修复吧""改吧"）
+  if (DONE_STATEMENT.test(norm(quote))) return false;
   const q = norm(quote).replace(CONDITION, " ");
   if (!q.trim() || FUTURE.test(q) || QUESTION.test(q)) return false;
   if (q.length <= MAX_ONE_OFF_CHARS) {
