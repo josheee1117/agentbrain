@@ -4,6 +4,7 @@
  * 已确认的条目（任何途径）永远不进清单。
  */
 import type { PropKind, Proposition } from "./l2.ts";
+import { sessionStart } from "./work.ts";
 
 export const DEFAULT_VALID_DAYS: Record<PropKind, number> = { pitfall: 90, note: 90, decision: 180, rule: 180 };
 const DAY_MS = 86_400_000;
@@ -27,13 +28,39 @@ export function validDays(p: Proposition): number {
   return p.valid_days ?? DEFAULT_VALID_DAYS[p.kind];
 }
 
-/** 到期待复审：active、未确认、自 max(记下时间, 最近注入) 起超过有效天数。最久超期的在前。 */
-export function reviewList(props: Iterable<Proposition>, usage: Map<string, Usage>, now: Date): ReviewItem[] {
+/** 条目的起算时间：原话时间（said_at）；旧条目没有就用来源会话的开始时间；都没有才用写入时间。 */
+export type Clock = (p: Proposition) => string;
+
+/** 默认时钟只看条目自身（said_at，否则写入时间），不读文件。 */
+export const ownClock: Clock = (p) => p.said_at ?? p.ts;
+
+/**
+ * 读路径用的时钟：旧条目没有 said_at 时，用来源 transcript 的会话开始时间（"全部重跑"不会改它），
+ * 避免重跑把所有条目的起算时间挤到同几天。按文件缓存。
+ */
+export function sourceClock(): Clock {
+  const cache = new Map<string, string | null>();
+  return (p) => {
+    if (p.said_at) return p.said_at;
+    const file = p.source.transcript;
+    if (!file) return p.ts;
+    if (!cache.has(file)) {
+      const ms = sessionStart(file);
+      cache.set(file, ms === null ? null : new Date(ms).toISOString());
+    }
+    const start = cache.get(file);
+    return start && start < p.ts ? start : p.ts;
+  };
+}
+
+/** 到期待复审：active、未确认、自 max(起算时间, 最近注入) 起超过有效天数。最久超期的在前。 */
+export function reviewList(props: Iterable<Proposition>, usage: Map<string, Usage>, now: Date, clock: Clock = ownClock): ReviewItem[] {
   const out: ReviewItem[] = [];
   for (const p of props) {
     if (p.state !== "active" || p.confirmed) continue;
     const lastUsed = usage.get(p.id)?.last_used ?? null;
-    const since = lastUsed && lastUsed > p.ts ? lastUsed : p.ts;
+    const start = clock(p);
+    const since = lastUsed && lastUsed > start ? lastUsed : start;
     const days = validDays(p);
     const overdue = Math.floor((now.getTime() - Date.parse(since)) / DAY_MS) - days;
     if (overdue > 0) out.push({ prop: p, validDays: days, since, lastUsed, overdueDays: overdue });

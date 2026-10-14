@@ -48,6 +48,8 @@ export interface Candidate {
   basis: Basis;
   evidence: { anchor: string; role: Turn["role"]; quote_sha256: string }[];
   relation: { type: RelationType; target: string | null };
+  /** 证据所在轮里最晚的时间（用户/工具说这话的时间），到期复审从这里起算。 */
+  said_at?: string;
   /** 抽取器建议的有效天数（7–730 的整数，否则不采用）。 */
   valid_days?: number;
   /** 引文与正文的规范化指纹，幂等键的一部分。 */
@@ -345,6 +347,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     const evidence: Candidate["evidence"] = [];
     const seenEv = new Set<string>();
     const userQuotes: string[] = [];
+    let saidAt: string | undefined;
     for (const e of c.evidence) {
       const n = parseAnchor(e?.anchor);
       const turn = n ? win.turns[n - 1] : undefined;
@@ -383,6 +386,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       seenEv.add(`${turn.anchor}|${h}`);
       evidence.push({ anchor: turn.anchor, role: turn.role, quote_sha256: h });
       if (turn.role === "user") userQuotes.push(kept);
+      if (turn.ts && (!saidAt || turn.ts > saidAt)) saidAt = turn.ts;
     }
     if (!evidence.length) {
       drop("no_evidence");
@@ -425,6 +429,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       basis: c.basis,
       evidence,
       relation: { type, target },
+      ...(saidAt ? { said_at: saidAt } : {}),
       ...(Number.isInteger(c.valid_days) && c.valid_days >= MIN_VALID_DAYS && c.valid_days <= MAX_VALID_DAYS ? { valid_days: c.valid_days } : {}),
       key,
     });

@@ -70,6 +70,8 @@ export interface RememberBody {
   import_ref?: ImportRef;
   /** 预计有效天数（抽取器可建议）；缺省按种类给默认值，见 expiry.ts。 */
   valid_days?: number;
+  /** 证据原话的时间（抽取时取证据所在轮的时间）。重跑抽取不会改它，到期复审从这里起算。 */
+  said_at?: string;
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -148,6 +150,7 @@ export interface Proposition {
   expired: boolean;
   /** 预计有效天数；null = 用种类默认值。 */
   valid_days: number | null;
+  said_at: string | null;
   /** 关系判定第 2 层的结论；没判过为 null。 */
   related: { outcome: RelateBody["outcome"]; target: string | null } | null;
   /** 判定为重复、已并入的条目。 */
@@ -221,6 +224,7 @@ export function fold(rows: EventRow[]): Projection {
         stale: null,
         expired: false,
         valid_days: typeof b.valid_days === "number" ? b.valid_days : null,
+        said_at: typeof b.said_at === "string" ? b.said_at : null,
         related: null,
         merged_into: null,
         conflicts_with: null,

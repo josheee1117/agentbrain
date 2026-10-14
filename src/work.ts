@@ -480,6 +480,7 @@ export function admit(
       window_id: windowId,
       relation: { type: c.relation.type, target: target ? target.id : null },
       ...(c.valid_days ? { valid_days: c.valid_days } : {}),
+      ...(c.said_at ? { said_at: c.said_at } : {}),
     };
     if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
       body.unreconciled = true;

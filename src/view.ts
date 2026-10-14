@@ -5,7 +5,7 @@
 import type { Store } from "./store.ts";
 import type { Proposition } from "./l2.ts";
 import { cosine } from "./embed.ts";
-import { reviewList, validDays } from "./expiry.ts";
+import { reviewList, sourceClock, validDays } from "./expiry.ts";
 
 export type ViewStatus = "user" | "code" | "corroboration" | "unconfirmed" | "stale";
 
@@ -90,7 +90,7 @@ export function buildViewData(store: Store, now: Date = new Date()): ViewData {
   const props = store.project().props;
   const names = new Map(store.listProjects().map((p) => [p.id, p.name]));
   const usage = store.usage();
-  const due = new Set(reviewList(props.values(), usage, now).map((d) => d.prop.id));
+  const due = new Set(reviewList(props.values(), usage, now, sourceClock()).map((d) => d.prop.id));
   const vecs = store.currentVectors();
   const ids = [...props.keys()].filter((id) => vecs.has(id));
   const xy = new Map(pca2(ids.map((id) => vecs.get(id)!)).map((p, i) => [ids[i], p]));

@@ -102,3 +102,14 @@ test("剥掉宿主注入噪声：skill 正文、task-notification、Codex app �
   ];
   for (const [inp, out] of cases) assert.equal(stripInjected(inp).text, out, inp);
 });
+
+test("轮次带上宿主记录的时间戳（到期复审起算用）", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "ab-ts-")), "c.jsonl");
+  writeFileSync(f, [
+    { type: "user", uuid: "u1", timestamp: "2026-09-01T08:00:00Z", message: { role: "user", content: "以后都用中文" } },
+    { type: "assistant", uuid: "a1", message: { role: "assistant", content: [{ type: "text", text: "好" }] } },
+  ].map((l) => JSON.stringify(l)).join("\n"));
+  const t = cleanTranscript("claude", f).turns;
+  assert.equal(t[0].ts, "2026-09-01T08:00:00.000Z");
+  assert.equal(t[1].ts, undefined);
+});
