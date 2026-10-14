@@ -61,3 +61,31 @@ test("总长不超 RECALL_MAX_CHARS，最多 3 条", async () => {
   assert.ok(out.length <= RECALL_MAX_CHARS, String(out.length));
   assert.ok(out.split("\n").filter((l) => l.startsWith("- [")).length <= 3);
 });
+
+test("用户纠正有保底位：相关的已确认纠正排第一、标出替代谁，不被 3 条已确认挤掉；被替代的旧条不出", async () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  const old = s.remember(pid, "s", false, { kind: "note", text: "lockfile lives in root", confirmed: true, source: src });
+  for (let i = 0; i < 4; i++) s.remember(pid, "s", false, { kind: "pitfall", text: `lockfile lockfile pitfall ${i}`, confirmed: true, source: src });
+  const fix = s.remember(pid, "s", false, { kind: "note", text: "lockfile actually lives in packages/app, not root; root copy is stale and ignored by the build", confirmed: true, supersedes: old, source: src });
+  const out = await recall(s, "lockfile", alpha, noEmbed);
+  const rows = out.split("\n").filter((l) => l.startsWith("- ["));
+  assert.equal(rows.length, 3);
+  assert.match(rows[0], new RegExp(`^- \\[${fix.slice(0, 8)}\\] 事实（纠正，替代 \\[${old.slice(0, 8)}\\]）: lockfile actually`));
+  assert.doesNotMatch(out, /lives in root/);
+});
+
+test("纠正保底不破坏 D3：纠正 + 1 条已确认时，仍可带 1 条有用户原话的未确认规则，排最后", async () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  const old = s.remember(pid, "s", false, { kind: "rule", text: "deploy on friday", confirmed: true, source: src });
+  s.remember(pid, "s", false, { kind: "rule", text: "deploy never on friday", confirmed: true, supersedes: old, source: src });
+  s.remember(pid, "s", false, { kind: "pitfall", text: "deploy script needs VPN", confirmed: true, source: src });
+  const id = s.remember(pid, "s", false, { kind: "rule", text: "deploy notes go to channel", confirmed: false, source: src });
+  const out = await recall(s, "deploy", alpha, noEmbed);
+  const rows = out.split("\n").filter((l) => l.startsWith("- ["));
+  assert.match(rows[0], /纠正/);
+  // 这条是 agent 自记、无用户原话：D3 不放它（规则不变）
+  assert.ok(!out.includes(id.slice(0, 8)));
+  assert.equal(rows.length, 2);
+});
