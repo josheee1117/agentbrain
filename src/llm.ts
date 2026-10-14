@@ -104,7 +104,7 @@ export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetc
       usage?: { total_tokens?: number };
       error?: { message?: string };
     } | null;
-    if (res.status === 429) throw new WorkFailure("http_429", "模型接口限流 429");
+    if (res.status === 429) throw new WorkFailure("http_429", `模型接口限流 429${parsed?.error?.message ? `: ${parsed.error.message.slice(0, 200)}` : ""}`);
     if (!res.ok) throw new WorkFailure("http_error", `模型接口 HTTP ${res.status}${parsed?.error?.message ? `: ${parsed.error.message}` : ""}`);
     const message = parsed?.choices?.[0]?.message;
     if (!message || typeof message !== "object") throw new WorkFailure("invalid_output", "模型返回里没有 message");

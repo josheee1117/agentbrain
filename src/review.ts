@@ -148,7 +148,10 @@ ${GOOD_MEMORY_STANDARD}
 - 先问"三类里属于哪一类"（A 干活偏好 / B 只有人知道的知识 / C 真会反复踩的坑）；哪类都不是就 discard。
 - 只描述某个系统当前状态、某个字段/接口/SQL 怎么写的，是代码里能查到的，discard；但其中如果藏着用户的偏好或设计理由，rewrite 成那条偏好/理由。
 - 用户表达的干活方式（汇报、语气、测试、审查、架构取向）是 A 类，价值最高；guidance=true。
-- 宁可 rewrite 也不要因为写法差就 discard 一条有价值的知识；但没价值的不要硬救。
+- 宁可 rewrite 也不要因为写法差就 discard 一条有价值的知识；但没价值的不要硬救：不要把一次具体 bug 硬概括成谁都知道的空话（"改配置要同步检查""交接要给完整证据"这类）。
+- C 类要问：换个项目、换个任务，下一个 agent 还会撞上吗？撞上时报错能不能直接看出原因？只在某个文件/某次改动里出现过、修完就没了的问题，不算。
+- 子代理会话里的"用户"消息是父 agent 的派活提示：它不能证明"用户要求"；但 agent 自己从工具输出观察到的坑、或背景里写明的设计理由，照常按 C/B 类判断。
+- merge 只用于候选本身合格、只是和近邻重复的情况；候选本身不合格就 discard，不要因为有相似近邻而 merge。
 - class 为 none 时 verdict 必须是 discard。
 
 ${OUTPUT}`;
@@ -187,7 +190,7 @@ export function renderCandidates(batch: CandidateInput[]): { prompt: string; ids
 }
 
 /** 把一位审稿人的 JSON 解析成按正式 id 索引的判决；不合格的项不收（之后按"弃权"算，进仲裁）。 */
-export function parseJudgements(raw: string | null, ids: Map<string, string>, neighborIds: Map<string, string>, batch: CandidateInput[]): Map<string, Judgement> {
+export function parseJudgements(raw: string | null, ids: Map<string, string>, neighborIds: Map<string, string>, batch: CandidateInput[], invalid?: Map<string, string>): Map<string, Judgement> {
   const out = new Map<string, Judgement>();
   const o = parseJsonLoose(raw) as { verdicts?: unknown } | null;
   const list = Array.isArray(o?.verdicts) ? o!.verdicts : [];
@@ -195,30 +198,35 @@ export function parseJudgements(raw: string | null, ids: Map<string, string>, ne
   for (const v of list as any[]) {
     const id = ids.get(String(v?.id));
     if (!id || out.has(id)) continue;
-    const j = normalize(v, byId.get(id)!, neighborIds);
+    const why: string[] = [];
+    const j = normalize(v, byId.get(id)!, neighborIds, why);
     if (j) out.set(id, j);
+    else invalid?.set(id, why[0] ?? "invalid");
   }
+  if (invalid) for (const c of batch) if (!out.has(c.id) && !invalid.has(c.id)) invalid.set(c.id, raw === null ? "call_failed" : "missing");
   return out;
 }
 
-export function normalize(v: any, c: CandidateInput, neighborIds: Map<string, string>): Judgement | null {
+export function normalize(v: any, c: CandidateInput, neighborIds: Map<string, string>, why: string[] = []): Judgement | null {
+  const bad = (w: string) => (why.push(w), null);
   const verdict = v?.verdict as Verdict;
-  if (!["keep", "rewrite", "merge", "discard"].includes(verdict)) return null;
+  if (!["keep", "rewrite", "merge", "discard"].includes(verdict)) return bad("bad_verdict");
   const cls: MemClass = ["A", "B", "C", "none"].includes(v?.class) ? v.class : "none";
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 300) : "";
   if (verdict === "discard") return { verdict, class: cls, guidance: false, reason };
-  if (cls === "none") return null; // 自相矛盾：要留却说哪类都不是
+  if (cls === "none") return bad("class_none"); // 自相矛盾：要留却说哪类都不是
   const scenario = isScenario(v?.scenario) ? v.scenario.trim() : isScenario(c.scenario) ? c.scenario : undefined;
-  if (!scenario) return null; // 说不出场景的不能进库
+  if (!scenario) return bad("no_scenario"); // 说不出场景的不能进库
   const text = typeof v?.text === "string" && v.text.trim() ? v.text.trim().slice(0, 400) : undefined;
   const guidance = v?.guidance === true || cls === "A";
   if (verdict === "merge") {
     const into = neighborIds.get(String(v?.into));
-    if (!into || !text) return null;
+    if (!into) return bad("merge_bad_target");
+    if (!text) return bad("merge_no_text");
     return { verdict, class: cls, scenario, text, into, guidance, reason };
   }
   if (verdict === "rewrite") {
-    if (!text) return null;
+    if (!text) return bad("rewrite_no_text");
     return { verdict, class: cls, scenario, text, guidance, reason };
   }
   // keep：原文要有场景；没有就等于改写了场景
@@ -278,7 +286,8 @@ export interface CallStat {
 
 export interface CurateResult {
   id: string;
-  votes: { name: string; j: Judgement | null }[];
+  /** invalid：这一票为什么无效（call_failed / missing / no_scenario / merge_bad_target …）。 */
+  votes: { name: string; j: Judgement | null; invalid?: string }[];
   decision: Decision;
 }
 
@@ -301,7 +310,9 @@ async function timed(member: string, role: CallStat["role"], f: () => ReturnType
       return r.message.content;
     } catch (e) {
       const code = (e as { code?: string }).code;
-      const again = code === "http_429" ? throttled < retryPolicy.backoffMs.length : other < retryPolicy.otherRetries;
+      // 额度用完（套餐 5 小时额度、账号冷却）退避也没用，直接算失败
+      const exhausted = /quota|usage.?limit|cooldown|exceeded/i.test((e as Error).message);
+      const again = exhausted ? false : code === "http_429" ? throttled < retryPolicy.backoffMs.length : other < retryPolicy.otherRetries;
       if (!again) {
         stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: (e as Error).message.slice(0, 200) });
         return null;
@@ -318,10 +329,14 @@ export async function judgeBatch(batch: CandidateInput[], panel: Judge[], arbite
   const raw = await Promise.all(
     panel.map((m) => timed(m.name, "judge", () => m.chat([{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content: r.prompt }], { json: true }), stats)),
   );
-  const parsed = raw.map((t) => parseJudgements(t, r.ids, r.neighborIds, batch));
+  const invalid = raw.map(() => new Map<string, string>());
+  const parsed = raw.map((t, i) => parseJudgements(t, r.ids, r.neighborIds, batch, invalid[i]));
   return Promise.all(
     batch.map(async (c): Promise<CurateResult> => {
-      const votes = panel.map((m, i) => ({ name: m.name, j: parsed[i].get(c.id) ?? null }));
+      const votes = panel.map((m, i) => {
+        const j = parsed[i].get(c.id) ?? null;
+        return j ? { name: m.name, j } : { name: m.name, j, invalid: invalid[i].get(c.id) };
+      });
       const u = unanimous(votes.map((v) => v.j));
       if (u) return { id: c.id, votes, decision: { route: "unanimous", final: u } };
       const a = renderArbiter(c, votes);
@@ -347,6 +362,8 @@ export function planAction(p: Proposition, res: CurateResult, liveProps: Map<str
   if (p.confirmed_by === "user") return { op: "skip", id: p.id, why: "用户确认过的条目不动，进复核清单" };
   if (p.state !== "candidate") return { op: "skip", id: p.id, why: `不是候选（${p.state}）` };
   const d = res.decision;
+  const failed = res.votes.filter((v) => v.invalid === "call_failed").map((v) => v.name);
+  if (failed.length) return { op: "skip", id: p.id, why: `审稿团有人没判（${failed.join("、")} 调用失败），不执行` };
   if (!d.final) return { op: "skip", id: p.id, why: d.route === "undecided" ? d.why : "无结论" };
   const f = d.final;
   if (f.verdict === "discard") return { op: "discard", id: p.id, reason: f.reason };

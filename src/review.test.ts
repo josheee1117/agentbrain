@@ -194,3 +194,17 @@ test("429 退避重试后成功，不算失败；limit 限住并发", async () =
   await Promise.all([1, 2, 3].map(() => gate(async () => { active++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 5)); active--; })));
   assert.equal(peak, 1);
 });
+
+test("额度用完的 429 不退避重试；无效票记下原因", async () => {
+  let n = 0;
+  const dead: Chat = async () => {
+    n++;
+    throw Object.assign(new Error("模型接口限流 429: You have exceeded the 5-hour usage quota"), { code: "http_429" });
+  };
+  const ok = reply([{ id: "c1", verdict: "keep", class: "A" }]);
+  const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: dead }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: reply([]) }, []);
+  assert.equal(n, 1);
+  assert.equal(r.votes[0].invalid, "call_failed");
+  assert.equal(r.votes[1].invalid, "no_scenario");
+  assert.equal(r.decision.route, "undecided");
+});
