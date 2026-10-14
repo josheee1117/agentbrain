@@ -176,8 +176,7 @@ const QUESTION = /[?？]|吗|是不是|有没有|能不能|可不可以|要不�
 const CONDITION = /(?:你\s*)?(?:先\s*)?做个?(?:整体|全面)?验证|测试(?:完成|通过|完)(?:后|之后|以后)?|验证(?:完成|通过)(?:后|之后|以后)?|没问题(?:的话)?|确认无误(?:后)?/g;
 /** 带去向的动作："合并到 dev_jdk""发布到 dev""cherrypick 到 dev 分支"。 */
 const TARGETED = /(?:cherry-?pick|cheery-?pick|合并|合入|合到|推送|push|merge|发布|部署|deploy|release)\s*(?:代码|改动|分支)?\s*(?:到|至|进|to|into|onto)\s*[A-Za-z0-9_./-]+(?:\s*分支)?/gi;
-/** "按你的来""按你说的改造方案做"。 */
-const AS_YOU_SAID = /按(?:你|您)(?:说|讲|提)?的(?:[\u4e00-\u9fa5A-Za-z]{0,8})?(?:来|做|办|改)/g;
+// 注意："按你说的方案做""按你的来"是认可助手的方案（user_confirmed 决定），不是一次性授权，不在这里拦。
 /** 执行类动作（明确的动词，子串匹配无歧义）。 */
 const ACTION = /cherry-?pick|cheery-?pick|提交|推送|推上去|push|合并|合入|merge|发布|部署|deploy|release|ship|commit|删除|删掉|删|修复|继续|开始|执行|试试看|试一下|跑|改|修|干|做/gi;
 /** 动作的宾语、连接词、语气词、称呼：去掉动作后允许剩下的部分。 */
@@ -193,8 +192,8 @@ export function isOneOffAuthorization(quote: string): boolean {
   const q = norm(quote).replace(CONDITION, " ");
   if (!q.trim() || FUTURE.test(q) || QUESTION.test(q)) return false;
   if (q.length <= MAX_ONE_OFF_CHARS) {
-    const hasAction = new RegExp(ACTION.source, "i").test(q) || new RegExp(TARGETED.source, "i").test(q) || new RegExp(AS_YOU_SAID.source).test(q);
-    const rest = q.replace(TARGETED, "").replace(AS_YOU_SAID, "").replace(ACTION, "").replace(FILLER, "");
+    const hasAction = new RegExp(ACTION.source, "i").test(q) || new RegExp(TARGETED.source, "i").test(q);
+    const rest = q.replace(TARGETED, "").replace(ACTION, "").replace(FILLER, "");
     if (rest === "" ? hasAction : BARE_APPROVAL.test(rest)) return true;
   }
   if (q.length <= MAX_ONE_OFF_CHARS * 2 && ONE_OFF_MARK.test(q)) {
