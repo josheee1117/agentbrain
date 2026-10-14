@@ -159,7 +159,7 @@ test("decision/rule 没有背景的 why 一律丢弃，pitfall 不受影响", ()
 });
 
 // ---------- 污染防护（§21 2026-10-14） ----------
-import { isOneOffAuthorization, ownUserText } from "./extract.ts";
+import { isOneOffAuthorization, ownPartOfQuote, ownUserText } from "./extract.ts";
 
 test("一次性授权识别：push/合并/go ahead/这次可以删 是；带以后、或含别的意思的偏好不是", () => {
   for (const q of ["push 吧", "合并这个", "merge this one", "go ahead", "go ahead this time", "这次可以删", "好的，推送", "lgtm", "ok 继续", "approve"]) assert.equal(isOneOffAuthorization(q), true, q);
@@ -213,4 +213,60 @@ test("prompt 讲明一次性授权与贴进来的内容不能记", () => {
   const sys = buildMessages(win, { name: "p", docs: "", registry: "", confirmed: "" }, [])[0].content!;
   assert.match(sys, /一次性的执行授权/);
   assert.match(sys, /贴进来的东西/);
+});
+
+// ---------- 独立评估（eval-40-42）指出的误杀/漏拦 ----------
+
+test("评估反例：认可方案、陈述、问句不是一次性授权", () => {
+  for (const q of [
+    "这个方案可以", "这个用 sqlite 就行", "这个字段不行，换成字符串", "这个表好像没用了", "这个接口执行太慢",
+    "这个通过 scene 不就可以直接查出来了吗", "你帮我判断一下该如何接入，能够发挥这个插件的功能，又不会太过浪费token",
+    "之前改的一个质量监控 job 没有把 detail 字段推送到企业微信的 bug，是不是在这个分支？有没有上线呢？",
+    "你合并要推送啊，我看 Jenkins 都没触发", "表责任人未匹配不要影响数仓表同步进度，未匹配到的可以给默认值或空值",
+    "继续，后面使用gpt5.6 sol high", "那就用deepseek-v4.1-flash", "继续用子代理干", "如果有改动也要合到main",
+    "不能修复吗？", "开始吧。你作为总控制者使用子代理的模型做具体的任务", "用推荐的方案就可以，注意流程更新了",
+  ]) assert.equal(isOneOffAuthorization(q), false, q);
+});
+
+test("评估漏拦：改吧、提交代码吧、合并到/发布到分支、提交并推送、带前提的合并推送都是一次性授权", () => {
+  for (const q of [
+    "改吧。", "提交代码吧", "合并到 dev_jdk", "发布到 dev", "提交并推送代码", "测试完成后提交代码",
+    "你做个整体验证，没问题的话就合并代码并推送吧", "提交并推送然后 cheerypick 到 dev 分支", "把这个更新提交推送，并 cherrypick合并到 dev_jdk17",
+    "修复吧", "干吧", "先把bug改了", "按你的来", "按你说的改造方案做", "你跑一下试试看吧", "继续吧", "好，继续吧", "好了。", "可以", "推送吧",
+    "never mind, push it", "go ahead this time",
+  ]) assert.equal(isOneOffAuthorization(q), true, q);
+});
+
+test("one_off 只看用户原话：模型把正文写成'默认合并后 push'也照样丢", () => {
+  const w: ExtractWindow = { context: [], turns: [{ anchor: "u1", role: "user", text: "可以，push 吧" }] };
+  const v = validate({ candidates: [{ ...good, text: "默认合并后都 push 到远端", why: "助手合并后没推送，用户发现远端还是旧代码", evidence: [{ anchor: "#1", role: "user", quote: "push 吧" }] }] }, w, [], "w-text-bypass");
+  assert.equal(v.dropped.one_off, 1);
+  assert.equal(v.candidates.length, 0);
+});
+
+test("提问卡片的回答、斜杠命令参数算用户自己的话；pasted_content 不算", () => {
+  const reply = '<send_user_message_question_reply>\n[{"questionItemId":"x","question":"每条直接展示 detail 原文，对吗？","answer":"对，直接展示 detail 原文"}]\n</send_user_message_question_reply>';
+  assert.equal(ownUserText(reply), "对，直接展示 detail 原文");
+  assert.equal(ownUserText("<command-name>/x</command-name><command-message>x</command-message><command-args>重构一版</command-args>"), "重构一版");
+  assert.equal(ownUserText('<pasted_content id="1">别人写的规则</pasted_content>\n我的意见'), "我的意见");
+  const w: ExtractWindow = { context: [], turns: [{ anchor: "u1", role: "user", text: reply }] };
+  const v = validate({ candidates: [{ ...good, kind: "decision", basis: "user_confirmed", text: "告警明细直接展示 detail 原文", why: "助手问告警格式时用户在提问卡片里确认只展示 detail 原文", evidence: [{ anchor: "#1", role: "user", quote: "对，直接展示 detail 原文" }] }] }, w, [], "w-reply");
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.evidenceDropped.quote_not_own, undefined);
+});
+
+test("引文跨过引用行：去掉贴进来的部分，剩下自己写的够长就保留，哈希按剩下的算", () => {
+  const text = "> GET /tag/listByScene\nlistByScene 接口，object=cust 和 wework 时，scenekey是不同的";
+  const quote = "GET /tag/listByScene listByScene 接口，object=cust 和 wework 时，scenekey是不同的";
+  assert.equal(ownPartOfQuote(text, quote), "listByScene 接口，object=cust 和 wework 时，scenekey是不同的");
+  assert.equal(ownPartOfQuote(text, "GET /tag/listByScene"), null);
+  const w: ExtractWindow = { context: [], turns: [{ anchor: "u1", role: "user", text }] };
+  const v = validate({ candidates: [{ ...good, text: "listByScene 按 object 区分 sceneKey", why: "联调时用户指出 cust 和 wework 的 sceneKey 不同，助手原先用了同一个", evidence: [{ anchor: "#1", role: "user", quote }] }] }, w, [], "w-span");
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.candidates[0].evidence[0].quote_sha256, sha256("listByScene 接口，object=cust 和 wework 时，scenekey是不同的"));
+});
+
+test("没闭合的 ``` 只吃到下一个空行，后面的段落仍算用户的话", () => {
+  assert.equal(ownUserText("看下报错\n```\nTypeError: x\n  at y\n\n以后报错先贴完整栈"), "看下报错 以后报错先贴完整栈");
+  assert.equal(ownUserText("前\n```js\nconst a = 1;\n\nconst b = 2;\n```\n后"), "前 后");
 });
