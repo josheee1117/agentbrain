@@ -102,6 +102,7 @@ const toolErr = (uuid: string, text: string) => ({ type: "user", uuid, message: 
 const RULE = {
   kind: "rule",
   scope: "project",
+  scenario: "当配置宿主 hook 命令时",
   text: "hook 命令写 node 绝对路径，不依赖 PATH",
   why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
   basis: "user_directive",

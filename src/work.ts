@@ -456,7 +456,7 @@ export function admit(
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
-      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
+      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.demoted && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
         const sessions = distinctUserSessions(target, { host: s.host, session_id: s.session_id, basis: c.basis, quote_sha256: c.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256) });
         if (sessions.length >= 2) {
           const cb: ConfirmBody = { by: "corroboration", sessions };
@@ -481,6 +481,7 @@ export function admit(
       relation: { type: c.relation.type, target: target ? target.id : null },
       ...(c.valid_days ? { valid_days: c.valid_days } : {}),
       ...(c.said_at ? { said_at: c.said_at } : {}),
+      ...(c.guidance ? { guidance: true } : {}),
     };
     if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
       body.unreconciled = true;
@@ -509,14 +510,14 @@ function settled(s: intake.SessionRow, now: Date): boolean {
   }
 }
 
-async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, projectId: string, receipt: intake.Receipt): Promise<Admission> {
+async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, projectId: string, receipt: intake.Receipt, worker = false): Promise<Admission> {
   if ("error" in deps.chat) throw new WorkFailure(deps.chat.error, deps.chat.message);
   if (!hasExtractableSignal(c.turns)) {
     receipt.no_signal += 1;
     return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
   }
   const neighbors = await prefetchNeighbors(deps, c.turns, projectId);
-  const win: ExtractWindow = { turns: c.turns, context: c.context };
+  const win: ExtractWindow = { turns: c.turns, context: c.context, ...(worker ? { worker: true } : {}) };
   const messages = buildMessages(win, projectContext(deps, s.project, projectId), neighbors);
   const db = deps.store.workDb;
   let r = await deps.chat.chat(messages, { json: true });
@@ -606,6 +607,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   }
   let turns: Turn[];
   let stripped = 0;
+  let worker = false;
   try {
     const cleaned = cleanTranscript(s.host, s.transcript);
     if (cleaned.subagent) {
@@ -615,6 +617,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     }
     turns = cleaned.turns;
     stripped = cleaned.stripped;
+    worker = cleaned.worker;
   } catch {
     intake.setSessionError(db, s, "source_unavailable");
     return;
@@ -658,7 +661,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     for (const t of c.turns) addHits(receipt.sanitizer, hitsByAnchor.get(t.anchor) ?? {});
     let adm: Admission;
     try {
-      adm = await extractWindow(deps, c, row, projectId, receipt);
+      adm = await extractWindow(deps, c, row, projectId, receipt, worker);
     } catch (e) {
       const code: WorkError = e instanceof WorkFailure ? e.code : "network";
       const config = code === "no_config" || code === "no_key";
@@ -745,7 +748,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const { appends, corroborated } = applyVerdict(p, target ?? null, v, deps.chat.model, {
         mode: "absorb-new",
         corroborate: (np, t, basis) => {
-          if (!CORROBORATE_KINDS.has(t.kind) || t.project_id === null || t.confirmed || t.unreconciled || t.conflicts_with || t.pending_corrections.length || t.supersedes) return null;
+          if (!CORROBORATE_KINDS.has(t.kind) || t.project_id === null || t.confirmed || t.demoted || t.unreconciled || t.conflicts_with || t.pending_corrections.length || t.supersedes) return null;
           const userQuotes = np.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
           const sessions = distinctUserSessions(t, { host: np.source.host, session_id: np.source.session_id, basis, quote_sha256: userQuotes });
           return sessions.length >= 2 ? { by: "corroboration", sessions } : null;
@@ -771,7 +774,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   const todo = [
     ...requeued.sort((a, b) => a.seq - b.seq),
     ...all
-      .filter((p) => p.state === "active" && !p.confirmed && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
+      .filter((p) => p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
       .sort((a, b) => a.seq - b.seq),
   ];
   let done = 0;

@@ -20,7 +20,8 @@ import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM,
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
-import { recall } from "./recall.ts";
+import { guidanceBlock, recall } from "./recall.ts";
+import { workerQuoteAudit } from "./audit.ts";
 import { isWorkerTranscript } from "./transcript.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
@@ -144,7 +145,17 @@ async function cmdRecall(argv: string[]): Promise<void> {
   try {
     const used: string[] = [];
     const stale: string[] = [];
-    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    const recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    // 常驻偏好不看相似度，每轮都给（斜杠命令除外）；本轮召回已给出的不重复
+    let prefs = "";
+    if (!query.trim().startsWith("/")) {
+      try {
+        prefs = guidanceBlock(store.project().props.values(), worker, new Set(used), used);
+      } catch {
+        prefs = ""; // fail-open
+      }
+    }
+    const block = prefs + recalled;
     if (!block) return;
     markUsed(store, used);
     if (stale.length) {
@@ -510,6 +521,52 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
+function cmdGuidance(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { off: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (!positionals[0]) die("用法: ab guidance <id 前缀> [--off]");
+  const store = open();
+  try {
+    const p = findByPrefix(store, positionals[0]);
+    const on = !values.off;
+    if (p.guidance === on) return console.log(`未变 [${short(p.id)}] ${p.text}`);
+    store.lifecycle("tag", p.id, null, { guidance: on });
+    const note = on && !(p.project_id === null && p.confirmed && p.confirmed_by === "user") ? "（只有用户确认过的全局条目才会每轮常驻）" : "";
+    console.log(`${on ? "已标为干活偏好" : "已取消干活偏好"} [${short(p.id)}] ${p.text}${note}`);
+  } finally {
+    store.close();
+  }
+}
+
+function cmdAudit(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { apply: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply]");
+  const store = open();
+  try {
+    const plan = workerQuoteAudit(store.project().props.values(), sessionTranscript(store), isWorkerTranscript);
+    const names = namesOf(store);
+    const line = (p: Proposition) => `  [${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${p.confirmed ? `（已确认:${p.confirmed_by}）` : "（未确认）"}: ${p.text.split("\n")[0]}`;
+    console.log(`只靠 worker 派活提示当"用户原话"的条目：撤销 ${plan.demote.length} 条，需用户复核 ${plan.review.length} 条（用户确认过的不自动改）。`);
+    for (const p of plan.demote) console.log(line(p));
+    if (plan.review.length) console.log("需用户复核（用户亲自确认过，不自动改；不要了用 ab archive）：");
+    for (const p of plan.review) console.log(line(p));
+    if (!values.apply) return console.log(plan.demote.length ? "预览，未写入。加 --apply 撤销上面这些条目的自动转正。" : "");
+    for (const p of plan.demote) store.lifecycle("unconfirm", p.id, null, { reason: "worker_prompt", note: "证据是父 agent 写给 worker 的派活提示，不是用户原话" });
+    console.log(`已撤销 ${plan.demote.length} 条。用户认可后可 ab confirm <id> 重新确认。`);
+  } finally {
+    store.close();
+  }
+}
+
+/** capture_sessions 里登记的 transcript 路径。 */
+function sessionTranscript(store: Store): (host: Host | null, sessionId: string | null) => string | null {
+  const q = store.workDb.prepare("SELECT transcript FROM capture_sessions WHERE host=? AND session_id=?");
+  return (host, sid) => {
+    if (!host || !sid) return null;
+    const row = q.get(host, sid) as { transcript?: string | null } | undefined;
+    return row?.transcript ?? null;
+  };
+}
+
 function cmdReview(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -841,6 +898,8 @@ const USAGE = `用法:
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
+  ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
+  ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
@@ -878,6 +937,8 @@ async function main(): Promise<void> {
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "archive") return cmdArchive(rest);
+    if (cmd === "guidance") return cmdGuidance(rest);
+    if (cmd === "audit") return cmdAudit(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus();
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);

@@ -65,7 +65,7 @@ test("归档走 reason=expired，可 reactivate 撤销；撤销后条目回到 a
 
 test("抽取器建议的 valid_days：7–730 的整数才采用，否则忽略（不丢候选）", () => {
   const win: ExtractWindow = { context: [], turns: [{ anchor: "t1", role: "tool", text: "Error: node:sqlite 不存在 (node v20)" }] };
-  const base = { kind: "pitfall", scope: "project", text: "node 20 没有 node:sqlite", trigger: "跑测试", basis: "observed_failure", evidence: [{ anchor: "#1", role: "tool", quote: "node:sqlite 不存在" }], relation: { type: "new", target: null } };
+  const base = { kind: "pitfall", scope: "project", text: "node 20 没有 node:sqlite", trigger: "当在本机跑项目测试时", basis: "observed_failure", evidence: [{ anchor: "#1", role: "tool", quote: "node:sqlite 不存在" }], relation: { type: "new", target: null } };
   const days = [30, 3, 1000, 12.5, "60", undefined];
   const got = days.map((d, i) => validate({ candidates: [{ ...base, text: `${base.text} ${i}`, valid_days: d }] }, win, [], `w${i}`).candidates[0]?.valid_days ?? null);
   assert.deepEqual(got, [30, null, null, null, null, null]);
@@ -105,6 +105,6 @@ test("抽取时把证据所在轮的时间记成 said_at（取最晚一条证据
     { anchor: "t1", role: "tool", text: "Error: node:sqlite 不存在 (node v20)", ts: "2026-09-01T00:00:00.000Z" },
     { anchor: "t2", role: "tool", text: "Error: 还是 node:sqlite 不存在", ts: "2026-09-02T00:00:00.000Z" },
   ] };
-  const c = { kind: "pitfall", scope: "project", text: "node 20 没有 node:sqlite", trigger: "跑测试", basis: "observed_failure", evidence: [{ anchor: "#1", role: "tool", quote: "node:sqlite 不存在" }, { anchor: "#2", role: "tool", quote: "还是 node:sqlite 不存在" }], relation: { type: "new", target: null } };
+  const c = { kind: "pitfall", scope: "project", text: "node 20 没有 node:sqlite", trigger: "当在本机跑项目测试时", basis: "observed_failure", evidence: [{ anchor: "#1", role: "tool", quote: "node:sqlite 不存在" }, { anchor: "#2", role: "tool", quote: "还是 node:sqlite 不存在" }], relation: { type: "new", target: null } };
   assert.equal(validate({ candidates: [c] }, win, [], "w-said").candidates[0].said_at, "2026-09-02T00:00:00.000Z");
 });

@@ -16,6 +16,7 @@ const neighbor = { id: "11111111-aaaa", kind: "rule", text: "代码风格统一�
 const good = {
   kind: "rule",
   scope: "global",
+  scenario: "当配置宿主 hook 命令时",
   text: "hook 命令用 node 绝对路径，不依赖 PATH",
   why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
   basis: "user_directive",
@@ -152,7 +153,7 @@ test("prompt 排除本项目代码里修好就失效的具体缺陷（2026-10-13
 test("decision/rule 没有背景的 why 一律丢弃，pitfall 不受影响", () => {
   const cases = [{ ...good, why: undefined }, { ...good, why: "用户明确要求。" }, { ...good, why: "用户的仓库卫生要求" }, { ...good, why: "hook 命令用 node 绝对路径" }];
   for (const c of cases) assert.deepEqual(validate({ candidates: [c] }, win, [neighbor], "w1").dropped, { no_why: 1 }, JSON.stringify(c.why));
-  const pit = { ...good, kind: "pitfall", basis: "user_directive", trigger: "配置 hook", why: undefined };
+  const pit = { ...good, kind: "pitfall", basis: "user_directive", trigger: "当配置宿主 hook 时", why: undefined };
   assert.deepEqual(validate({ candidates: [pit] }, win, [neighbor], "w1").dropped, {});
   assert.equal(hasBackground("助手把通知发到了生产 webhook，用户纠正后要求只用测试环境", "通知只发测试环境"), true);
   assert.equal(hasBackground("用户要求以后都这样做", "x"), false);

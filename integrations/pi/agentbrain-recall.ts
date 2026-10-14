@@ -41,7 +41,9 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", async (e, ctx): Promise<BeforeAgentStartEventResult | undefined> => {
     void capture("UserPromptSubmit", ctx, TIMEOUT_MS);
     try {
-      const raw = await ab(["recall", "--hook"], { prompt: e.prompt, cwd: process.cwd() }, TIMEOUT_MS);
+      // 带上 transcript_path：ab 据此认出被委派的 worker 会话，按子代理规矩召回（§21 2026-10-14）
+      const file = (ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.() ?? null;
+      const raw = await ab(["recall", "--hook"], { prompt: e.prompt, cwd: process.cwd(), transcript_path: file }, TIMEOUT_MS);
       if (!raw.trim()) return undefined;
       const parsed = JSON.parse(raw) as { hookSpecificOutput?: { additionalContext?: unknown } };
       const content = parsed.hookSpecificOutput?.additionalContext;
