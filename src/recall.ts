@@ -33,6 +33,23 @@ export const RECALL_TUNING = {
 };
 
 /**
+ * 未确认条目进每轮召回的门槛（§21 2026-10-14 用户批准放宽 D3）：坑、规则、决定都可以，不再要求有用户原话；
+ * 但有争议的不进：有冲突、有待确认纠正、关系未判定、与代码不符（stale），以及本身是纠正（未确认的纠正不能顶替旧条）。
+ * 每轮最多 1 条、标"未确认"、排在已确认之后的规矩不变（见 recall 末尾的挑选）。
+ */
+export function perTurnUnconfirmed(p: Proposition): boolean {
+  return (
+    !p.confirmed &&
+    RECALL_KINDS.includes(p.kind) &&
+    !p.unreconciled &&
+    !p.stale &&
+    !p.conflicts_with &&
+    !p.supersedes &&
+    !p.pending_corrections.length
+  );
+}
+
+/**
  * 能占保底位的纠正：已确认、替代过旧条目（任何种类，事实被纠正也要带上），
  * 且自己没有待确认的更正、没有冲突（否则"纠正"本身就有争议，不该顶到第一位）。
  */
@@ -62,6 +79,7 @@ export async function recall(
   shown: string[] = [],
   stale: string[] = [],
   resolve: (cwd: string) => { name: string; path: string } | null = resolveProject,
+  worker = false,
 ): Promise<string> {
   const prompt = query.trim();
   if (prompt.length < 4 || prompt.startsWith("/")) return "";
@@ -70,10 +88,13 @@ export async function recall(
   const here = resolve(cwd);
   const projectId = here ? projectIdByName(store, here.name) : null;
   const props = store.project().props;
-  const inScope = (p: Proposition) => (p.project_id === null ? p.for_workers : !!here && p.project_id === projectId);
+  // 全局条目（不论 for_workers）都进主会话每轮召回；for_workers 只决定子代理能不能看到（§21 2026-10-14 用户批准放宽）
+  // 子代理/被委派的 worker 会话（worker=true）仍按旧规矩：全局只看 for_workers，未确认只放有用户原话的规则/决定（D3）
+  const inScope = (p: Proposition) => (p.project_id === null ? (worker ? p.for_workers : true) : !!here && p.project_id === projectId);
+  const unconfirmedOk = worker ? recallableUnconfirmed : perTurnUnconfirmed;
   // 资格过滤在打分、截取之前做完（坑 43150a18）：不合格的条目不能占候选位
   const active = [...props.values()].filter((p) => p.state === "active");
-  const eligible = active.filter((p) => inScope(p) && (isConfirmedCorrection(p) || (RECALL_KINDS.includes(p.kind) && (p.confirmed || recallableUnconfirmed(p)))));
+  const eligible = active.filter((p) => inScope(p) && (isConfirmedCorrection(p) || (RECALL_KINDS.includes(p.kind) && (p.confirmed || unconfirmedOk(p)))));
   if (!eligible.length) return "";
   const lex = new LexIndex(active.map((p) => ({ id: p.id, text: p.why ? `${p.text}\n${p.why}` : p.text })));
   const qTokens = lexTokens(text);
