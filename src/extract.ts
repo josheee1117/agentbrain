@@ -222,14 +222,25 @@ export function substantiveUserText(text: string): boolean {
 
 /**
  * 保守预检：窗口里只要有一轮实质性的用户发言，或任何没被压成占位符的工具输出（报错，可能是坑），就要抽取。
- * 只剩助手自言自语、被省略的工具输出、纯应答/一次性授权的窗口才跳过——这些按抽取规则本来也不会产出记忆。
+ * 只剩命令/工具调用、被省略的工具输出、纯应答/一次性授权、助手正文不足 200 字的窗口才跳过——这些按抽取规则本来也不会产出记忆。
  */
+const COMMAND_TAGS = /<(command-[a-z]+|local-command-[a-z]+)>[\s\S]*?<\/\1>/g;
+const LONG_PASTE = 200;
+const MAX_SKIP_PROSE = 200;
+
 export function hasExtractableSignal(turns: readonly Turn[]): boolean {
+  let prose = 0;
   for (const t of turns) {
-    if (t.role === "user" && substantiveUserText(t.text)) return true;
+    if (t.role === "user") {
+      if (substantiveUserText(t.text)) return true;
+      // 整段被当作贴入内容剥掉的长提示（<task>、定时任务等）也可能带约束，保守起见照常抽取。
+      if (t.text.replace(COMMAND_TAGS, "").trim().length > LONG_PASTE) return true;
+    }
     if (t.role === "tool" && !TOOL_PLACEHOLDER.test(t.text.trim())) return true;
+    if (t.role === "assistant" && !/^调用 /.test(t.text)) prose += t.text.length;
   }
-  return false;
+  // 助手的长篇说明里可能有观察到的坑（agent_inference），只放过几乎没有正文的窗口。
+  return prose > MAX_SKIP_PROSE;
 }
 
 /** 只复述"用户要求"、不说背景的 why，视同没写。 */
