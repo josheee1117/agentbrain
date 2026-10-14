@@ -5,11 +5,11 @@
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
-import { recallableUnconfirmed, type Host, type PropKind, type Proposition, type SourcePointer } from "./l2.ts";
+import { type Host, type PropKind, type Proposition, type SourcePointer } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandSource, latestAnchor } from "./source.ts";
 import { detectHost, locateTranscript } from "./host.ts";
@@ -19,19 +19,16 @@ import { chatClient, loadChatConfig } from "./llm.ts";
 import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, PROPOSAL_EXPIRE_DAYS, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
+import { brief, BriefError } from "./brief.ts";
+import { recall } from "./recall.ts";
+import { fmtCounts, statusReport } from "./status.ts";
+import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
-const BRIEF_MAX_CHARS = 2000;
-const RECALL_MAX_ITEMS = 3;
-const RECALL_MAX_CHARS = 600;
 const RECALL_EMBED_TIMEOUT_MS = 3000;
-// 测试集上 0.55 负例误报 0%、召回 63%；0.50 召回 87% 但误报 13%。每轮注入宁缺毋滥。
-const RECALL_MIN_SIM = 0.55;
 const GET_MAX_NEIGHBORS = 3;
-const RECALL_KINDS: PropKind[] = ["pitfall", "rule", "decision"];
 const EXTRACT_TIMEOUT_MS = 90_000;
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
-const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
   p.project_id === null ? "全局" : (names.get(p.project_id) ?? "未知项目");
 
@@ -76,14 +73,6 @@ async function updateVectors(store: Store): Promise<string | null> {
   }
 }
 
-function short(id: string): string {
-  return id.slice(0, 8);
-}
-
-function disputed(p: Proposition): string {
-  return p.pending_corrections.length ? `（有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}）` : "";
-}
-
 /** 读路径标记：未确认、自动沉淀、关系未判定（§9.4.4）、与代码不符。 */
 function marks(p: Proposition): string {
   return [
@@ -104,10 +93,6 @@ function codeRef(r: import("./l2.ts").CodeRef): string {
   return "commit" in r ? `commit ${r.commit.slice(0, 10)}「${r.quote}」` : `${r.path}:${r.line_start}${r.line_end !== r.line_start ? `-${r.line_end}` : ""}「${r.quote}」`;
 }
 
-function active(store: Store): Proposition[] {
-  return [...store.project().props.values()].filter((p) => p.state === "active");
-}
-
 /** 前缀必须唯一命中一条，否则报错退出。 */
 function findByPrefix(store: Store, prefix: string): Proposition {
   const hits = [...store.project().props.values()].filter((p) => p.id.startsWith(prefix));
@@ -115,150 +100,8 @@ function findByPrefix(store: Store, prefix: string): Proposition {
   die(hits.length === 0 ? `找不到记忆: ${prefix}` : `前缀不唯一，匹配了 ${hits.length} 条: ${prefix}`);
 }
 
-function projectIdByName(store: Store, name: string): string {
-  const hit = store.listProjects().find((p) => p.name === name);
-  return hit ? hit.id : store.ensureProject(name);
-}
-
 function namesOf(store: Store): Map<string, string> {
   return new Map(store.listProjects().map((p) => [p.id, p.name]));
-}
-
-// ---------- brief ----------
-
-function counts(list: Proposition[]): string {
-  const n = (k: PropKind) => list.filter((p) => p.kind === k).length;
-  return `坑 ${n("pitfall")}、规则 ${n("rule")}、决定 ${n("decision")}`;
-}
-
-/** 换行（含连续空白行）压成 " / "，不丢后半段。放不下的整条不放，计入 hidden。 */
-function lines(list: Proposition[], kinds: PropKind[], budget: number): { text: string; hidden: number } {
-  const rows = list.filter((p) => kinds.includes(p.kind)).sort((a, b) => b.seq - a.seq);
-  let text = "";
-  let shown = 0;
-  for (const p of rows) {
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${disputed(p)}\n`;
-    if (text.length + line.length > budget) continue;
-    text += line;
-    shown++;
-  }
-  return { text, hidden: rows.length - shown };
-}
-
-const CLOSE = "\n</agentbrain>\n";
-
-/** 正文预算 = 上限减掉开头、各段标题、结尾提示。各段再按原比例（均分）分。 */
-function contentBudgets(fixed: string[], titles: string[]): number[] {
-  const n = fixed.length + titles.length;
-  const fixedLen =
-    fixed.reduce((s, p) => s + p.length, 0) +
-    titles.reduce((s, t) => s + t.length + 1, 0) +
-    Math.max(0, n - 1) +
-    CLOSE.length;
-  const total = Math.max(0, BRIEF_MAX_CHARS - fixedLen);
-  const each = titles.length ? Math.floor(total / titles.length) : 0;
-  return titles.map(() => each);
-}
-
-function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean): string {
-  const all = active(store);
-  const global = all.filter((p) => p.project_id === null);
-  const pending: Proposition[] = [];
-
-  const named = projectName ? loadRegistry().find((e) => e.name === projectName) : undefined;
-  if (projectName && !named) die(`清单里没有项目: ${projectName}`);
-  const here = resolveProject(cwd);
-  const project = named ? { name: named.name } : here;
-  const inPm = isRegistryHome(cwd);
-
-  let head = "";
-  const before: string[] = [];
-  const after: string[] = [];
-  const sections: { title: string; rows: Proposition[]; kinds: PropKind[] }[] = [];
-  let noteFor = (n: number) => `还有 ${n} 条放不下，用 ab search 查。`;
-
-  if (worker) {
-    if (!project) die("--worker 需要已登记项目：在项目目录里运行，或给出项目名");
-    const pid = projectIdByName(store, project.name);
-    const mine = all.filter((p) => p.project_id === pid);
-    head = `<agentbrain project="${project.name}" worker>`;
-    const rules = global.filter((p) => p.kind === "rule" && p.for_workers);
-    pending.push(...rules.filter((p) => !p.confirmed));
-    pending.push(...mine.filter((p) => (p.kind === "pitfall" || p.kind === "rule") && !p.confirmed));
-    sections.push(
-      { title: "全局规则（子代理也要看）：", rows: rules.filter((p) => p.confirmed), kinds: ["rule"] },
-      {
-        title: `${project.name} 的坑与规则（最近在前；与现场证据冲突时信现场）：`,
-        rows: mine.filter((p) => p.confirmed),
-        kinds: ["pitfall", "rule"],
-      },
-    );
-  } else if ((inPm && !projectName) || (!project && !projectName && inPm)) {
-    head = '<agentbrain scope="pm">';
-    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
-    sections.push({ title: "全局规则与坑（最近在前）：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] });
-    const idByName = new Map(store.listProjects().map((p) => [p.name, p.id]));
-    const overview = loadRegistry()
-      .filter((e) => e.path)
-      .map((e) => {
-        const mine = all.filter((x) => x.project_id === idByName.get(e.name));
-        pending.push(...mine.filter((x) => !x.confirmed));
-        return `- ${e.name}：${counts(mine.filter((x) => x.confirmed))}`;
-      });
-    if (overview.length) after.push("各项目概况：\n" + overview.join("\n"));
-    noteFor = (n) => `全局还有 ${n} 条放不下，用 ab search --all 查。`;
-  } else if (project) {
-    const pid = projectIdByName(store, project.name);
-    const mine = all.filter((p) => p.project_id === pid);
-    head = `<agentbrain project="${project.name}">`;
-    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
-    pending.push(...mine.filter((p) => !p.confirmed));
-    sections.push(
-      { title: "全局规则与坑：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] },
-      {
-        title: `${project.name} 的坑与规则（最近在前；与现场证据冲突时信现场）：`,
-        rows: mine.filter((p) => p.confirmed),
-        kinds: ["pitfall", "rule"],
-      },
-    );
-    const decisions = mine.filter((p) => p.kind === "decision" && p.confirmed).length;
-    const notes = mine.filter((p) => p.kind === "note" && p.confirmed).length;
-    after.push(`决定 ${decisions} 条、事实 ${notes} 条：用 ab search 查，ab get 看当时的讨论。`);
-  } else {
-    head = '<agentbrain scope="unregistered">';
-    before.push("当前目录不是已登记项目，只给出全局记忆。");
-    pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
-    sections.push({ title: "全局规则与坑：", rows: global.filter((p) => p.confirmed), kinds: ["rule", "pitfall"] });
-  }
-
-  const tails = [
-    worker
-      ? "你是被派活的子代理：不写记忆，新坑写进汇报，由主会话决定是否记下。搜索用 ab search，看一条用 ab get。"
-      : "记住用 ab remember，搜索用 ab search，看一条用 ab get。",
-  ];
-  const auto = pending.filter((p) => p.origin === "extract").length;
-  if (pending.length && !worker)
-    tails.push(
-      auto
-        ? `另有 ${pending.length} 条未确认（其中自动沉淀 ${auto} 条，ab search 可见），用户认可后 ab confirm <id>。`
-        : `另有 ${pending.length} 条 agent 自记未确认（ab search 可见），用户认可后 ab confirm <id>。`,
-    );
-
-  const candidates = sections.reduce((n, s) => n + s.rows.filter((p) => s.kinds.includes(p.kind)).length, 0);
-  const noteReserve = candidates > 0 ? noteFor(candidates) : "";
-  const budgets = contentBudgets([head, ...before, ...after, ...(noteReserve ? [noteReserve] : []), ...tails], sections.map((s) => s.title));
-  let hidden = 0;
-  const body: string[] = [];
-  sections.forEach((s, i) => {
-    const got = lines(s.rows, s.kinds, budgets[i] ?? 0);
-    hidden += got.hidden;
-    if (got.text) body.push(s.title + "\n" + got.text.trimEnd());
-  });
-  const note = hidden ? noteFor(hidden) : "";
-  const parts = [head, ...before, ...body, ...after, ...(note ? [note] : []), ...tails];
-  let out = parts.filter(Boolean).join("\n") + CLOSE;
-  if (out.length > BRIEF_MAX_CHARS) out = out.slice(0, BRIEF_MAX_CHARS - 40) + "\n…已截断，用 ab search 查。\n</agentbrain>\n";
-  return out;
 }
 
 // ---------- 子命令 ----------
@@ -272,54 +115,6 @@ function readStdin(): Promise<string> {
     process.stdin.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     process.stdin.on("error", reject);
   });
-}
-
-/** 命中时返回 <agentbrain-recall> 块；跳过或没有命中返回空串。 */
-async function recall(store: Store, query: string, cwd: string): Promise<string> {
-  const prompt = query.trim();
-  if (prompt.length < 4 || prompt.startsWith("/")) return "";
-  const here = resolveProject(cwd);
-  const projects = here ? [projectIdByName(store, here.name)] : [];
-  const { embedder } = createEmbedder(RECALL_EMBED_TIMEOUT_MS);
-  const { hits } = await store.searchHybrid(prompt, {
-    projects,
-    includeGlobal: true,
-    includeArchived: true,
-    limit: 20,
-    skipSync: true,
-    minSim: RECALL_MIN_SIM,
-  }, embedder);
-  const props = store.project().props;
-  const inScope = (p: Proposition) => {
-    if (p.project_id === null && !p.for_workers) return false;
-    if (p.project_id !== null && (!here || p.project_id !== projects[0])) return false;
-    return true;
-  };
-  const ranked = hits.map((h) => props.get(h.id)).filter((p): p is Proposition => !!p && p.state === "active" && inScope(p));
-  const confirmed = ranked.filter((p) => p.confirmed && RECALL_KINDS.includes(p.kind)).slice(0, RECALL_MAX_ITEMS);
-  // D3（§21 2026-10-13）：有用户原话依据的未确认规则/决定，最多 1 条，排在已确认之后
-  const extra = confirmed.length < RECALL_MAX_ITEMS ? ranked.find(recallableUnconfirmed) : undefined;
-  const picked = extra ? [...confirmed, extra] : confirmed;
-  if (!picked.length) return "";
-  const head = "<agentbrain-recall>\n";
-  const tail = "\n</agentbrain-recall>\n";
-  const rows: string[] = [];
-  for (const p of picked) {
-    const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
-    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${p.confirmed ? "" : "（未确认）"}${disputed(p)}: ${body}`;
-    const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
-    const room = RECALL_MAX_CHARS - used;
-    if (room <= 0) break;
-    if (line.length > room) {
-      if (room < 2) break;
-      line = line.slice(0, room - 1) + "…";
-      rows.push(line);
-      break;
-    }
-    rows.push(line);
-  }
-  if (!rows.length) return "";
-  return head + rows.join("\n") + tail;
 }
 
 async function cmdRecall(argv: string[]): Promise<void> {
@@ -343,7 +138,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
   }
   const store = open();
   try {
-    const block = await recall(store, query, cwd);
+    const block = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder);
     if (!block) return;
     if (values.hook) {
       process.stdout.write(JSON.stringify({
@@ -366,7 +161,14 @@ function cmdBrief(argv: string[]): void {
   });
   const store = open();
   try {
-    process.stdout.write(brief(store, process.cwd(), positionals[0], values.worker === true));
+    let out: string;
+    try {
+      out = brief(store, process.cwd(), positionals[0], values.worker === true);
+    } catch (e) {
+      if (e instanceof BriefError) die(e.message);
+      throw e;
+    }
+    process.stdout.write(out);
   } finally {
     store.close();
   }
@@ -940,98 +742,20 @@ async function cmdImport(argv: string[]): Promise<void> {
   }
 }
 
-function fmtCounts(o: Record<string, number>): string {
-  const parts = Object.entries(o).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`);
-  return parts.length ? parts.join("、") : "无";
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url;
-  }
-}
-
-function sedimentLines(store: Store): string[] {
-  const now = new Date();
-  const st = intake.stats(store.workDb, now);
-  const props = [...store.project().props.values()];
-  const auto = props.filter((p) => p.origin === "extract");
-  const cfg = loadChatConfig(home());
-  const r = st.receipts7d;
-  const lastRetry = st.windows.nextRetry ? `，最早 ${new Date(st.windows.nextRetry).toLocaleString("zh-CN", { hour12: false })} 重试` : "";
-  return [
-    "沉淀（切片 3）:",
-    `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；补登记历史会话（装 hook 前）${st.sessions.backfill}；近 7 天疑似漏登记 ${st.sessions.scanned}${st.sessions.scanned ? `（${fmtCounts(st.sessions.scannedByHost)}；hook 装好后开始的会话仍只能靠扫描登记，该宿主 hook 可能没生效，Codex 要在 /hooks 里信任）` : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
-    `  窗口: 完成 ${st.windows.done}，延后 ${st.windows.deferred}${lastRetry}，失败 ${st.windows.failed}；未完成原因 ${fmtCounts(st.windows.errors)}`,
-    `  今日用量: 调用 ${st.budget.calls}，token ${st.budget.tokens}（只记录，不设上限）`,
-    `  近 7 天: 候选 ${r.candidates}，提议 ${r.proposals}，附加来源 ${r.attached}，待确认纠正 ${r.corrections}，关系未判定 ${r.unreconciled}，跨会话印证 ${r.corroborated}，同窗口合并 ${r.merged}；丢弃整条候选 ${fmtCounts(r.dropped)}、单条证据 ${fmtCounts(r.evidence_dropped)}；剥掉注入/ab 输出 ${r.stripped}；脱敏命中 ${fmtCounts(r.sanitizer)}`,
-    `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，过期归档 ${auto.filter((p) => p.expired).length}`,
-    `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
-    `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : `${cfg.model} @ ${hostOf(cfg.baseUrl)}（key: 钥匙串 ${cfg.keyService}）`}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
-  ];
-}
-
-function containsBrief(file: string): boolean {
-  try {
-    return readFileSync(file, "utf8").includes("ab brief");
-  } catch {
-    return false;
-  }
-}
-
 function cmdStatus(): void {
-  const cwd = process.cwd();
   const store = open();
   try {
-    const here = resolveProject(cwd);
-    const where = isRegistryHome(cwd) ? "pm（清单所在仓库）" : here ? `项目 ${here.name}` : "未登记目录";
-    const found = detectHost();
-    const proj = store.project();
-    const all = [...proj.props.values()];
-    const names = namesOf(store);
-    const byScope = new Map<string, number>();
-    for (const p of all) if (p.state === "active") byScope.set(p.project_id ?? "", (byScope.get(p.project_id ?? "") ?? 0) + 1);
-    const scopeLines = [...byScope.entries()].map(([id, n]) => `${id === "" ? "全局" : (names.get(id) ?? id)} ${n}`);
-
-    const reg = loadRegistry();
-    const regNames = new Set(reg.map((e) => e.name));
-    const orphans = store
-      .listProjects()
-      .filter((p) => !regNames.has(p.name))
-      .map((p) => `孤立项目: ${p.name}（${byScope.get(p.id) ?? 0} 条记忆）——清单改名或删除了？`);
-    const problems = reg.flatMap((e) => {
-      if (!e.path) return [`${e.name}: 档案没有路径行`];
-      return existsSync(e.path) ? [] : [`${e.name}: 路径不存在 ${e.path}`];
-    });
-    const userHome = homedir();
-    const wires = [
-      ["~/.claude/CLAUDE.md", join(userHome, ".claude/CLAUDE.md")],
-      ["~/.codex/AGENTS.md", join(userHome, ".codex/AGENTS.md")],
-      ["~/.pi/agent/AGENTS.md", join(userHome, ".pi/agent/AGENTS.md")],
-      ["pm 仓库根 AGENTS.md", join(registryDir(), "..", "AGENTS.md")],
-    ].map(([label, file]) => `${label}: ${containsBrief(file) ? "含 ab brief" : "没有 ab brief"}`);
     const { embedder, reason } = createEmbedder();
-    const vectors = store.vectorStatus();
-    const vectorLine = embedder
-      ? `向量: ${embedder.model}，已向量化 ${vectors.model === embedder.model ? vectors.embedded : 0}/${vectors.total}`
-      : `向量: 不可用（${reason}）`;
-
-    console.log(
-      [
-        `目录: ${where}`,
-        `宿主: ${!found.ok ? `宿主检测失败: ${found.error}` : found.detection ? `${found.detection.host}  会话 ${found.detection.session_id ?? "（未取得）"}  transcript ${found.detection.transcript ? "已找到" : "未找到"}` : "未检测到宿主"}`,
-        `active: ${scopeLines.join("、") || "无"}`,
-        vectorLine,
-        `doctor: orphan 事件 ${proj.orphans}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
-        `接线: ${wires.join("；")}`,
-        `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
-        ...sedimentLines(store),
-        ...(orphans.length ? [orphans.join("\n")] : []),
-        `store: ${home()}`,
-      ].join("\n"),
-    );
+    console.log(statusReport(store, {
+      cwd: process.cwd(),
+      userHome: homedir(),
+      storeHome: home(),
+      host: detectHost(),
+      embedder,
+      embedReason: reason,
+      chatConfig: loadChatConfig(home()),
+      now: new Date(),
+    }));
   } finally {
     store.close();
   }
