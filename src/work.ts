@@ -8,8 +8,8 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./store.ts";
-import type { ArchiveBody, Basis, ConfirmBody, EvidenceBody, Host, Proposition, RelateBody, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
-import { buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
+import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
+import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
@@ -738,24 +738,16 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const target = v.target ? props.get(v.target.id) : null;
       // 同一次运行里前面的并入可能已让本条被印证转正：已确认的条目一律不再自动改
       if (!p || p.state !== "active" || p.confirmed || p.related || (v.target && target?.state !== "active")) continue;
-      const rel: RelateBody = { outcome: v.outcome, target: target?.id ?? null, reason: v.reason, model: deps.chat.model };
-      const appends: PendingAppend[] = [{ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel }];
-      if (v.outcome === "duplicate" && target) {
-        const basis = p.basis ?? "agent_inference";
-        const ev: EvidenceBody = { source: p.source, basis, evidence: p.evidence, window_id: `relate:${p.id}` };
-        appends.push({ kind: "evidence", project_id: target.project_id, session_id: p.source.session_id, target_id: target.id, body: ev });
-        if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.unreconciled && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
-          const userQuotes = p.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
-          const sessions = distinctUserSessions(target, { host: p.source.host, session_id: p.source.session_id, basis, quote_sha256: userQuotes });
-          if (sessions.length >= 2) {
-            const cb: ConfirmBody = { by: "corroboration", sessions };
-            appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
-            report.relate.corroborated++;
-          }
-        }
-        const ar: ArchiveBody = { reason: "duplicate", into: target.id };
-        appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
-      }
+      const { appends, corroborated } = applyVerdict(p, target ?? null, v, deps.chat.model, {
+        mode: "absorb-new",
+        corroborate: (np, t, basis) => {
+          if (!CORROBORATE_KINDS.has(t.kind) || t.project_id === null || t.confirmed || t.unreconciled || t.conflicts_with || t.pending_corrections.length || t.supersedes) return null;
+          const userQuotes = np.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
+          const sessions = distinctUserSessions(t, { host: np.source.host, session_id: np.source.session_id, basis, quote_sha256: userQuotes });
+          return sessions.length >= 2 ? { by: "corroboration", sessions } : null;
+        },
+      });
+      if (corroborated) report.relate.corroborated++;
       deps.store.commit(appends, () => {});
       report.relate[v.outcome]++;
     }
