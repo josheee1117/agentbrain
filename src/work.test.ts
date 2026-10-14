@@ -78,6 +78,7 @@ function env(): Env {
       chat: chat ? { chat, model: "fake-llm" } : { error: "no_config", message: "没有 extract.json" },
       embedder: fakeEmbed,
       registry: [{ name: "alpha", path: repo }],
+      staging: false, // 这些用例测 v2 的正式库流程（印证、纠正、核验）；候选区另有用例
       registryDir: regDir,
       resolveProject: (cwd) => (cwd.startsWith(repo) ? { name: "alpha", path: repo } : null),
       projectId: (name) => store.ensureProject(name),
@@ -779,4 +780,49 @@ test("用前核对排队：已转正的条目代码变了 → 下次 ab work 优
   assert.equal(r2.verify.contradicted, 1);
   assert.equal(queued(), 0);
   assert.ok(e.store.project().props.get(id)!.stale, "标与代码不符");
+});
+
+// ---------- v3 第 1 阶段：候选区 ----------
+
+test("候选区（默认）：自动抽取写成候选，不进召回/搜索；重复不给正式条目追加来源；价值标记只记录不丢弃", async () => {
+  const e = env();
+  const existing = e.store.remember(e.pid, "s0", false, { kind: "rule", text: "hook 命令写 node 绝对路径，不依赖 PATH", confirmed: false, origin: "extract", basis: "user_directive", evidence: [{ anchor: "u0", role: "user", quote_sha256: "h0" }], source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" } });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的")]));
+  const chat = fakeChat(() => json({ candidates: [
+    { ...RULE, scenario: "当配置宿主 hook 命令时", durability: "phase", findable: false, guidance: true },
+    { ...RULE, text: "另一条重复的", relation: { type: "duplicate", target: "m1" } },
+  ] }));
+  await runWork(e.deps(chat, { staging: true }), { sweep: false, dryRun: false });
+  const all = props(e.store);
+  const cands = all.filter((p) => p.state === "candidate");
+  assert.equal(cands.length, 2, "重复也进候选区");
+  assert.ok(cands.every((p) => p.candidate && !p.confirmed));
+  const first = cands.find((p) => p.text === RULE.text)!;
+  assert.deepEqual(first.value?.flags, ["phase"]);
+  assert.equal(first.value?.scenario, "当配置宿主 hook 命令时");
+  assert.equal(first.guidance, true);
+  assert.deepEqual(e.store.project().props.get(existing)!.extra_sources, [], "正式条目没被追加来源");
+  // 归档再恢复回到候选区；用户确认则进正式库
+  e.store.lifecycle("archive", first.id, null);
+  e.store.lifecycle("reactivate", first.id, null);
+  assert.equal(e.store.project().props.get(first.id)!.state, "candidate");
+  e.store.lifecycle("confirm", first.id, null);
+  assert.equal(e.store.project().props.get(first.id)!.state, "active");
+});
+
+test("候选区不外泄：候选不进每轮召回、常驻偏好、brief、全文/向量检索；带 supersedes 的候选不给正式条目挂待确认纠正", async () => {
+  const { recall, guidanceBlock } = await import("./recall.ts");
+  const { active } = await import("./present.ts");
+  const e = env();
+  const old = e.store.remember(e.pid, "s0", false, { kind: "rule", text: "hook 命令 lockfile 旧规则", confirmed: true, source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" } });
+  const cand = e.store.remember(null, "s1", false, { kind: "rule", text: "hook 命令 lockfile 候选规则", confirmed: false, candidate: true, guidance: true, supersedes: old, source: { host: "claude", session_id: "s1", transcript: null, anchor: null, summary: "x" } });
+  const props = e.store.project().props;
+  assert.equal(props.get(cand)!.state, "candidate");
+  assert.deepEqual(props.get(old)!.pending_corrections, []);
+  const out = await recall(e.store, "hook 命令 lockfile", e.repo, () => null, [], [], () => ({ name: "alpha", path: e.repo }));
+  assert.ok(!out.includes(cand.slice(0, 8)), out);
+  assert.equal(guidanceBlock(props.values(), false).includes(cand.slice(0, 8)), false);
+  assert.ok(!active(e.store).some((p) => p.id === cand), "brief 读的 active() 不含候选");
+  const { hits } = await e.store.searchHybrid("lockfile", { projects: [e.pid], includeGlobal: true, limit: 10 }, null);
+  assert.ok(!hits.some((h) => h.id === cand));
 });

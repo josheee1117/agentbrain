@@ -205,7 +205,7 @@ const D=JSON.parse(document.getElementById('data').textContent);
 const E=D.entries,byId=new Map(E.map(e=>[e.id,e]));
 const KIND={rule:'规则',decision:'决定',pitfall:'坑',note:'事实'};
 const ST={user:'用户确认',code:'代码核验转正',corroboration:'跨会话印证转正',unconfirmed:'未确认',stale:'与代码不符'};
-const STATE={active:'有效',archived:'已归档',superseded:'已被替代'};
+const STATE={active:'有效',archived:'已归档',superseded:'已被替代',candidate:'候选'};
 const LINK={merged_into:'已并入',merged_from:'合并自',refines:'补充了',refined_by:'被补充',conflicts:'冲突',supersedes:'替代了',superseded_by:'被替代',pending_correction:'待确认纠正'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const projects=[...new Set(E.map(e=>e.project))].sort();

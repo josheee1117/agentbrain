@@ -5,7 +5,10 @@
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag";
 export type Host = "claude" | "codex" | "pi";
-export type PropState = "active" | "archived" | "superseded";
+/** candidate：v3 候选区（ab work 自动抽取写这里），不进召回、brief、搜索，等审稿人裁决（§21 2026-10-14 v3）。 */
+export type PropState = "active" | "archived" | "superseded" | "candidate";
+/** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */
+export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative";
 
 export interface SourcePointer {
   host: Host | null;
@@ -74,6 +77,10 @@ export interface RememberBody {
   said_at?: string;
   /** 指导 agent 怎么干活的偏好（汇报方式、语气、工作流）。已确认的全局偏好每轮常驻注入（§21 2026-10-14 价值审计 C）。 */
   guidance?: boolean;
+  /** 写进候选区（v3）：投影成 state=candidate。 */
+  candidate?: boolean;
+  /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
+  value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -181,6 +188,9 @@ export interface Proposition {
   guidance: boolean;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
   demoted: UnconfirmBody["reason"] | null;
+  /** 进过候选区（归档后再恢复也回到候选区，不会被恢复成正式条目）。 */
+  candidate: boolean;
+  value: RememberBody["value"] | null;
 }
 
 export interface Projection {
@@ -233,7 +243,7 @@ export function fold(rows: EventRow[]): Projection {
         source: b.source,
         for_workers: b.for_workers === true,
         confirmed: b.confirmed !== false,
-        state: "active",
+        state: b.candidate === true ? "candidate" : "active",
         supersedes: b.supersedes,
         pending_corrections: [],
         origin: b.origin ?? "manual",
@@ -254,6 +264,8 @@ export function fold(rows: EventRow[]): Projection {
         import_ref: b.import_ref ?? null,
         guidance: b.guidance === true,
         demoted: null,
+        candidate: b.candidate === true,
+        value: b.value ?? null,
       });
       continue;
     }
@@ -268,6 +280,11 @@ export function fold(rows: EventRow[]): Projection {
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
       if ((b.by ?? "user") === "user") target.demoted = null;
+      // 用户亲自确认的候选直接进正式库（用户的话优先于审稿人）
+      if ((b.by ?? "user") === "user" && target.candidate) {
+        target.candidate = false;
+        if (target.state === "candidate") target.state = "active";
+      }
       else if (target.demoted) {
         // 撤销过的条目不再自动转正（旧版本写下的事件按顺序重放时也一样）
         if (target.confirmed_by !== "user") {
@@ -323,7 +340,7 @@ export function fold(rows: EventRow[]): Projection {
       target.conflicts_with = b.outcome === "conflicts" ? b.target : null;
       continue;
     }
-    target.state = r.kind === "archive" ? "archived" : "active";
+    target.state = r.kind === "archive" ? "archived" : target.candidate ? "candidate" : "active";
     const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
     target.expired = ab?.reason === "expired";
     target.merged_into = ab?.reason === "duplicate" ? (ab.into ?? null) : null;
