@@ -5,10 +5,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { ArchiveBody, EvidenceBody, ImportRef, PropKind, Proposition, RelateBody, RememberBody } from "./l2.ts";
-import type { PendingAppend, Store, Embedder } from "./store.ts";
+import type { ImportRef, PropKind, Proposition, RememberBody } from "./l2.ts";
+import type { Store, Embedder } from "./store.ts";
 import { parseJsonLoose, type Chat } from "./llm.ts";
-import { buildRelateMessages, parseRelate, type RelateItem } from "./relate.ts";
+import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem } from "./relate.ts";
 import { sanitize, hasSecret } from "./sanitize.ts";
 
 export const IMPORT_TEXT_MAX = 400;
@@ -311,28 +311,11 @@ async function relateImports(deps: ImportDeps, ids: string[], report: ImportRepo
       const p = props.get(b.prop.id);
       const t = v.target ? props.get(v.target.id) : null;
       if (!p || p.state !== "active" || (v.target && t?.state !== "active")) return;
-      const rel: RelateBody = { outcome: v.outcome, target: t?.id ?? null, reason: v.reason, model: deps.chat!.model };
-      const appends: PendingAppend[] = [];
-      if (v.outcome === "duplicate" && t) {
-        if (t.confirmed && t.confirmed_by === "user") {
-          // 已有条目是用户确认的：不动它，导入条并进去
-          appends.push({ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel });
-          appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: { reason: "duplicate", into: t.id } as ArchiveBody });
-          report.relate.mergedIntoExisting++;
-        } else {
-          const back: RelateBody = { outcome: "duplicate", target: p.id, reason: v.reason, model: deps.chat!.model };
-          const ev: EvidenceBody = { source: t.source, basis: t.basis ?? "agent_inference", evidence: t.evidence, window_id: `import:${t.id}` };
-          appends.push({ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel });
-          appends.push({ kind: "evidence", project_id: p.project_id, session_id: t.source.session_id, target_id: p.id, body: ev });
-          appends.push({ kind: "relate", project_id: t.project_id, session_id: null, target_id: t.id, body: back });
-          appends.push({ kind: "archive", project_id: t.project_id, session_id: null, target_id: t.id, body: { reason: "duplicate", into: p.id } as ArchiveBody });
-          report.relate.mergedExisting++;
-        }
-      } else {
-        appends.push({ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel });
-        if (v.outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
-        else if (v.outcome !== "duplicate") report.relate[v.outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
-      }
+      const { appends, merge } = applyVerdict(p, t ?? null, v, deps.chat!.model, { mode: "user-confirmed-wins" });
+      if (merge === "new-into-target") report.relate.mergedIntoExisting++;
+      else if (merge === "target-into-new") report.relate.mergedExisting++;
+      else if (v.outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
+      else if (v.outcome !== "duplicate") report.relate[v.outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
       deps.store.commit(appends, () => {});
     });
   }

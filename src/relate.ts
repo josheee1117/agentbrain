@@ -1,10 +1,11 @@
 /**
  * 切片 3 关系判定第 2 层（设计 §9.4.4、§9.4.5；§21 2026-10-13）：
  * 一条自动沉淀的未确认条目与它的高相似近邻，交给后台模型判是重复、补充、冲突还是无关。
- * 这里只管 prompt 和确定性校验；写 L1 在 work.ts。
+ * 这里管 prompt、确定性校验，以及判定落成哪些 L1 追加（applyVerdict）；真正 commit 在调用方。
  */
 import type { ChatMessage } from "./llm.ts";
-import type { Proposition } from "./l2.ts";
+import type { ArchiveBody, Basis, ConfirmBody, EvidenceBody, Proposition, RelateBody } from "./l2.ts";
+import type { PendingAppend } from "./store.ts";
 import { sanitize } from "./sanitize.ts";
 
 export type RelateOutcome = "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
@@ -65,4 +66,58 @@ export function parseRelate(raw: unknown, items: RelateItem[]): (RelateVerdict |
     out[qi] = { outcome, target: needsTarget ? target : null, reason };
   }
   return out;
+}
+
+// ---------- 判定落地（work 与 pensieve 共用） ----------
+
+/**
+ * duplicate 的并法，两种来源各有规则，必须保持原样：
+ * - absorb-new（work 自动沉淀）：新条并入已有条，证据挂到已有条；由 corroborate 决定是否印证转正。
+ * - user-confirmed-wins（pensieve 导入）：已有条是用户确认的就把导入条并进去、不动它；
+ *   否则把已有条并进导入条（已有条的证据挂到导入条上）。
+ */
+export type MergePolicy =
+  | { mode: "absorb-new"; corroborate: (p: Proposition, target: Proposition, basis: Basis) => ConfirmBody | null }
+  | { mode: "user-confirmed-wins" };
+
+export type MergeEffect = "new-into-target" | "target-into-new" | null;
+
+export interface AppliedVerdict {
+  appends: PendingAppend[];
+  merge: MergeEffect;
+  corroborated: boolean;
+}
+
+/**
+ * 把一条判定变成要写进 L1 的追加（纯函数，不读不写库）。
+ * 前置条件由调用方检查：p 和 target 都还在、都 active，以及各自的跳过规则。
+ */
+export function applyVerdict(p: Proposition, target: Proposition | null, v: RelateVerdict, model: string, policy: MergePolicy): AppliedVerdict {
+  const rel: RelateBody = { outcome: v.outcome, target: target?.id ?? null, reason: v.reason, model };
+  const appends: PendingAppend[] = [{ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel }];
+  if (v.outcome !== "duplicate" || !target) return { appends, merge: null, corroborated: false };
+
+  if (policy.mode === "absorb-new") {
+    const basis = p.basis ?? "agent_inference";
+    const ev: EvidenceBody = { source: p.source, basis, evidence: p.evidence, window_id: `relate:${p.id}` };
+    appends.push({ kind: "evidence", project_id: target.project_id, session_id: p.source.session_id, target_id: target.id, body: ev });
+    const cb = policy.corroborate(p, target, basis);
+    if (cb) appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
+    const ar: ArchiveBody = { reason: "duplicate", into: target.id };
+    appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
+    return { appends, merge: "new-into-target", corroborated: cb !== null };
+  }
+
+  if (target.confirmed && target.confirmed_by === "user") {
+    const ar: ArchiveBody = { reason: "duplicate", into: target.id };
+    appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
+    return { appends, merge: "new-into-target", corroborated: false };
+  }
+  const back: RelateBody = { outcome: "duplicate", target: p.id, reason: v.reason, model };
+  const ev: EvidenceBody = { source: target.source, basis: target.basis ?? "agent_inference", evidence: target.evidence, window_id: `import:${target.id}` };
+  const ar: ArchiveBody = { reason: "duplicate", into: p.id };
+  appends.push({ kind: "evidence", project_id: p.project_id, session_id: target.source.session_id, target_id: p.id, body: ev });
+  appends.push({ kind: "relate", project_id: target.project_id, session_id: null, target_id: target.id, body: back });
+  appends.push({ kind: "archive", project_id: target.project_id, session_id: null, target_id: target.id, body: ar });
+  return { appends, merge: "target-into-new", corroborated: false };
 }
