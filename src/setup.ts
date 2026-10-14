@@ -4,7 +4,7 @@
  * 可重复运行，--only 只改其中一项。写宿主配置前先备份原文件，并把改动给用户看、确认后才写。
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, symlinkSync, lstatSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, lstatSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
@@ -211,7 +211,8 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
         u.say(`已写 ${path}${b ? `（原文件备份在 ${b}）` : ""}`);
       }
       if (yes(await u.ask("接 Pi？(y/n)", "n"))) {
-        const src = resolve(dirname(abPath), "..", "integrations", "pi", "agentbrain-recall.ts");
+        const real = existsSync(abPath) ? realpathSync(abPath) : abPath; // ~/.local/bin/ab 通常是指向仓库 src/cli.ts 的链接
+        const src = resolve(dirname(real), "..", "integrations", "pi", "agentbrain-recall.ts");
         const dst = join(homedir(), ".pi", "agent", "extensions", "agentbrain-recall.ts");
         let exists = false;
         try {
