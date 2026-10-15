@@ -63,7 +63,7 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
   if (typeof o.arbiter === "string") arbiterMember = panel.find((m) => m.name === o.arbiter);
   else if (o.arbiter && typeof o.arbiter === "object") {
     const r = validateMember(o.arbiter, path);
-    if ("error" in r) return { error: r.error.replace("panel 成员", "arbiter") };
+    if ("error" in r) return { error: r.error.replace("panel 成员", "arbiter ") };
     if (names.has(r.name)) return { error: `${path} 的 arbiter 和 panel 成员重名: ${r.name}（要用 panel 成员当仲裁就只写它的 name）` };
     arbiterMember = r;
   }

@@ -13,7 +13,7 @@ const src: RememberBody["source"] = { host: "pi", session_id: "s", transcript: n
 const cand = (id: string, over: Partial<CandidateInput> = {}): CandidateInput => ({ id, kind: "rule", scope: "global", project: null, text: `正文${id}`, context: null, worker: false, neighbors: [], ...over });
 const reply = (verdicts: object[]): Chat => async () => ({ message: { role: "assistant", content: JSON.stringify({ verdicts }) }, tokens: 10 });
 
-test("配置：成员字段齐全、不重名、仲裁必须是成员；默认批大小", () => {
+test("配置：成员字段齐全、不重名、仲裁是成员或单独的模型；默认批大小", () => {
   const m = (name: string) => ({ name, baseUrl: "http://x", model: "m", keyService: `agentbrain-${name}` });
   assert.match((validateReviewConfig({}) as any).error, /缺 panel/);
   assert.match((validateReviewConfig({ panel: [m("a"), m("a")], arbiter: "a" }) as any).error, /重名/);
