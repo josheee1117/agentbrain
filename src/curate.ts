@@ -11,7 +11,7 @@ import { expandSource } from "./source.ts";
 import { sanitize } from "./sanitize.ts";
 import type { Store } from "./store.ts";
 import { isWorkerTranscript } from "./transcript.ts";
-import type { Action, CallStat, CandidateInput, CurateResult, Judge, ReviewConfig } from "./review.ts";
+import type { Action, CallStat, CandidateInput, CurateResult, Judge, PanelMember, ReviewConfig } from "./review.ts";
 import { judgeBatch, limit, memberChatConfig, planAction } from "./review.ts";
 
 export const CONTEXT_MAX_CHARS = 1500;
@@ -48,17 +48,23 @@ export interface Keys {
 export function connectPanel(cfg: ReviewConfig, keys: Keys = { read: readKey }): { panel: Judge[]; arbiter: Judge | null; missing: string[] } {
   const panel: Judge[] = [];
   const missing: string[] = [];
-  for (const m of cfg.panel) {
+  const connect = (m: PanelMember): Judge | null => {
     const k = keys.read(m.keyService);
     if (typeof k !== "string") {
       missing.push(`${m.name}: ${k.error}`);
-      continue;
+      return null;
     }
     const chat = chatClient(memberChatConfig(m), k, m.timeoutMs ?? 300_000);
     const gate = limit(m.concurrency ?? 1);
-    panel.push({ name: m.name, chat: (msgs, o) => gate(() => chat(msgs, o)) });
+    return { name: m.name, chat: (msgs, o) => gate(() => chat(msgs, o)) };
+  };
+  for (const m of cfg.panel) {
+    const j = connect(m);
+    if (j) panel.push(j);
   }
-  return { panel, arbiter: panel.find((j) => j.name === cfg.arbiter) ?? null, missing };
+  const inPanel = cfg.panel.some((m) => m.name === cfg.arbiter);
+  const arbiter = inPanel ? (panel.find((j) => j.name === cfg.arbiter) ?? null) : connect(cfg.arbiterMember);
+  return { panel, arbiter, missing };
 }
 
 export interface RunReport {

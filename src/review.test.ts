@@ -22,6 +22,11 @@ test("配置：成员字段齐全、不重名、仲裁必须是成员；默认�
   const ok = validateReviewConfig({ panel: [m("a"), m("b"), m("c")], arbiter: "b" });
   assert.ok(!("error" in ok));
   assert.equal(ok.batchSize, 10);
+  assert.equal(ok.arbiterMember.name, "b");
+  const sep = validateReviewConfig({ panel: [m("a"), m("b"), m("c")], arbiter: m("s") });
+  assert.ok(!("error" in sep) && sep.arbiter === "s" && sep.arbiterMember.model === "m", "仲裁可以是不参加投票的单独模型");
+  assert.match((validateReviewConfig({ panel: [m("a")], arbiter: m("a") }) as any).error, /重名/);
+  assert.match((validateReviewConfig({ panel: [m("a")], arbiter: { name: "s" } }) as any).error, /arbiter 缺 baseUrl/);
   assert.equal(ok.maxBatches, 3);
 });
 
@@ -117,6 +122,11 @@ test("connectPanel：缺 key 的成员列进 missing", () => {
   assert.equal(r.panel.length, 2);
   assert.deepEqual(r.missing, ["b: 钥匙串里没有 k-b"]);
   assert.equal(r.arbiter?.name, "a");
+  const cfg2 = validateReviewConfig({ panel: ["a", "b", "c"].map((n) => ({ name: n, baseUrl: "http://x", model: "m", keyService: `k-${n}` })), arbiter: { name: "s", baseUrl: "http://x", model: "sol", keyService: "k-s" } });
+  assert.ok(!("error" in cfg2));
+  const r2 = connectPanel(cfg2, { read: () => "key" });
+  assert.equal(r2.panel.length, 3);
+  assert.equal(r2.arbiter?.name, "s");
 });
 
 test("执行与撤销：沉淀/改写/并入/丢弃都可逆；用户确认的不动；非候选跳过", async () => {

@@ -25,8 +25,10 @@ export interface PanelMember {
 
 export interface ReviewConfig {
   panel: PanelMember[];
-  /** 仲裁人：panel 里某个成员的 name。 */
+  /** 仲裁人的 name：panel 里某个成员，或 review.json 里单独写的仲裁模型（arbiter 写成对象）。 */
   arbiter: string;
+  /** 仲裁模型的完整配置（在 panel 里时就是那个成员）。 */
+  arbiterMember: PanelMember;
   /** 每批几条候选（默认 10）。 */
   batchSize: number;
   /** 一次最多几批（默认 3）。 */
@@ -51,25 +53,39 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
   const names = new Set<string>();
   const panel: PanelMember[] = [];
   for (const m of o.panel) {
-    for (const k of ["name", "baseUrl", "model", "keyService"]) {
-      if (typeof m?.[k] !== "string" || !m[k].trim()) return { error: `${path} 的 panel 成员缺 ${k}` };
-    }
-    if (names.has(m.name)) return { error: `${path} 的 panel 成员重名: ${m.name}` };
-    names.add(m.name);
-    if (m.extraBody !== undefined && (typeof m.extraBody !== "object" || m.extraBody === null || Array.isArray(m.extraBody))) return { error: `${path} 的 ${m.name}.extraBody 必须是对象` };
-    panel.push({
-      name: m.name,
-      baseUrl: m.baseUrl,
-      model: m.model,
-      keyService: m.keyService,
-      timeoutMs: typeof m.timeoutMs === "number" && m.timeoutMs > 0 ? m.timeoutMs : undefined,
-      concurrency: typeof m.concurrency === "number" && m.concurrency >= 1 ? Math.floor(m.concurrency) : undefined,
-      extraBody: m.extraBody,
-    });
+    const r = validateMember(m, path);
+    if ("error" in r) return r;
+    if (names.has(r.name)) return { error: `${path} 的 panel 成员重名: ${r.name}` };
+    names.add(r.name);
+    panel.push(r);
   }
-  if (typeof o.arbiter !== "string" || !names.has(o.arbiter)) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name` };
+  let arbiterMember: PanelMember | undefined;
+  if (typeof o.arbiter === "string") arbiterMember = panel.find((m) => m.name === o.arbiter);
+  else if (o.arbiter && typeof o.arbiter === "object") {
+    const r = validateMember(o.arbiter, path);
+    if ("error" in r) return { error: r.error.replace("panel 成员", "arbiter") };
+    if (names.has(r.name)) return { error: `${path} 的 arbiter 和 panel 成员重名: ${r.name}（要用 panel 成员当仲裁就只写它的 name）` };
+    arbiterMember = r;
+  }
+  if (!arbiterMember) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name，或一个完整的模型配置对象` };
   const int = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
-  return { panel, arbiter: o.arbiter, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+  return { panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+}
+
+function validateMember(m: any, path: string): PanelMember | { error: string } {
+  for (const k of ["name", "baseUrl", "model", "keyService"]) {
+    if (typeof m?.[k] !== "string" || !m[k].trim()) return { error: `${path} 的 panel 成员缺 ${k}` };
+  }
+  if (m.extraBody !== undefined && (typeof m.extraBody !== "object" || m.extraBody === null || Array.isArray(m.extraBody))) return { error: `${path} 的 ${m.name}.extraBody 必须是对象` };
+  return {
+    name: m.name,
+    baseUrl: m.baseUrl,
+    model: m.model,
+    keyService: m.keyService,
+    timeoutMs: typeof m.timeoutMs === "number" && m.timeoutMs > 0 ? m.timeoutMs : undefined,
+    concurrency: typeof m.concurrency === "number" && m.concurrency >= 1 ? Math.floor(m.concurrency) : undefined,
+    extraBody: m.extraBody,
+  };
 }
 
 export function memberChatConfig(m: PanelMember): ChatConfig {

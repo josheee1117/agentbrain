@@ -169,7 +169,18 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
         const keyService = await u.ask("钥匙串条目名", old.keyService ?? keyServiceFor(name));
         panel.push({ name, baseUrl, model, keyService });
       }
-      const arbiter = await u.ask(`仲裁（${panel.map((m) => m.name).join("/")}）`, panel.some((m) => m.name === review.arbiter) ? review.arbiter : panel[0]?.name);
+      const oldArb = typeof review.arbiter === "object" && review.arbiter ? review.arbiter : null;
+      const oldName = oldArb ? oldArb.name : review.arbiter;
+      const pick = await u.ask(`仲裁（${panel.map((m) => m.name).join("/")}，或填 other 单独配一个模型）`, panel.some((m) => m.name === oldName) ? oldName : oldArb ? "other" : panel[0]?.name);
+      let arbiter: string | PanelMember = pick;
+      if (pick === "other") {
+        u.say("— 仲裁模型（不参加投票，只在分歧时定结论）");
+        const name = await u.ask("简称（字母数字）", oldArb?.name);
+        const baseUrl = await u.ask("baseUrl", oldArb?.baseUrl);
+        const model = await u.ask("model", oldArb?.model);
+        const keyService = await u.ask("钥匙串条目名", oldArb?.keyService ?? keyServiceFor(name));
+        arbiter = { ...(oldArb ?? {}), name, baseUrl, model, keyService };
+      }
       const next = { ...review, panel, arbiter };
       const v = validateReviewConfig(next, reviewPath);
       if ("error" in v) throw new Error(v.error);
@@ -178,7 +189,8 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
       u.say(`已写 ${reviewPath}`);
     }
-    const services = [...new Set([extract.keyService, ...(review.panel ?? []).map((m: PanelMember) => m.keyService)].filter(Boolean))] as string[];
+    const arbObj = typeof review.arbiter === "object" && review.arbiter ? (review.arbiter as PanelMember) : null;
+    const services = [...new Set([extract.keyService, ...(review.panel ?? []).map((m: PanelMember) => m.keyService), arbObj?.keyService].filter(Boolean))] as string[];
     if (want("keys")) {
       u.say("\n【3/5】key：每个模型一个钥匙串条目，配置文件只记条目名");
       for (const s of services) {
@@ -233,6 +245,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       const models: { label: string; cfg: ChatConfig }[] = [];
       if (extract.baseUrl && extract.model) models.push({ label: "快模型", cfg: { baseUrl: extract.baseUrl, model: extract.model, keyService: extract.keyService ?? "agentbrain-extract" } });
       for (const m of review.panel ?? []) models.push({ label: `审稿 ${m.name}${m.name === review.arbiter ? "（仲裁）" : ""}`, cfg: m });
+      if (arbObj) models.push({ label: `仲裁 ${arbObj.name}`, cfg: arbObj });
       const { readKey } = await import("./embed.ts");
       for (const m of models) {
         const k = readKey(m.cfg.keyService);
