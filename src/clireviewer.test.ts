@@ -98,8 +98,9 @@ test("配置：cli 成员不要 baseUrl/key；host 必须合法；hostReviewers 
   const forCodex = configForHost(cfg, "codex");
   assert.equal(forCodex.onlyHost, "codex");
   assert.deepEqual([forCodex.cfg.mode, forCodex.cfg.primary, forCodex.cfg.panel.map((m) => m.name)], ["primary", "cx", ["cx"]]);
-  assert.equal(configForHost(cfg, "pi").onlyHost, null, "没配的宿主走主配置");
+  assert.equal(configForHost(cfg, "pi").onlyHost, "pi", "没配宿主审稿人：走主配置，但仍只审该宿主的候选（--host 不扩大范围）");
   assert.equal(configForHost(cfg, "pi").cfg, cfg);
+  assert.equal(configForHost(cfg, null).onlyHost, null);
 });
 
 test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra max、Pi 用默认模型 max；没有主配置时用 Claude 审稿人当主审", async () => {

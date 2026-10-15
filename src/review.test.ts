@@ -346,3 +346,27 @@ test("stage 过的条目被 curate 转正：staged 清掉，unstage 不再动它
   p = s.project().props.get(id)!;
   assert.deepEqual([p.state, p.candidate, p.staged, p.curated], ["candidate", true, true, false]);
 });
+
+test("改写正文写 L1 前脱敏；撤销时用户已确认的转正条目不动也不计数", async () => {
+  const s = new Store(":memory:", ":memory:");
+  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src, ...extra });
+  const keep = mk("keep", { trigger: "当汇报时" });
+  const rew = mk("rew");
+  const props0 = s.project().props;
+  const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX";
+  const actions = [
+    { op: "promote" as const, id: keep, guidance: false, scenario: "当汇报时" },
+    { op: "rewrite" as const, id: rew, text: `调用时带上 ${secret}`, scenario: `当用 ${secret} 时`, guidance: false },
+  ];
+  const applied = applyActions(s, "run2", actions, props0);
+  const created = applied.find((a) => a.op === "rewrite")!.created!;
+  const c = s.project().props.get(created)!;
+  assert.ok(!c.text.includes(secret) && !(c.trigger ?? "").includes(secret), "模型改写里的密钥不进 L1");
+  s.lifecycle("confirm", keep, null, {}); // 转正后用户确认
+  const n = undoRun(s, { run: "run2", at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied });
+  assert.equal(n, 1, "只恢复了改写那条；用户确认的转正条目不算");
+  const p2 = s.project().props;
+  assert.equal(p2.get(keep)!.state, "active");
+  assert.equal(p2.get(keep)!.confirmed_by, "user");
+  assert.equal(p2.get(rew)!.state, "candidate");
+});

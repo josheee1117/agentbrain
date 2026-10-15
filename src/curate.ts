@@ -119,21 +119,24 @@ export function applyActions(store: Store, run: string, actions: Action[], props
     } else if (a.op === "discard") {
       applied.push({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", note: `${run}: ${a.reason}`.slice(0, 300) })] });
     } else if (a.op === "rewrite") {
+      // 改写正文和场景来自模型输出：写 L1 前再脱敏一次（§13.2）
+      const text = sanitize(a.text).text;
+      const scenario = sanitize(a.scenario).text;
       const created = store.remember(p.project_id, null, false, {
         kind: p.kind,
-        text: a.text,
+        text,
         why: p.why,
         source: p.source,
         for_workers: p.for_workers,
         confirmed: false,
         origin: "curate",
         basis: p.basis,
-        trigger: a.scenario,
+        trigger: scenario,
         evidence: p.evidence,
         said_at: p.said_at ?? undefined,
         valid_days: p.valid_days ?? undefined,
         guidance: a.guidance,
-        value: { scenario: a.scenario, flags: [] },
+        value: { scenario, flags: [] },
       });
       const arch = store.lifecycle("archive", p.id, null, { reason: "curate", into: created, note: `${run}: 改写为 ${created}` });
       applied.push({ op: a.op, id: p.id, events: [arch], created });
@@ -151,7 +154,7 @@ export function undoRun(store: Store, report: RunReport): number {
   for (const a of report.applied) {
     const p = props.get(a.id);
     if (!p) continue;
-    if (a.op === "promote" && p.curated) {
+    if (a.op === "promote" && p.curated && p.confirmed_by !== "user") {
       store.lifecycle("curate", p.id, null, { action: "unpromote", run: report.run });
       if (p.guidance && a.events.length > 1) store.lifecycle("tag", p.id, null, { guidance: false });
       n++;

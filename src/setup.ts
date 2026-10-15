@@ -206,6 +206,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       extract = { ...extract, model, keyService };
       if (baseUrl) extract.baseUrl = baseUrl;
       else delete extract.baseUrl; // 不写 baseUrl：沿用 embedding.json 的地址与 key
+      backup(extractPath);
       writeFileSync(extractPath, `${JSON.stringify(extract, null, 2)}\n`);
       u.say(`已写 ${extractPath}`);
     }
@@ -240,6 +241,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       const v = validateReviewConfig(next, reviewPath);
       if ("error" in v) throw new Error(v.error);
       review = next;
+      backup(reviewPath);
       writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
       u.say(`已写 ${reviewPath}`);
     }
@@ -284,6 +286,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       if ("error" in v) throw new Error(v.error);
       if (mode === "panel" && panel.length < 3) u.say("提醒：panel 模式少于 3 家时 ab curate 只出报告，不写库。");
       review = next;
+      backup(reviewPath);
       writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
       u.say(`已写 ${reviewPath}`);
     }

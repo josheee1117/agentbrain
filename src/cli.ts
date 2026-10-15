@@ -1129,7 +1129,7 @@ async function cmdCurate(argv: string[]): Promise<void> {
         cfg.mode === "primary" ? `  主审 ${cfg.primary} 定结论 ${routes.filter((r) => r === "primary").length}，未决 ${routes.filter((r) => r === "undecided").length}${advisors.length ? `（参考意见：${advisors.join("、")}）` : ""}` : `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
         `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}${cost ? `，费用约 $${cost.toFixed(4)}` : ""}`,
         missing.length ? `  审稿团缺人（只出报告，不写库）：${missing.join("；")}` : "",
-        wantApply && !full ? "  --apply 被忽略：审稿团不满 3 家" : "",
+        wantApply && !full ? `  --apply 被忽略：${cfg.mode === "primary" ? "主审或参考成员连不上" : "审稿团不满 3 家"}` : "",
         `报告：${path}${apply ? `\n撤销：ab curate --undo ${run}` : ""}`,
       ].filter(Boolean).join("\n"),
     );

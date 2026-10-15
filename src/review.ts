@@ -557,9 +557,10 @@ export async function judgeBatchPrimary(batch: CandidateInput[], primary: Judge,
   });
 }
 
-/** 某宿主会话结束后的审稿配置：配了 hostReviewers[host] 就用它单独当主审；否则沿用主配置。 */
+/** 某宿主会话结束后的审稿配置：配了 hostReviewers[host] 就用它单独当主审；否则沿用主配置。给了 host 就只审该宿主的候选（没配宿主审稿人也一样，不扩大范围）。 */
 export function configForHost(cfg: ReviewConfig, host: CliHost | null): { cfg: ReviewConfig; onlyHost: CliHost | null } {
   const m = host ? cfg.hostReviewers[host] : undefined;
-  if (!host || !m) return { cfg, onlyHost: null };
+  if (!host) return { cfg, onlyHost: null };
+  if (!m) return { cfg, onlyHost: host };
   return { cfg: { ...cfg, mode: "primary", primary: m.name, panel: [m], arbiter: m.name, arbiterMember: m }, onlyHost: host };
 }
