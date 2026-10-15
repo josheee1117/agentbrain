@@ -137,3 +137,25 @@ test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra m
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("一步式：提示词含标准与新记/并入/不记；输出校验丢掉不合格单条", async () => {
+  const { ONE_PASS_SYSTEM, parseOnePass, buildOnePassMessages } = await import("./onepass.ts");
+  assert.match(ONE_PASS_SYSTEM, /好记忆的标准/);
+  assert.match(ONE_PASS_SYSTEM, /items 给空数组/);
+  const nb = [{ id: "P1", kind: "rule", text: "已有", confirmed: true } as any];
+  const msgs = buildOnePassMessages({ turns: [{ role: "user", text: "以后汇报说人话", anchor: "a1" } as any], context: [] }, { name: "x", docs: "", registry: "", confirmed: "" }, nb);
+  assert.equal(msgs[0].content, ONE_PASS_SYSTEM);
+  assert.match(msgs[1].content!, /m1 \[rule\] 已有/);
+  const r = parseOnePass(JSON.stringify({ items: [
+    { action: "new", kind: "rule", class: "A", text: "说人话", scenario: "当汇报时", why: "用户要求" },
+    { action: "merge", into: "m1", kind: "rule", class: "A", text: "合并", scenario: "当汇报时" },
+    { action: "merge", into: "m9", kind: "rule", class: "A", text: "x", scenario: "当汇报时" },
+    { action: "new", kind: "rule", class: "A", text: "y", scenario: "汇报时" },
+    { action: "keep", kind: "rule", class: "A", text: "z", scenario: "当x时" },
+  ] }), nb);
+  assert.ok(r);
+  assert.deepEqual(r!.items.map((i) => [i.action, i.into]), [["new", null], ["merge", "P1"]]);
+  assert.deepEqual(r!.invalid, { merge_bad_target: 1, no_scenario: 1, bad_action: 1 });
+  assert.deepEqual(parseOnePass('{"items":[]}', [])!.items, []);
+  assert.equal(parseOnePass("不是 JSON", []), null);
+});
