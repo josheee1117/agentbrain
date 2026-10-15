@@ -125,10 +125,21 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 
 ## v3 第 2 阶段：审稿团 `ab curate` 与上手向导 `ab setup`
 
-- `ab setup` 一步步问快模型、审稿团（默认 1 家主审；panel 模式建议 3 家不同厂商加仲裁）、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,panel,keys,hosts,test` 只重做其中几步。
-- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。`mode` 有两种：
-  - `primary`（默认样例，2026-10-15 用户选定）：只有 `primary` 一位主审定结论，样例是 gpt-6-astra medium 单独判（panel 里只有它）。panel 里可以另加成员当参考意见（例如 grok-latest xhigh、deepseek-v4-pro max，都经 cpa）：它们先各自给出意见，附给主审、写进报告，但不投票，也不用仲裁。90 条标注评测里加参考意见没带来提升，所以默认不加。没有参考成员时主审的提示词和普通审稿人一样。主审没给出有效结论的条目算未决，不执行。参考成员调用失败不影响主审的结论。
-  - `panel`：各成员投票，一致就执行，有分歧交仲裁（三票都要留、只是写法不同时，仲裁只定写法）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象（不投票，只在分歧时定结论，例如 gpt-6.1-sol）。不写 `mode` 时按 panel 处理。推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别，写错直接 400 并列出可选值）。每个成员可选 `timeoutMs`（默认 300000）、`concurrency`（默认 1，cpa 代理并发高了会 429）、`extraBody`（并进请求体，例如 DashScope 的 `{"enable_thinking": false}`：开着思考时一批 10 条要好几分钟）。
+- `ab setup` 一步步问快模型、按宿主的审稿人（默认 Claude Haiku 5.5 max、Codex gpt-6-astra max、Pi 默认模型，也可选经 cpa 的 astra）与 autoRun（默认关）、主审稿配置（默认 1 家主审；panel 模式建议 3 家不同厂商加仲裁）、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,reviewers,panel,keys,hosts,test` 只重做其中几步。
+- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。
+  - **审稿成员两种后端**：`type: "cli"`（默认样例，2026-10-15 用户认可）用宿主自己的命令行无头跑，用宿主自己的账号额度，不用 key：
+    - Claude Code：`claude -p --model haiku --effort max`（haiku = claude-haiku-5-5），关工具、不读设置源（hook 不跑）、不存会话；
+    - Codex：`codex exec -m gpt-6-astra -c model_reasoning_effort=max --ephemeral -s read-only --disable hooks`（gpt-6-astra 是 codex 模型目录里的第二档）；
+    - Pi：`pi -p --no-session --no-tools --no-extensions`，`model` 写 `provider/id`（不写用 Pi 的默认模型），`effort` 走 `--thinking`。
+    - 审稿子进程带 `AGENTBRAIN_REVIEWER=1`，`ab capture/recall --hook` 看到就什么都不做，审稿会话不会被登记、抽取或再触发审稿；在空临时目录里跑。
+    - `type: "api"`（不写 type 时的默认）照旧直接调 OpenAI 兼容接口，例如经 cpa 的 gpt-6-astra：`{"name":"astra","baseUrl":"http://127.0.0.1:8317/v1","model":"gpt-6-astra","keyService":"codex-cpa-local-api-key","extraBody":{"reasoning_effort":"medium"}}`。
+  - `hostReviewers`：每个宿主一个审稿人。`ab curate --host claude` 只审从 Claude Code 会话抽出来的候选，用这个宿主配的审稿人当唯一主审。没配的宿主、手动 `ab curate`、不属于任何宿主的候选走主配置（`mode`/`panel`）。
+  - `autoRun`（默认 false）：为 true 时，SessionEnd hook 拉起的 `ab work --session` 抽完后会再拉起分离的 `ab curate --auto --host <宿主>`（写库），输出追加到 `~/.agentbrain/curate/auto.log`；主会话不等它。
+  - 认领：写库的运行先在 work 库的 `curate_claims` 表里认领候选（30 分钟租约，运行中每 5 分钟续期，结束释放），并发会话不会重复审；审稿进程崩了，租约过期后下一次运行接手。审完会按此刻的库重新规划，期间被用户确认或归档的条目跳过。
+  - `mode` 有两种：
+    - `primary`（默认）：只有 `primary` 一位主审定结论。panel 里可以另加成员当参考意见（先各自给意见，附给主审、写进报告，不投票，不仲裁）；90 条标注评测里参考意见没带来提升，默认不加。没有参考成员时主审的提示词和普通审稿人一样。主审没给出有效结论的条目算未决，不执行。
+    - `panel`：各成员投票，一致就执行，有分歧交仲裁（三票都要留、只是写法不同时，仲裁只定写法）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象。不写 `mode` 时按 panel 处理。
+  - API 成员的推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别）。每个成员可选 `timeoutMs`（API 默认 300000，CLI 默认 600000）、`concurrency`（默认 1）、`extraBody`（只对 API）。
 - `ab curate` 默认 dry-run，只把每条候选的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在配置里的审稿成员都连得上时生效（panel 模式还要满 3 家）：
   - 一致沉淀 → `curate` 事件把候选转正（A 类同时打 guidance 标记）；
   - 改写 → 新条目（origin=curate，仍未确认），原候选归档并指向新条目；

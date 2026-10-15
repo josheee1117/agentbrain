@@ -1048,8 +1048,8 @@ const USAGE = `用法:
                                     手动登记一个会话（hook 没生效时）
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
-  ab setup [--only fast,panel,keys,hosts,test]
-                                    上手向导：快模型、审稿团与仲裁、key 进钥匙串、接哪些宿主、连通测试；可重复运行
+  ab setup [--only fast,reviewers,panel,keys,hosts,test]
+                                    上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
   ab curate [--apply] [--host claude|codex|pi] [--limit N] | ab curate --undo <run> | ab curate --auto --host <宿主>
                                     审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
                                     默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动候选、用户确认过的不动；--undo 整次撤销
