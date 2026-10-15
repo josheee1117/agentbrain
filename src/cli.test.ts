@@ -358,7 +358,7 @@ test("没有 embedding 配置：search 提示仅全文检索，status 报不可�
   const status = ab(["status"], alpha);
   assert.equal(status.code, 0, status.err);
   assert.match(status.out, /向量: 不可用（.*embedding\.json/);
-  const remembered = ab(["remember", "--kind", "note", "--text", "无配置也记下", "--summary", "降级"], alpha);
+  const remembered = ab(["remember", "--direct", "--kind", "note", "--text", "无配置也记下", "--summary", "降级"], alpha);
   assert.equal(remembered.code, 0, remembered.err);
   assert.match(remembered.out, /\n向量未更新：.*embedding\.json\n$/);
   const id = remembered.out.match(/\[([0-9a-f]{8})\]/)![1];
