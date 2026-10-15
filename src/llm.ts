@@ -103,7 +103,7 @@ export function loadChatConfig(home: string): ChatConfig | { error: string } {
   return { baseUrl: emb.baseUrl, model: o.model, keyService: KEYCHAIN_SERVICE };
 }
 
-export type Chat = (messages: ChatMessage[], opts?: { tools?: ToolSpec[]; json?: boolean }) => Promise<{ message: ChatMessage; tokens: number }>;
+export type Chat = (messages: ChatMessage[], opts?: { tools?: ToolSpec[]; json?: boolean }) => Promise<{ message: ChatMessage; tokens: number; /** CLI 后端报的费用（claude 给），API 后端不给 */ costUsd?: number }>;
 
 export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetchImpl: typeof fetch = fetch): Chat {
   return async (messages, opts) => {

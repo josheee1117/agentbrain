@@ -1,6 +1,6 @@
 /**
  * ab setup：交互式上手（v3 pipeline「ab setup」一节）。
- * 依次问：快模型 → 审稿团与仲裁 → key（进钥匙串，配置只记条目名）→ 接哪些宿主 → 连通测试。
+ * 依次问：快模型 → 按宿主分的审稿人（默认用各宿主自己的命令行：Claude Haiku 5.5 max 等）→ 主审稿配置 → key（进钥匙串，配置只记条目名）→ 接哪些宿主 → 连通测试。
  * 可重复运行，--only 只改其中一项。写宿主配置前先备份原文件，并把改动给用户看、确认后才写。
  */
 import { execFileSync, spawnSync } from "node:child_process";
@@ -10,10 +10,43 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { chatClient, type ChatConfig } from "./llm.ts";
 import { REVIEW_FILE, validateReviewConfig, type PanelMember } from "./review.ts";
+import { cliChat, type CliHost } from "./clireviewer.ts";
 
 export type HostName = "claude" | "codex" | "pi";
-export const STEPS = ["fast", "panel", "keys", "hosts", "test"] as const;
+export const STEPS = ["fast", "reviewers", "panel", "keys", "hosts", "test"] as const;
 export type Step = (typeof STEPS)[number];
+
+/** 按宿主的默认审稿人（2026-10-15 用户认可）：Claude 用 Haiku 5.5 max；Codex 用它的第二档模型 gpt-6-astra max；Pi 用它自己配的默认模型。 */
+export const HOST_REVIEWER_DEFAULTS: Record<CliHost, { model: string; effort: string }> = {
+  claude: { model: "haiku", effort: "max" },
+  codex: { model: "gpt-6-astra", effort: "max" },
+  pi: { model: "", effort: "high" },
+};
+/** 保留的 API 选项：经 cpa 的 gpt-6-astra。 */
+export const ASTRA_VIA_CPA = { baseUrl: "http://127.0.0.1:8317/v1", model: "gpt-6-astra", keyService: "codex-cpa-local-api-key", extraBody: { reasoning_effort: "medium" } };
+
+const HOST_LABEL: Record<CliHost, string> = { claude: "Claude Code", codex: "Codex", pi: "Pi" };
+
+/** 问一个审稿成员：cli（宿主命令行）或 api（OpenAI 兼容接口）。保留旧配置里的手写字段（concurrency、timeoutMs 等）。 */
+async function askMember(u: SetupIO, old: any, name: string, fixed: { type?: "api" | "cli"; host?: CliHost } = {}): Promise<PanelMember> {
+  const type = fixed.type ?? ((await u.ask("类型：cli（宿主命令行无头，用宿主自己的账号额度）/ api（OpenAI 兼容接口）", old?.type ?? (old?.baseUrl ? "api" : "cli"))) === "api" ? "api" : "cli");
+  if (type === "cli") {
+    const host = fixed.host ?? ((await u.ask("宿主（claude/codex/pi）", old?.host ?? "claude")) as CliHost);
+    const d = HOST_REVIEWER_DEFAULTS[host] ?? HOST_REVIEWER_DEFAULTS.claude;
+    const model = await u.ask(`模型（${host === "pi" ? "provider/id，回车用 Pi 的默认模型" : "别名或完整名"}）`, old?.type === "cli" && old.host === host ? old.model : d.model);
+    const effort = await u.ask("推理强度", old?.type === "cli" && old.host === host ? old.effort : d.effort);
+    const { baseUrl: _b, keyService: _k, extraBody: _e, ...rest } = old ?? {};
+    void _b, _k, _e;
+    return { ...rest, name, type, host, model: model ?? "", ...(effort ? { effort } : {}) } as PanelMember;
+  }
+  const useAstra = !old?.baseUrl;
+  const baseUrl = await u.ask("baseUrl", old?.baseUrl ?? ASTRA_VIA_CPA.baseUrl);
+  const model = await u.ask("model", old?.model || ASTRA_VIA_CPA.model);
+  const keyService = await u.ask("钥匙串条目名", old?.keyService ?? (useAstra ? ASTRA_VIA_CPA.keyService : keyServiceFor(name)));
+  const { host: _h, effort: _f, ...rest } = old ?? {};
+  void _h, _f;
+  return { ...(useAstra && model === ASTRA_VIA_CPA.model ? { extraBody: ASTRA_VIA_CPA.extraBody } : {}), ...rest, name, type: "api", baseUrl, model, keyService } as PanelMember;
+}
 
 /** 钥匙串条目名：agentbrain-<name>（名字只留字母数字和 -）。 */
 export function keyServiceFor(name: string): string {
@@ -146,7 +179,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
     let extract = readJson(extractPath) ?? {};
     let review = readJson(reviewPath) ?? { panel: [], arbiter: "" };
     if (want("fast")) {
-      u.say("\n【1/5】快模型（会话结束后抽取候选用，OpenAI 兼容接口）");
+      u.say("\n【1/6】快模型（会话结束后抽取候选用，OpenAI 兼容接口）");
       const baseUrl = await u.ask("baseUrl", extract.baseUrl);
       const model = await u.ask("model", extract.model);
       const keyService = await u.ask("钥匙串条目名", extract.keyService ?? "agentbrain-extract");
@@ -156,18 +189,49 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       writeFileSync(extractPath, `${JSON.stringify(extract, null, 2)}\n`);
       u.say(`已写 ${extractPath}`);
     }
+    if (want("reviewers")) {
+      u.say("\n【2/6】按宿主分的审稿人：某个宿主的会话结束后，用它自己的命令行无头审稿（用它自己的账号额度），只审从这个宿主会话抽出来的候选");
+      const hr: Record<string, any> = { ...(review.hostReviewers ?? {}) };
+      for (const host of ["claude", "codex", "pi"] as const) {
+        const old = hr[host];
+        const d = HOST_REVIEWER_DEFAULTS[host];
+        const pick = await u.ask(`${HOST_LABEL[host]} 会话的审稿人：cli（${host}${d.model ? ` ${d.model}` : ""} ${d.effort}）/ api（例如经 cpa 的 gpt-6-astra）/ none`, old ? (old.type ?? "api") : "cli");
+        if (pick === "none") {
+          delete hr[host];
+          continue;
+        }
+        u.say(`— ${HOST_LABEL[host]} 审稿人`);
+        const type = pick === "api" ? "api" : "cli";
+        hr[host] = await askMember(u, old?.type === type || (!old?.type && type === "api") ? old : undefined, `${host}-review`, { type, host });
+      }
+      const auto = yes(await u.ask("会话结束抽取完后自动审稿并写库（autoRun）？没确认前建议先 n，用 ab curate 手动 dry-run 看看(y/n)", review.autoRun ? "y" : "n"));
+      const next: any = { ...review, hostReviewers: hr, autoRun: auto };
+      // 还没有主审稿配置时：用 Claude 的审稿人（没有就用第一个）当主审，主配置管手动 ab curate 和不属于任何宿主的候选
+      if (!next.panel?.length) {
+        const first = hr.claude ?? Object.values(hr)[0];
+        if (first) {
+          next.mode = "primary";
+          next.primary = first.name;
+          next.panel = [first];
+          delete next.arbiter;
+          u.say(`主审稿配置还没有：先用 ${first.name} 当主审（之后可用 ab setup --only panel 改）`);
+        }
+      }
+      const v = validateReviewConfig(next, reviewPath);
+      if ("error" in v) throw new Error(v.error);
+      review = next;
+      writeFileSync(reviewPath, `${JSON.stringify(review, null, 2)}\n`);
+      u.say(`已写 ${reviewPath}`);
+    }
     if (want("panel")) {
-      u.say("\n【2/5】审稿团：先填各家模型，再选评审方式（primary：一位主审，可另加几家只给参考意见；panel：投票 + 仲裁）。默认 1 家主审单独判");
+      u.say("\n【3/6】主审稿配置（手动 ab curate、没配宿主审稿人的宿主、不属于任何宿主的候选用它）：先填各家模型，再选评审方式（primary：一位主审，可另加几家只给参考意见；panel：投票 + 仲裁）。默认 1 家主审单独判");
       const n = Number(await u.ask("几家", String(review.panel?.length || 1))) || 1;
       const panel: PanelMember[] = [];
       for (let i = 0; i < n; i++) {
         const old = review.panel?.[i] ?? {};
         u.say(`— 第 ${i + 1} 家`);
-        const name = await u.ask("简称（字母数字）", old.name);
-        const baseUrl = await u.ask("baseUrl", old.baseUrl);
-        const model = await u.ask("model", old.model);
-        const keyService = await u.ask("钥匙串条目名", old.keyService ?? keyServiceFor(name));
-        panel.push({ ...old, name, baseUrl, model, keyService }); // 保留 concurrency、extraBody 等手写字段
+        const name = await u.ask("简称（字母数字）", old.name ?? (i === 0 ? "haiku" : undefined));
+        panel.push(await askMember(u, i === 0 && !old.name ? { type: "cli", host: "claude" } : old, name)); // 保留 concurrency、extraBody 等手写字段
       }
       const mode = (await u.ask("评审方式：primary（一位主审定结论，其余只给参考意见）/ panel（投票 + 仲裁）", review.mode ?? "primary")) === "panel" ? "panel" : "primary";
       let arbiter: string | PanelMember | undefined;
@@ -204,9 +268,10 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       u.say(`已写 ${reviewPath}`);
     }
     const arbObj = review.mode !== "primary" && typeof review.arbiter === "object" && review.arbiter ? (review.arbiter as PanelMember) : null;
-    const services = [...new Set([extract.keyService, ...(review.panel ?? []).map((m: PanelMember) => m.keyService), arbObj?.keyService].filter(Boolean))] as string[];
+    const apiMembers = [...(review.panel ?? []), ...Object.values(review.hostReviewers ?? {}), arbObj].filter((m: any) => m && m.type !== "cli" && m.baseUrl) as PanelMember[];
+    const services = [...new Set([extract.keyService, ...apiMembers.map((m) => m.keyService)].filter(Boolean))] as string[];
     if (want("keys")) {
-      u.say("\n【3/5】key：每个模型一个钥匙串条目，配置文件只记条目名");
+      u.say("\n【4/6】key：每个模型一个钥匙串条目，配置文件只记条目名");
       for (const s of services) {
         const k = await u.secret(`${s}${hasKey(s) ? "（已有，回车保留）" : ""}`);
         if (k) {
@@ -216,7 +281,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       }
     }
     if (want("hosts")) {
-      u.say("\n【4/5】接哪些宿主（每轮召回 + 会话登记）");
+      u.say("\n【5/6】接哪些宿主（每轮召回 + 会话登记）");
       const node = process.execPath;
       const abCmd = `${node} ${abPath}`;
       for (const host of ["claude", "codex"] as const) {
@@ -255,10 +320,22 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       }
     }
     if (want("test")) {
-      u.say("\n【5/5】连通测试");
+      u.say("\n【6/6】连通测试");
       const models: { label: string; cfg: ChatConfig }[] = [];
       if (extract.baseUrl && extract.model) models.push({ label: "快模型", cfg: { baseUrl: extract.baseUrl, model: extract.model, keyService: extract.keyService ?? "agentbrain-extract" } });
-      for (const m of review.panel ?? []) models.push({ label: `审稿 ${m.name}${review.mode === "primary" ? (m.name === review.primary ? "（主审）" : "（参考）") : m.name === review.arbiter ? "（仲裁）" : ""}`, cfg: m });
+      const cliMembers: { label: string; m: PanelMember }[] = [];
+      const add = (label: string, m: PanelMember) => (m.type === "cli" ? cliMembers.push({ label, m }) : models.push({ label, cfg: m }));
+      for (const m of review.panel ?? []) add(`审稿 ${m.name}${review.mode === "primary" ? (m.name === review.primary ? "（主审）" : "（参考）") : m.name === review.arbiter ? "（仲裁）" : ""}`, m);
+      for (const [h, m] of Object.entries(review.hostReviewers ?? {})) if (m && !(review.panel ?? []).some((p: PanelMember) => p.name === (m as PanelMember).name)) add(`${h} 会话审稿`, m as PanelMember);
+      for (const { label, m } of cliMembers) {
+        const t0 = Date.now();
+        try {
+          const r = await cliChat({ host: m.host!, model: m.model || undefined, effort: m.effort, bin: m.bin, timeoutMs: 180_000 })([{ role: "system", content: "只回 JSON。" }, { role: "user", content: '回 {"ok":true}' }]);
+          u.say(`${/"ok"\s*:\s*true/.test(r.message.content ?? "") ? "✓" : "✗"} ${label} ${m.host}:${m.model || "默认"}${m.effort ? `@${m.effort}` : ""} ${Date.now() - t0}ms`);
+        } catch (e) {
+          u.say(`✗ ${label} ${m.host}:${m.model || "默认"}: ${(e as Error).message}`);
+        }
+      }
       if (arbObj) models.push({ label: `仲裁 ${arbObj.name}`, cfg: arbObj });
       const { readKey } = await import("./embed.ts");
       for (const m of models) {
