@@ -429,3 +429,33 @@ test("applyActions 每写一步就回调（调用方据此落盘报告）；改�
   assert.ok(first[0].created, "归档原条目之前已经记下新条目");
   assert.equal(first[0].events.length, 0);
 });
+
+test("撤销以 L1 为准：写库后报告没落盘（applied 为空）也能撤；转正后用户自己改过 guidance 不收回", () => {
+  const s = new Store(":memory:", ":memory:");
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const a = mk("a");
+  const b = mk("b");
+  const c = mk("c");
+  const d = mk("d");
+  const created = applyActions(s, "R", [
+    { op: "promote", id: a, guidance: true, scenario: "当x时" },
+    { op: "discard", id: b, reason: "r" },
+    { op: "rewrite", id: c, text: "新", scenario: "当y时", guidance: false },
+    { op: "merge", id: d, into: a, text: "x", review: false },
+  ], s.project().props)[2].created!;
+  const lost = { run: "R", at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied: [] };
+  assert.equal(undoRun(s, lost), 4, "报告里 applied 为空，仍从 L1 找回 4 步");
+  const props = s.project().props;
+  for (const id of [a, b, c, d]) assert.equal(props.get(id)!.state, "candidate");
+  assert.equal(props.get(a)!.guidance, false);
+  assert.equal(props.get(created)!.state, "archived");
+  assert.equal(undoRun(s, lost), 0, "重复撤销什么都不做");
+  // guidance：转正（带 guidance）后用户关掉再打开，撤销只退回候选，不清用户设的 guidance
+  const e = mk("e");
+  applyActions(s, "G", [{ op: "promote", id: e, guidance: true, scenario: "当z时" }], s.project().props);
+  s.lifecycle("tag", e, null, { guidance: false });
+  s.lifecycle("tag", e, null, { guidance: true });
+  assert.equal(undoRun(s, { ...lost, run: "G" }), 1);
+  assert.equal(s.project().props.get(e)!.state, "candidate");
+  assert.equal(s.project().props.get(e)!.guidance, true);
+});

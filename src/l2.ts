@@ -81,6 +81,8 @@ export interface RememberBody {
   candidate?: boolean;
   /** ab remember --direct（人工迁移数据）写入：ab audit agent-remember 不把它当成 agent 自记。 */
   direct?: boolean;
+  /** ab curate 改写生成的新条目：哪次运行、改写的是哪条（--undo 在报告没落盘时从 L1 找回）。 */
+  curate?: { run: string; of: string };
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
 }

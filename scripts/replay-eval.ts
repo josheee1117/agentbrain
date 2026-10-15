@@ -25,6 +25,7 @@ import { connectPanel, runPanel } from "../src/curate.ts";
 import { cliChat } from "../src/clireviewer.ts";
 import { buildOnePassMessages, parseOnePass } from "../src/onepass.ts";
 import type { Proposition } from "../src/l2.ts";
+import { parseMatchRefs } from "../src/evalmatch.ts";
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { conc: { type: "string", default: "2" }, limit: { type: "string" }, "review-home": { type: "string" }, only: { type: "string" } } });
 const [labelsPath, outPath] = positionals;
@@ -140,7 +141,7 @@ async function windowNeighbors(turns: { role: string; text: string }[], w: Win):
 }
 
 const MATCH_SYSTEM = `你是评测里的匹配员。给你一组"参考记忆"（r1…）和一组"产出"（o1…），判断每条参考记忆在产出里有没有讲同一条知识的（同一个规则/事实/坑，措辞、详略可以不同；只沾边、只是同一话题不算）。一条产出可以对应多条参考。只输出 JSON：{"refs":{"r1":"o2 或 null"}}`;
-/** 匹配员输出不是 {"refs":{r1..rN}} 全覆盖时记为无效（不能当成"全部没匹配上"），用 replay-rematch 重跑。 */
+/** 匹配员输出不合法（缺键、值不是 null/存在的 oK）时记为无效（不能当成"全部没匹配上"），用 replay-rematch 重跑。 */
 let matchInvalid = false;
 async function match(refs: { key: string; text: string }[], outs: { key: string; text: string }[], cost: { usd: number; ms: number }): Promise<Map<string, string | null>> {
   const res = new Map<string, string | null>(refs.map((r) => [r.key, null]));
@@ -149,13 +150,9 @@ async function match(refs: { key: string; text: string }[], outs: { key: string;
   const r = await call(haikuLow, [{ role: "system", content: MATCH_SYSTEM }, { role: "user", content: prompt }]);
   cost.usd += r.costUsd;
   cost.ms += r.ms;
-  const o = parseJsonLoose(r.text) as any;
-  if (!o || typeof o.refs !== "object" || o.refs === null || refs.some((_, i) => !(`r${i + 1}` in o.refs))) matchInvalid = true;
-  refs.forEach((ref, i) => {
-    const v = o?.refs?.[`r${i + 1}`];
-    const m = typeof v === "string" ? /^o(\d+)$/.exec(v.trim()) : null;
-    res.set(ref.key, m && outs[Number(m[1]) - 1] ? outs[Number(m[1]) - 1].key : null);
-  });
+  const parsed = parseMatchRefs(parseJsonLoose(r.text), refs.length, outs.length);
+  if (!parsed) matchInvalid = true; // 整窗无效，结果全记 null 但打上 match_invalid
+  else refs.forEach((ref, i) => res.set(ref.key, parsed[i] === null ? null : outs[parsed[i]!].key));
   return res;
 }
 

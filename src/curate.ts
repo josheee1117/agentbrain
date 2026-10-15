@@ -123,11 +123,11 @@ export function applyActions(store: Store, run: string, actions: Action[], props
     if (a.op === "promote") {
       const x = done({ op: a.op, id: p.id, events: [store.lifecycle("curate", p.id, null, { action: "promote", run, verdict: "keep" })] });
       if (a.guidance && !p.guidance) {
-        x.events.push(store.lifecycle("tag", p.id, null, { guidance: true }));
+        x.events.push(store.lifecycle("tag", p.id, null, { guidance: true, run }));
         onProgress(applied);
       }
     } else if (a.op === "discard") {
-      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", note: `${run}: ${a.reason}`.slice(0, 300) })] });
+      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", run, note: `${run}: ${a.reason}`.slice(0, 300) })] });
     } else if (a.op === "rewrite") {
       // 改写正文和场景来自模型输出：写 L1 前再脱敏一次（§13.2）
       const text = sanitize(a.text).text;
@@ -147,12 +147,13 @@ export function applyActions(store: Store, run: string, actions: Action[], props
         valid_days: p.valid_days ?? undefined,
         guidance: a.guidance,
         value: { scenario, flags: [] },
+        curate: { run, of: p.id },
       });
       const x = done({ op: a.op, id: p.id, events: [], created }); // 先记下新条目，归档原条目前出错也能撤销
-      x.events.push(store.lifecycle("archive", p.id, null, { reason: "curate", into: created, note: `${run}: 改写为 ${created}` }));
+      x.events.push(store.lifecycle("archive", p.id, null, { reason: "curate", run, into: created, note: `${run}: 改写为 ${created}` }));
       onProgress(applied);
     } else if (a.op === "merge") {
-      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "duplicate", into: a.into, note: `${run}: 并入` })] });
+      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "duplicate", run, into: a.into, note: `${run}: 并入` })] });
     }
   }
   return applied;
@@ -162,16 +163,45 @@ export function applyActions(store: Store, run: string, actions: Action[], props
  * 撤销一次 --apply：转正的退回候选区，归档的恢复，改写生成的新条目归档。
  * 只撤销仍然是"这次运行写下的最后一步"的动作：之后被用户确认、被别的运行或手动操作改过的条目不动（不重复撤销，也不撤掉后来的运行）。
  */
+/**
+ * 从 L1 找回某次运行实际写下的动作（事件 body 里带 run）。写库成功但报告没来得及落盘时，--undo 靠它补全。
+ * 旧版本写的事件只有 curate 带 run，找不回的部分仍以报告为准。
+ */
+export function appliedFromLog(store: Store, run: string): RunReport["applied"] {
+  const byId = new Map<string, RunReport["applied"][number]>();
+  const entry = (id: string, op: string) => {
+    let x = byId.get(id);
+    if (!x) byId.set(id, (x = { op, id, events: [] }));
+    return x;
+  };
+  for (const e of store.curateRunEvents(run)) {
+    if (e.kind === "remember" && e.body.curate?.of) entry(e.body.curate.of, "rewrite").created = e.id;
+    else if (!e.target_id) continue;
+    else if (e.kind === "curate" && e.body.action === "promote") entry(e.target_id, "promote").events.unshift(e.id);
+    else if (e.kind === "tag") entry(e.target_id, "promote").events.push(e.id);
+    else if (e.kind === "archive") {
+      const x = entry(e.target_id, e.body.reason === "duplicate" ? "merge" : e.body.into ? "rewrite" : "discard");
+      x.op = e.body.reason === "duplicate" ? "merge" : e.body.into ? "rewrite" : "discard";
+      x.events.push(e.id);
+    }
+  }
+  return [...byId.values()];
+}
+
 export function undoRun(store: Store, report: RunReport): number {
   let n = 0;
   const props = store.project().props;
-  for (const a of report.applied) {
+  // 以 L1 为准：报告里没记下（写库后进程退出 / 落盘失败）的步骤也撤；报告里有、L1 找不回的（旧版本事件）照报告
+  const fromLog = appliedFromLog(store, report.run);
+  const seen = new Set(fromLog.map((a) => a.id));
+  for (const a of [...fromLog, ...report.applied.filter((a) => !seen.has(a.id))]) {
     const p = props.get(a.id);
     const mine = (ev: string | undefined) => !!ev && store.lastStateEvent(a.id) === ev;
     if (p && p.confirmed_by !== "user") {
       if (a.op === "promote" && p.curated && mine(a.events[0])) {
         store.lifecycle("curate", p.id, null, { action: "unpromote", run: report.run });
-        if (p.guidance && a.events.length > 1) store.lifecycle("tag", p.id, null, { guidance: false });
+        // guidance 只在最近一次改它的仍是本次运行的 tag 时才收回（用户之后自己改过就不动）
+        if (p.guidance && a.events.length > 1 && store.lastGuidanceTag(p.id) === a.events[1]) store.lifecycle("tag", p.id, null, { guidance: false });
         n++;
       } else if ((a.op === "discard" || a.op === "merge" || a.op === "rewrite") && p.state === "archived" && mine(a.events[a.events.length - 1])) {
         store.lifecycle("reactivate", p.id, null);

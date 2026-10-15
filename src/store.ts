@@ -174,6 +174,22 @@ export class Store {
     return r?.id ?? null;
   }
 
+  /** 目标条目最近一条改 guidance 的 tag 事件 id；没有为 null。撤销转正时据此确认 guidance 没被用户后来改过。 */
+  lastGuidanceTag(targetId: string): string | null {
+    const r = this.db
+      .prepare("SELECT id FROM events WHERE target_id=? AND kind='tag' AND body IS NOT NULL AND json_extract(body,'$.guidance') IS NOT NULL ORDER BY seq DESC LIMIT 1")
+      .get(targetId) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
+  /** 某次 ab curate --apply 写下的事件（body.run 或 body.curate.run 等于 run），按写入顺序。--undo 以 L1 为准，不全靠报告。 */
+  curateRunEvents(run: string): { id: string; kind: EventKind; target_id: string | null; body: any }[] {
+    const rows = this.db
+      .prepare("SELECT id, kind, target_id, body FROM events WHERE body IS NOT NULL AND (json_extract(body,'$.run')=? OR json_extract(body,'$.curate.run')=?) ORDER BY seq")
+      .all(run, run) as { id: string; kind: EventKind; target_id: string | null; body: string }[];
+    return rows.map((r) => ({ ...r, body: JSON.parse(r.body) }));
+  }
+
   /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */
   rememberEventsSince(since: string): { id: string; body: RememberBody }[] {
     const rows = this.db

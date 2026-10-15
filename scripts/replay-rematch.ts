@@ -9,6 +9,7 @@ import { parseArgs } from "node:util";
 import { Store } from "../src/store.ts";
 import { parseJsonLoose } from "../src/llm.ts";
 import { cliChat } from "../src/clireviewer.ts";
+import { parseMatchRefs } from "../src/evalmatch.ts";
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: { effort: { type: "string", default: "high" } } });
 const [runPath, outPath] = positionals;
@@ -46,18 +47,14 @@ for (const r of rows) {
         process.exit((e as any).code === "http_429" ? 3 : 1);
       }
       usd += c.costUsd ?? 0;
-      const o = parseJsonLoose(c.message.content ?? null) as any;
-      if (!o || typeof o.refs !== "object" || o.refs === null || refs.some((_, i) => !(`r${i + 1}` in o.refs))) {
+      const parsed = parseMatchRefs(parseJsonLoose(c.message.content ?? null), refs.length, outs.length);
+      if (!parsed) {
         // 匹配员输出无效：不落盘这个窗口（下次续跑会重试），不能当成"全部没匹配上"
-        console.log(`INVALID ${r.window_id.slice(0, 10)} ${P} 匹配员输出不完整，跳过`);
+        console.log(`INVALID ${r.window_id.slice(0, 10)} ${P} 匹配员输出不合法，跳过`);
         invalid = true;
         break;
       }
-      refs.forEach((x, i) => {
-        const v = o?.refs?.[`r${i + 1}`];
-        const mm = typeof v === "string" ? /^o(\d+)$/.exec(v.trim()) : null;
-        m[x.key] = mm && outs[Number(mm[1]) - 1] ? outs[Number(mm[1]) - 1].key : null;
-      });
+      refs.forEach((x, i) => (m[x.key] = parsed[i] === null ? null : outs[parsed[i]!].key));
     }
     res[`match${P}`] = m;
   }
