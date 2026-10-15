@@ -256,6 +256,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
       project: { type: "string" },
       "for-workers": { type: "boolean", default: false },
       confirmed: { type: "boolean", default: false },
+      direct: { type: "boolean", default: false },
       "from-worker": { type: "string" },
     },
     strict: true,
@@ -298,18 +299,27 @@ async function cmdRemember(argv: string[]): Promise<void> {
       transcript = source.transcript;
       missingWorker = w.missing;
     }
+    // v3：agent 自己判断要记的进候选区，等后台审稿；用户明确要记的（--confirmed）和人工迁移（--direct）直接进正式库。
+    // AB_STAGING=off 时回到 v2 行为（回滚开关，与 ab work 一致）。
+    const confirmed = values.confirmed === true;
+    const staged = !confirmed && !values.direct && process.env.AB_STAGING !== "off";
     const id = store.remember(projectId, source.session_id, false, {
       kind,
       text: values.text,
       why: values.why,
       for_workers: values["for-workers"] || undefined,
-      confirmed: values.confirmed === true,
+      confirmed,
       source,
+      ...(staged ? { candidate: true } : {}),
+      ...(values.direct && !confirmed ? { direct: true } : {}),
     });
-    let out = `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
+    let out = staged
+      ? `已放进候选区 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`
+      : `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
     if (missingWorker) out += "\n未找到子代理会话记录";
     else if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
-    if (!values.confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
+    if (staged) out += `\n候选：后台审稿后决定去留，不进 brief、召回和搜索。用户明确要求记的才加 --confirmed。`;
+    else if (!confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
     const reason = await updateVectors(store);
     if (reason) out += `\n向量未更新：${reason}`;
     console.log(out);
@@ -543,8 +553,14 @@ function cmdGuidance(argv: string[]): void {
 }
 
 function cmdAudit(argv: string[]): void {
-  const { values, positionals } = parseArgs({ args: argv, options: { apply: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
-  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply]");
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { apply: { type: "boolean", default: false }, since: { type: "string" } },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (positionals[0] === "agent-remember") return auditAgentRemember(values.since, values.apply === true);
+  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply] | ab audit agent-remember --since <ISO 时间> [--apply]");
   const store = open();
   try {
     const saidInMain = mainSessionQuotes(store);
@@ -558,6 +574,65 @@ function cmdAudit(argv: string[]): void {
     if (!values.apply) return console.log(plan.demote.length ? "预览，未写入。加 --apply 撤销上面这些条目的自动转正。" : "");
     for (const p of plan.demote) store.lifecycle("unconfirm", p.id, null, { reason: "worker_prompt", note: "证据是父 agent 写给 worker 的派活提示，不是用户原话" });
     console.log(`已撤销 ${plan.demote.length} 条。用户认可后可 ab confirm <id> 重新确认。`);
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * agent 用 ab remember 直接写进正式库、没加 --confirmed 的条目（v3 候选区上线前的旧行为）→ 移回候选区，交给审稿。
+ * 只挑：手工写入（非自动抽取、非导入、非 --direct 迁移）、写入时未确认、不是纠正、当前在正式库、用户没确认过。可用 ab stage <id> --undo 撤销。
+ */
+function auditAgentRemember(since: string | undefined, apply: boolean): void {
+  if (!since || Number.isNaN(Date.parse(since))) die("用法: ab audit agent-remember --since <ISO 时间，如 2026-10-14T08:46:00Z> [--apply]");
+  const from = new Date(since).toISOString();
+  const store = open();
+  try {
+    const rows = store.rememberEventsSince(from);
+    const props = store.project().props;
+    const names = namesOf(store);
+    const plan: Proposition[] = [];
+    for (const r of rows) {
+      const b = r.body;
+      if ((b.origin ?? "manual") !== "manual" || b.confirmed !== false || b.supersedes || b.candidate || b.direct) continue;
+      const p = props.get(r.id);
+      if (!p || p.state !== "active" || p.confirmed_by === "user") continue;
+      plan.push(p);
+    }
+    const line = (p: Proposition) => `  [${short(p.id)}] ${p.ts} ${p.source.host ?? "?"} ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${p.confirmed ? `（已确认:${p.confirmed_by}）` : "（未确认）"}: ${p.text.split("\n")[0]}`;
+    console.log(`${from} 之后 agent 直接写进正式库、未经用户确认的条目：${plan.length} 条（用户确认过的不动）。`);
+    for (const p of plan) console.log(line(p));
+    if (!apply) return console.log(plan.length ? "预览，未写入。加 --apply 把这些条目移回候选区。" : "");
+    for (const p of plan) store.lifecycle("stage", p.id, null, { action: "stage", reason: "agent_remember", note: "agent 用 ab remember 直接写进正式库，未经审稿" });
+    console.log(`已移回候选区 ${plan.length} 条。撤销单条：ab stage <id> --undo；用户亲自 ab confirm 也会直接转正。`);
+  } finally {
+    store.close();
+  }
+}
+
+function cmdStage(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { undo: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (!positionals.length) die("用法: ab stage <id 前缀…> [--undo]");
+  const store = open();
+  try {
+    for (const prefix of positionals) {
+      const p = findByPrefix(store, prefix);
+      if (values.undo) {
+        if (!p.staged) {
+          console.log(`未变 [${short(p.id)}]：不是用 ab stage 移进候选区的`);
+          continue;
+        }
+        store.lifecycle("stage", p.id, null, { action: "unstage" });
+        console.log(`已移回正式库 [${short(p.id)}] ${p.text.split("\n")[0]}`);
+      } else {
+        if (p.confirmed_by === "user" || p.state !== "active") {
+          console.log(`未变 [${short(p.id)}]：${p.confirmed_by === "user" ? "用户确认过的不动" : `当前状态 ${p.state}`}`);
+          continue;
+        }
+        store.lifecycle("stage", p.id, null, { action: "stage", reason: "agent_remember" });
+        console.log(`已移进候选区 [${short(p.id)}] ${p.text.split("\n")[0]}`);
+      }
+    }
   } finally {
     store.close();
   }
@@ -931,10 +1006,12 @@ function cmdStatus(): void {
 const USAGE = `用法:
   ab brief [项目名] [--worker]      开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
-              [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
+              [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed] [--direct]
               [--from-worker <claude|codex|pi>:<session_id>]
+                                    干活时不用记：后台会从会话里自动抽取并审稿。只有用户明确要你记时才用，并加 --confirmed
+                                    不加 --confirmed 的写进候选区，等后台审稿（不进 brief、召回、搜索）
+                                    --direct 不经候选区直接写进正式库（未确认），只用于人工迁移数据
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
-                                    --confirmed 用户明确要求记的才加；不加则不进 brief
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
@@ -947,6 +1024,9 @@ const USAGE = `用法:
   ab archive <id 前缀> [--reactivate]
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
   ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
+  ab audit agent-remember --since <ISO 时间> [--apply]
+                                    找出该时间后 agent 用 ab remember 直接写进正式库、未经用户确认的条目；--apply 移回候选区
+  ab stage <id 前缀…> [--undo]          把条目移进候选区（用户确认过的不动）；--undo 撤销，移回正式库
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
@@ -1070,6 +1150,7 @@ async function main(): Promise<void> {
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
+    if (cmd === "stage") return cmdStage(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus();
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);

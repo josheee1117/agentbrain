@@ -329,3 +329,20 @@ test("primary 模式没有参考成员（主审单独判）：配置合法；不
   assert.deepEqual(r.votes.map((v) => v.name), ["a"]);
   assert.equal(stats.length, 1);
 });
+
+test("stage 过的条目被 curate 转正：staged 清掉，unstage 不再动它；unpromote 回到候选并恢复 staged", () => {
+  const s = new Store(":memory:", ":memory:");
+  const id = s.remember(null, "s", false, { kind: "rule", text: "x", confirmed: false, source: src });
+  s.lifecycle("stage", id, null, { action: "stage", reason: "agent_remember" });
+  let p = s.project().props.get(id)!;
+  assert.deepEqual([p.state, p.candidate, p.staged], ["candidate", true, true]);
+  s.lifecycle("curate", id, null, { action: "promote", run: "r1", verdict: "keep" });
+  p = s.project().props.get(id)!;
+  assert.deepEqual([p.state, p.candidate, p.staged, p.curated], ["active", false, false, true]);
+  s.lifecycle("stage", id, null, { action: "unstage" });
+  p = s.project().props.get(id)!;
+  assert.deepEqual([p.state, p.candidate, p.staged], ["active", false, false], "转正后 unstage 不生效");
+  s.lifecycle("curate", id, null, { action: "unpromote", run: "r1" });
+  p = s.project().props.get(id)!;
+  assert.deepEqual([p.state, p.candidate, p.staged, p.curated], ["candidate", true, true, false]);
+});

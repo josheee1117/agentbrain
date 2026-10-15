@@ -159,11 +159,19 @@ export class Store {
     return this.append("remember", projectId, sessionId, ephemeral, null, body);
   }
 
-  /** archive/reactivate/confirm/unconfirm/tag/curate：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
-  lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "curate", targetId: string, sessionId: string | null, body: object = {}): string {
+  /** archive/reactivate/confirm/unconfirm/tag/stage/curate：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
+  lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object = {}): string {
     const p = this.project().props.get(targetId);
     if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
+  }
+
+  /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */
+  rememberEventsSince(since: string): { id: string; body: RememberBody }[] {
+    const rows = this.db
+      .prepare("SELECT id, body FROM events WHERE kind='remember' AND ephemeral=0 AND body IS NOT NULL AND ts >= ? ORDER BY seq")
+      .all(since) as { id: string; body: string }[];
+    return rows.map((r) => ({ id: r.id, body: JSON.parse(r.body) as RememberBody }));
   }
 
   /** 该会话已被 purge。 */
