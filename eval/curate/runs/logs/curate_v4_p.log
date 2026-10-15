@@ -1,0 +1,1 @@
+QUOTA_EXHAUSTED astra 额度用完，预计 2026-10-15T04:34:19.694Z 恢复：模型接口限流 429: All credentials for model gpt-6-astra are cooling down via provider codex (last error: usage_limit_reached: The usage limit has been reached)

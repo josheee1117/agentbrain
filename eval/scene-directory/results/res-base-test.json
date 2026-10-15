@@ -1,0 +1,284 @@
+{
+ "summary": {
+  "n": 15,
+  "brief": 0.167,
+  "briefChars": 1638.333,
+  "searchHit": 0.867,
+  "search": 0.8,
+  "searchChars": 1337.333,
+  "byProject": {
+   "data-asset": {
+    "n": 6,
+    "brief": 0.167,
+    "search": 0.75
+   },
+   "ai-data": {
+    "n": 6,
+    "brief": 0.25,
+    "search": 0.917
+   },
+   "insuranceagent": {
+    "n": 3,
+    "brief": 0,
+    "search": 0.667
+   }
+  }
+ },
+ "rows": [
+  {
+   "qid": "data-asset-03",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "note",
+   "briefChars": 1902,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只有通用规则与坑，完全未提及 TFormDataWideMapper.insertBatchDynamic、500 行批次、批内统一列集或 EntityAuditSupport.initCreate/initUpdate 等关键点。"
+   },
+   "searchHit": true,
+   "searchChars": 1879,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果 [cf9b2ac8] 明确写出批量写入入口 TFormDataWideMapper.insertBatchDynamic、500 行/批、批内统一列集缺失补 \"\"、模板/宽表列/唯一键每批只加载一次，以及审计初始化唯一权威 EntityAuditSupport.initCreate/initUpdate 覆盖了全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-06",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "rule",
+   "briefChars": 1902,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只包含派活/重构/审查/字典同步等规则，完全没有提到参数校验放在哪一层、Bean Validation、禁止 try-catch 兜底或 fallback 默认值等关键点。"
+   },
+   "searchHit": true,
+   "searchChars": 1133,
+   "search": {
+    "score": 0.5,
+    "reason": "上下文有 Fail Fast 规则覆盖禁止 try-catch/fallback/吞异常，但未明确“DTO Bean Validation 前置、非法参数不进 Service/Repository、Service 不做参数变形”等关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-09",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "decision",
+   "briefChars": 1902,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全没有提到 DerivedDimensionSlots、querySql.js、空维度哨兵或前后端 SQL 差异及以哪边为准的内容。"
+   },
+   "searchHit": true,
+   "searchChars": 1343,
+   "search": {
+    "score": 1,
+    "reason": "上下文[8b6bf402]明确写出后端剔除空维度哨兵、前端让哨兵占dimN、两边不等价以后端为准前端不改记入契约，以及ai-data对空维度+真实维度阻断、仅空维度归一总计，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-12",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1902,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了 JDK、字典同步、DataGuard 等坑，没有提到 JS/Java 去空白差异、ecmaTrim 或 dimN 槽位兼容性约定。"
+   },
+   "searchHit": false,
+   "searchChars": 1787,
+   "search": {
+    "score": 0,
+    "reason": "上下文完全未提及 Java trim 与 JS trim 的空白字符差异、ecmaTrim 或 dimN 槽位兼容性问题，只有派生指标相关的其他约定。"
+   }
+  },
+  {
+   "qid": "data-asset-15",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "decision",
+   "briefChars": 1902,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只提到字典同步时 label 覆盖的坑，没有提及 t_sys_dict_type 的 platform_type、shared 字段或创建来源/共享机制这一标准答案的核心内容。"
+   },
+   "searchHit": true,
+   "searchChars": 1303,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果 c48c014a 明确指出 t_sys_dict_type 新增 platform_type（创建来源 DAP/AI_CENTER，默认 'DAP'）与 shared（是否共享，默认 0）两个字段，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-18",
+   "project": "data-asset",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1902,
+   "brief": {
+    "score": 1,
+    "reason": "上下文 [4917fff6] 明确写出 JDK 跟分支 pom 的 java.version 走（master 系 11、dev_jdk17 为 17）、本机默认 17、用错会报 Lombok TypeTag :: UNKNOWN。"
+   },
+   "searchHit": true,
+   "searchChars": 1612,
+   "search": {
+    "score": 1,
+    "reason": "上下文 [4917fff6] 明确写出 JDK 跟分支 pom java.version 走（master 11、dev_jdk17 17）、本机默认 17、用错版本 Lombok 报 TypeTag :: UNKNOWN，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-03",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1931,
+   "brief": {
+    "score": 1,
+    "reason": "上下文中的 [24dc3f0b] 明确写出测试样例（原子 394/398）缺修饰词关系、生产有有效订单等修饰词、修饰词为空应先归因样例数据缺失而非同步 bug，覆盖全部关键点。"
+   },
+   "searchHit": true,
+   "searchChars": 1233,
+   "search": {
+    "score": 1,
+    "reason": "上下文（记忆条目 24dc3f0b）明确写出原子394/398样例缺修饰词关系、生产有『有效订单、订单已生效、订单未到期』，并指出修饰词为空应先怀疑样例数据缺而非同步 bug。"
+   }
+  },
+  {
+   "qid": "ai-data-06",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "rule",
+   "briefChars": 1931,
+   "brief": {
+    "score": 0.5,
+    "reason": "上下文只覆盖了「只报核实过、不报风格偏好」这一条，分挡结构（阻断/重要/次要）、每条含文件:行号/触发条件/建议修法、「已检查，无问题」及末尾「新坑/决定」均未提及。"
+   },
+   "searchHit": true,
+   "searchChars": 1038,
+   "search": {
+    "score": 1,
+    "reason": "上下文中的 [98fab38d] 和 [c3403fb0] 明确写出了按阻断/重要/次要分挡、每条含文件:行号、问题、触发条件或失败场景、建议修法、只报核实过的问题不报风格偏好、无问题写「已检查，无问题」、末尾单列「新坑/决定」并附证据，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-09",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1931,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全未提及 tests/storage 测试需串行执行或数据库单实例锁的限制，只有与现场无关的通用规则和其他坑。"
+   },
+   "searchHit": true,
+   "searchChars": 1129,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果第一条 [af98030f] 明确写出 tests/storage 用例必须串行执行并保留数据库级单实例锁，否则测试文件互相拒绝连接，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-12",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "rule",
+   "briefChars": 1931,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只给出通用规则与坑，完全未提及 prisma/、packages/storage/、同步/embedding 代码、/api/catalog/sync 接口及并行 worktree 阶段 2 的禁改原因。"
+   },
+   "searchHit": false,
+   "searchChars": 1302,
+   "search": {
+    "score": 0.5,
+    "reason": "上下文只提到不改 prisma 迁移、不碰其他 worktree 文件/进程，未给出禁改 packages/storage/、同步与 embedding 代码及 /api/catalog/sync，也未说明并行改动需可合并的原因。"
+   }
+  },
+  {
+   "qid": "ai-data-15",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1931,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了若干规则与坑，完全没有提到图表取数依赖字段、yFields、page.route 拦截 /api/results 或改动字段名需同步改 spec 映射等内容。"
+   },
+   "searchHit": true,
+   "searchChars": 1360,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果 [ea98638a] 明确写出图表按结果原列名和 UI spec 的 yFields 取数，mock 时只改行、保留原列名，确需改字段名要同步改 presentation/spec 字段映射，否则折线图不渲染。"
+   }
+  },
+  {
+   "qid": "ai-data-18",
+   "project": "ai-data",
+   "split": "test",
+   "kind": "rule",
+   "briefChars": 1931,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全没有提到 prisma、迁移或 schema 变更的处理规则，无法据此答出标准答案。"
+   },
+   "searchHit": true,
+   "searchChars": 1114,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果 [e9eeb0e1] 明确写出不要自己加或改 prisma 迁移，需要新列时停下来在汇报里说明等用户处理，两个关键点均覆盖。"
+   }
+  },
+  {
+   "qid": "insuranceagent-03",
+   "project": "insuranceagent",
+   "split": "test",
+   "kind": "note",
+   "briefChars": 1082,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只含派活、审查、重构等全局规则，完全没有提到逻辑删除/del_flag 的实现或相关约定。"
+   },
+   "searchHit": true,
+   "searchChars": 1272,
+   "search": {
+    "score": 0.5,
+    "reason": "上下文覆盖了默认 del_flag=1、按表显式开启、开启后置为 del_flag=id，但未提及 DataScopeSqlInjector 替换 MyBatis-Plus 删除方法、无主键列回退旧逻辑、字段类型兼容等关键点。"
+   }
+  },
+  {
+   "qid": "insuranceagent-06",
+   "project": "insuranceagent",
+   "split": "test",
+   "kind": "decision",
+   "briefChars": 1082,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只包含 agent 派活/记忆等通用规则，完全没有 TagDataReadyListener、重试策略或方案1的任何信息。"
+   },
+   "searchHit": true,
+   "searchChars": 1127,
+   "search": {
+    "score": 0.5,
+    "reason": "只明确给出“接受重复执行（方案1）”这一条，未写出失败返回 FAILURE 触发整条消息重投的机制及其他备选方案。"
+   }
+  },
+  {
+   "qid": "insuranceagent-09",
+   "project": "insuranceagent",
+   "split": "test",
+   "kind": "pitfall",
+   "briefChars": 1082,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全没有出现 ID/object_id 字段类型或 varchar/索引失效等关键点，只有“用 ab search 查”的提示，不构成覆盖。"
+   },
+   "searchHit": true,
+   "searchChars": 1428,
+   "search": {
+    "score": 1,
+    "reason": "ab search 结果中 [3d8eeb42] 与 [cfaa9328] 明确写出 ID 字段改为 varchar(64)、Java 侧 objectId 必须用 String、SQL 常量要写 '0'，否则索引失效全表扫描且非数字 ID 与 0 比较为真查出多余数据，覆盖全部关键点。"
+   }
+  }
+ ]
+}

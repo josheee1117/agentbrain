@@ -1,0 +1,98 @@
+{
+ "aborted": "astra 额度用完，预计 2026-10-15T04:34:19.694Z 恢复：模型接口限流 429: All credentials for model gpt-6-astra are cooling down via provider codex (last error: usage_limit_reached: The usage limit has been reached)",
+ "resetAt": "2026-10-15T04:34:19.694Z",
+ "stats": [
+  {
+   "member": "deepseek",
+   "role": "judge",
+   "ms": 127927,
+   "tokens": 26845,
+   "ok": true
+  },
+  {
+   "member": "deepseek",
+   "role": "judge",
+   "ms": 216399,
+   "tokens": 18424,
+   "ok": true
+  },
+  {
+   "member": "grok",
+   "role": "judge",
+   "ms": 262827,
+   "tokens": 33750,
+   "ok": true
+  },
+  {
+   "member": "astra",
+   "role": "judge",
+   "ms": 37191,
+   "tokens": 18217,
+   "ok": true
+  },
+  {
+   "member": "deepseek",
+   "role": "judge",
+   "ms": 61953,
+   "tokens": 16717,
+   "ok": true
+  },
+  {
+   "member": "grok",
+   "role": "judge",
+   "ms": 485885,
+   "tokens": 27319,
+   "ok": true
+  },
+  {
+   "member": "astra",
+   "role": "judge",
+   "ms": 41764,
+   "tokens": 14353,
+   "ok": true
+  },
+  {
+   "member": "deepseek",
+   "role": "judge",
+   "ms": 81768,
+   "tokens": 19108,
+   "ok": true
+  },
+  {
+   "member": "grok",
+   "role": "judge",
+   "ms": 407789,
+   "tokens": 25731,
+   "ok": true
+  },
+  {
+   "member": "astra",
+   "role": "judge",
+   "ms": 44689,
+   "tokens": 13760,
+   "ok": true
+  },
+  {
+   "member": "deepseek",
+   "role": "judge",
+   "ms": 73806,
+   "tokens": 21006,
+   "ok": true
+  },
+  {
+   "member": "grok",
+   "role": "judge",
+   "ms": 396642,
+   "tokens": 26882,
+   "ok": true
+  },
+  {
+   "member": "astra",
+   "role": "judge",
+   "ms": 34,
+   "tokens": 0,
+   "ok": false,
+   "error": "模型接口限流 429: All credentials for model gpt-6-astra are cooling down via provider codex (last error: usage_limit_reached: The usage limit has been reached)"
+  }
+ ]
+}
