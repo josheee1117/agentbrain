@@ -5,7 +5,7 @@
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
@@ -25,7 +25,7 @@ import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
-import { applyActions, candidateInput, claimCandidates, connectPanel, loadReport, planAll, releaseClaims, renewClaims, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
+import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
 import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "./review.ts";
 import { runSetup, STEPS, type Step } from "./setup.ts";
@@ -913,14 +913,7 @@ async function cmdWork(argv: string[]): Promise<void> {
   } finally {
     store.close();
   }
-  // 会话结束触发的抽取跑完后接着审稿（review.json autoRun:true 才会真拉起；认领保证并发会话不重复审）
-  if (values.session) {
-    try {
-      spawnCurate(parseSessionKey(values.session).host);
-    } catch {
-      // 拉不起审稿不影响抽取结果；候选会留到下次
-    }
-  }
+
 }
 
 async function cmdImport(argv: string[]): Promise<void> {
@@ -1050,12 +1043,10 @@ const USAGE = `用法:
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
   ab setup [--only fast,reviewers,panel,keys,hosts,test]
                                     上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
-  ab curate [--apply] [--host claude|codex|pi] [--limit N] | ab curate --undo <run> | ab curate --auto --host <宿主>
+  ab curate [--apply] [--host claude|codex|pi] [--limit N] | ab curate --undo <run>
                                     审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
                                     默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动候选、用户确认过的不动；--undo 整次撤销
-                                    写库的运行先认领候选（并发运行不重复审，崩掉的认领 30 分钟后过期由下次接手）
                                     --host：只审该宿主会话抽出的候选，用 review.json hostReviewers 里给它配的审稿人（用该宿主自己的额度）
-                                    --auto：会话结束抽取完由 ab work 拉起；review.json 写了 "autoRun": true 才会审稿写库
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
@@ -1064,7 +1055,7 @@ const USAGE = `用法:
 async function cmdCurate(argv: string[]): Promise<void> {
   const { values } = parseArgs({
     args: argv,
-    options: { apply: { type: "boolean", default: false }, auto: { type: "boolean", default: false }, host: { type: "string" }, limit: { type: "string" }, undo: { type: "string" } },
+    options: { apply: { type: "boolean", default: false }, host: { type: "string" }, limit: { type: "string" }, undo: { type: "string" } },
     strict: true,
   });
   const root = home();
@@ -1078,35 +1069,24 @@ async function cmdCurate(argv: string[]): Promise<void> {
     }
     return;
   }
-  // --auto：会话结束后由 ab work 拉起。审稿子进程里永远不跑；review.json 没写 autoRun:true 就什么都不做
-  if (values.auto && process.env[REVIEWER_ENV]) return;
+  // 审稿子进程里不再递归审稿
+  if (process.env[REVIEWER_ENV]) return;
   const loaded = loadReviewConfig(root);
-  if ("error" in loaded) {
-    if (values.auto) return;
-    die(loaded.error);
-  }
-  if (values.auto && !loaded.autoRun) return;
+  if ("error" in loaded) die(loaded.error);
   if (values.host !== undefined && !HOSTS.includes(values.host as Host)) die(`--host 只能是 ${HOSTS.join("/")}`);
   // --host：只审从这个宿主会话抽出来的候选，用该宿主配的审稿人（hostReviewers），用它自己的额度
   const { cfg, onlyHost } = configForHost(loaded, (values.host as Host | undefined) ?? null);
-  const wantApply = values.apply || values.auto;
+  const wantApply = values.apply;
   const store = open();
   const run = `curate-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
-  let renew: ReturnType<typeof setInterval> | undefined;
   try {
     const props = store.project().props;
     const names = namesOf(store);
     const cap = values.limit ? Math.max(1, Number(values.limit) || 1) : cfg.batchSize * cfg.maxBatches;
     const pending = [...props.values()].filter((p) => p.state === "candidate" && p.confirmed_by !== "user" && (!onlyHost || p.source.host === onlyHost)).sort((a, b) => a.seq - b.seq);
-    // 写库的运行先认领：并发的会话各审各的；崩掉的运行留下的认领过期后由下一次接手。dry-run 不认领。
-    const ids = wantApply ? claimCandidates(store.workDb, pending.map((p) => p.id), run, new Date(), cap) : pending.slice(0, cap).map((p) => p.id);
-    if (wantApply) {
-      renew = setInterval(() => renewClaims(store.workDb, run, new Date()), 5 * 60_000);
-      renew.unref();
-    }
-    const cands = ids.map((id) => props.get(id)!);
+    const cands = pending.slice(0, cap);
     if (!cands.length) {
-      if (!values.auto) console.log(pending.length ? "候选都被别的审稿运行认领了，这次没有要审的。" : "候选区是空的，没有要审的。");
+      console.log("候选区是空的，没有要审的。");
       return;
     }
     const { panel, arbiter, missing } = connectPanel(cfg);
@@ -1144,7 +1124,7 @@ async function cmdCurate(argv: string[]): Promise<void> {
     const cost = stats.reduce((n, s) => n + (s.costUsd ?? 0), 0);
     console.log(
       [
-        `${new Date().toISOString()} ${apply ? "已执行" : "dry-run（没写库）"}${values.auto ? "（会话结束自动审稿）" : ""}：${cands.length} 条候选`,
+        `${new Date().toISOString()} ${apply ? "已执行" : "dry-run（没写库）"}：${cands.length} 条候选`,
         `  沉淀 ${count("promote")}，改写 ${count("rewrite")}，并入 ${count("merge")}，丢弃 ${count("discard")}，跳过 ${count("skip")}`,
         cfg.mode === "primary" ? `  主审 ${cfg.primary} 定结论 ${routes.filter((r) => r === "primary").length}，未决 ${routes.filter((r) => r === "undecided").length}${advisors.length ? `（参考意见：${advisors.join("、")}）` : ""}` : `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
         `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}${cost ? `，费用约 $${cost.toFixed(4)}` : ""}`,
@@ -1154,23 +1134,8 @@ async function cmdCurate(argv: string[]): Promise<void> {
       ].filter(Boolean).join("\n"),
     );
   } finally {
-    if (renew) clearInterval(renew);
-    if (wantApply) releaseClaims(store.workDb, run);
     store.close();
   }
-}
-
-/** ab work --session 抽取完后：review.json 写了 autoRun:true 才拉起分离的 ab curate --auto，输出追加到 ~/.agentbrain/curate/auto.log。主会话不等它。 */
-function spawnCurate(host: Host): void {
-  if (process.env[REVIEWER_ENV]) return;
-  const cfg = loadReviewConfig(home());
-  if ("error" in cfg || !cfg.autoRun) return;
-  const dir = join(home(), "curate");
-  mkdirSync(dir, { recursive: true });
-  const log = openSync(join(dir, "auto.log"), "a");
-  const child = spawn(process.execPath, [...process.execArgv, process.argv[1], "curate", "--auto", "--host", host], { detached: true, stdio: ["ignore", log, log], env: process.env });
-  child.unref();
-  closeSync(log);
 }
 
 async function cmdSetup(argv: string[]): Promise<void> {

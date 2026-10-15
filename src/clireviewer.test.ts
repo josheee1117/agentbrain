@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cliChat, cliCommand, cliFailure, parseCliOutput, reviewerEnv, REVIEWER_ENV, type Runner } from "./clireviewer.ts";
 import { configForHost, judgeBatchPrimary, QuotaExhausted, retryPolicy, validateReviewConfig, type CallStat, type CandidateInput } from "./review.ts";
-import { claimCandidates, connectPanel, releaseClaims, CLAIM_TTL_MS } from "./curate.ts";
+import { connectPanel } from "./curate.ts";
 import { Store } from "./store.ts";
 import { runSetup } from "./setup.ts";
 
@@ -86,17 +86,15 @@ test("CLI 成员额度用完：退避表用完就 QuotaExhausted，整次停下"
   }
 });
 
-test("配置：cli 成员不要 baseUrl/key；host 必须合法；hostReviewers 与 configForHost；autoRun 默认 false", () => {
+test("配置：cli 成员不要 baseUrl/key；host 必须合法；hostReviewers 与 configForHost", () => {
   const cli = { name: "h", type: "cli", host: "claude", model: "haiku", effort: "max" };
   const cfg = validateReviewConfig({ mode: "primary", primary: "h", panel: [cli], hostReviewers: { codex: { name: "cx", type: "cli", host: "codex", model: "gpt-6-astra", effort: "max" } } });
   assert.ok(!("error" in cfg));
   if ("error" in cfg) return;
-  assert.equal(cfg.autoRun, false);
   assert.equal(cfg.panel[0].keyService, "");
   assert.match((validateReviewConfig({ mode: "primary", primary: "h", panel: [{ ...cli, host: "cursor" }] }) as any).error, /host/);
   assert.match((validateReviewConfig({ mode: "primary", primary: "h", panel: [{ ...cli, type: "grpc" }] }) as any).error, /type/);
   assert.match((validateReviewConfig({ mode: "primary", primary: "h", panel: [cli], hostReviewers: { cursor: cli } }) as any).error, /hostReviewers/);
-  assert.match((validateReviewConfig({ mode: "primary", primary: "h", panel: [cli], autoRun: "yes" }) as any).error, /autoRun/);
   const forCodex = configForHost(cfg, "codex");
   assert.equal(forCodex.onlyHost, "codex");
   assert.deepEqual([forCodex.cfg.mode, forCodex.cfg.primary, forCodex.cfg.panel.map((m) => m.name)], ["primary", "cx", ["cx"]]);
@@ -104,19 +102,7 @@ test("配置：cli 成员不要 baseUrl/key；host 必须合法；hostReviewers 
   assert.equal(configForHost(cfg, "pi").cfg, cfg);
 });
 
-test("认领：两次运行不重复认领；释放后可再认领；过期的认领（崩掉的运行）会被接手", () => {
-  const s = new Store(":memory:", ":memory:");
-  const db = s.workDb;
-  const t = new Date("2026-10-15T00:00:00Z");
-  assert.deepEqual(claimCandidates(db, ["a", "b", "c"], "r1", t, 2), ["a", "b"]);
-  assert.deepEqual(claimCandidates(db, ["a", "b", "c"], "r2", t, 5), ["c"]);
-  releaseClaims(db, "r2");
-  assert.deepEqual(claimCandidates(db, ["a", "b", "c"], "r3", t, 5), ["c"]);
-  const later = new Date(t.getTime() + CLAIM_TTL_MS + 1);
-  assert.deepEqual(claimCandidates(db, ["a", "b", "c"], "r4", later, 5), ["a", "b", "c"], "r1/r3 崩了没释放：过期后接手");
-});
-
-test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra max、Pi 用默认模型；autoRun 默认关；没有主配置时用 Claude 审稿人当主审", async () => {
+test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra max、Pi 用默认模型；没有主配置时用 Claude 审稿人当主审", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-setup-"));
   try {
     const said: string[] = [];
@@ -126,7 +112,6 @@ test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra m
     assert.equal(r.hostReviewers.codex.model, "gpt-6-astra");
     assert.equal(r.hostReviewers.codex.effort, "max");
     assert.equal(r.hostReviewers.pi.model, "");
-    assert.equal(r.autoRun, false);
     assert.deepEqual([r.mode, r.primary, r.panel[0].name], ["primary", "claude-review", "claude-review"]);
     // 选 api：默认是经 cpa 的 astra
     const answers = (q: string, def?: string) => (q.startsWith("Claude Code 会话") ? "api" : (def ?? ""));

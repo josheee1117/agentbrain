@@ -41,11 +41,6 @@ export interface ReviewConfig {
    */
   mode: "panel" | "primary";
   /**
-   * 会话结束抽取完后自动拉起分离的 ab curate --apply（默认 false）。
-   * 只有 review.json 明确写 "autoRun": true 才会自动审稿写库；不写或 false 时 hook 不拉起审稿。
-   */
-  autoRun: boolean;
-  /**
    * 按宿主分的审稿人（可选）：某个宿主的会话结束后，用这里配的成员单独审"从该宿主会话抽出来的候选"，
    * 用的是该宿主自己的账号额度（通常是 type=cli 的 claude -p / codex exec / pi -p）。没配的宿主走上面的 mode/panel。
    */
@@ -89,7 +84,6 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
   }
   const mode = o.mode === undefined ? "panel" : o.mode;
   if (mode !== "panel" && mode !== "primary") return { error: `${path} 的 mode 只能是 panel 或 primary` };
-  if (o.autoRun !== undefined && typeof o.autoRun !== "boolean") return { error: `${path} 的 autoRun 只能是 true 或 false` };
   const hostReviewers: Partial<Record<CliHost, PanelMember>> = {};
   if (o.hostReviewers !== undefined) {
     if (typeof o.hostReviewers !== "object" || o.hostReviewers === null || Array.isArray(o.hostReviewers)) return { error: `${path} 的 hostReviewers 必须是对象` };
@@ -106,7 +100,7 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     const pm = panel.find((m) => m.name === o.primary);
     if (!pm) return { error: `${path} 的 mode=primary 时 primary 必须是 panel 里某个成员的 name` };
     // primary 模式不用仲裁：arbiter 字段即使写了也忽略，这里指向主审只为类型完整
-    return { mode, autoRun: o.autoRun === true, hostReviewers, primary: pm.name, panel, arbiter: pm.name, arbiterMember: pm, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+    return { mode, hostReviewers, primary: pm.name, panel, arbiter: pm.name, arbiterMember: pm, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
   }
   let arbiterMember: PanelMember | undefined;
   if (typeof o.arbiter === "string") arbiterMember = panel.find((m) => m.name === o.arbiter);
@@ -117,7 +111,7 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     arbiterMember = r;
   }
   if (!arbiterMember) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name，或一个完整的模型配置对象` };
-  return { mode, autoRun: o.autoRun === true, hostReviewers, primary: null, panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+  return { mode, hostReviewers, primary: null, panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
 }
 
 function validateMember(m: any, path: string): PanelMember | { error: string } {

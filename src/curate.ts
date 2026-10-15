@@ -4,7 +4,6 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { chatClient } from "./llm.ts";
 import { cliChat, spawnRunner, type Runner } from "./clireviewer.ts";
 import type { Proposition } from "./l2.ts";
@@ -186,35 +185,4 @@ export function loadReport(home: string, run: string): RunReport {
 
 export function planAll(results: CurateResult[], props: Map<string, Proposition>): Action[] {
   return results.map((r) => planAction(props.get(r.id)!, r, props));
-}
-
-// ---------- 认领：并发的 ab curate 不重复审同一条；审稿进程崩了，租约过期后别的运行会接手 ----------
-
-/** 认领租约时长；运行中定时续期。 */
-export const CLAIM_TTL_MS = 30 * 60_000;
-
-/** 从 ids（按优先顺序）里认领最多 max 条没被别的运行占着的候选。过期的认领先清掉（崩掉的运行留下的）。 */
-export function claimCandidates(db: DatabaseSync, ids: string[], run: string, now: Date, max: number): string[] {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    db.prepare("DELETE FROM curate_claims WHERE expires_at < ?").run(now.toISOString());
-    const held = new Set((db.prepare("SELECT prop_id FROM curate_claims").all() as { prop_id: string }[]).map((r) => r.prop_id));
-    const got = ids.filter((id) => !held.has(id)).slice(0, max);
-    const ins = db.prepare("INSERT INTO curate_claims(prop_id,run,pid,expires_at) VALUES(?,?,?,?)");
-    const exp = new Date(now.getTime() + CLAIM_TTL_MS).toISOString();
-    for (const id of got) ins.run(id, run, process.pid, exp);
-    db.exec("COMMIT");
-    return got;
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
-}
-
-export function renewClaims(db: DatabaseSync, run: string, now: Date): void {
-  db.prepare("UPDATE curate_claims SET expires_at=? WHERE run=?").run(new Date(now.getTime() + CLAIM_TTL_MS).toISOString(), run);
-}
-
-export function releaseClaims(db: DatabaseSync, run: string): void {
-  db.prepare("DELETE FROM curate_claims WHERE run=?").run(run);
 }

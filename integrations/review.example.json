@@ -9,7 +9,6 @@
     "codex": {"name": "codex-review", "type": "cli", "host": "codex", "model": "gpt-6-astra", "effort": "max", "concurrency": 1},
     "pi": {"name": "pi-review", "type": "cli", "host": "pi", "concurrency": 1}
   },
-  "autoRun": false,
   "batchSize": 10,
   "maxBatches": 3
 }

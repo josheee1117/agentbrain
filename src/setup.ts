@@ -204,8 +204,8 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
         const type = pick === "api" ? "api" : "cli";
         hr[host] = await askMember(u, old?.type === type || (!old?.type && type === "api") ? old : undefined, `${host}-review`, { type, host });
       }
-      const auto = yes(await u.ask("会话结束抽取完后自动审稿并写库（autoRun）？没确认前建议先 n，用 ab curate 手动 dry-run 看看(y/n)", review.autoRun ? "y" : "n"));
-      const next: any = { ...review, hostReviewers: hr, autoRun: auto };
+      const next: any = { ...review, hostReviewers: hr };
+      delete next.autoRun;
       // 还没有主审稿配置时：用 Claude 的审稿人（没有就用第一个）当主审，主配置管手动 ab curate 和不属于任何宿主的候选
       if (!next.panel?.length) {
         const first = hr.claude ?? Object.values(hr)[0];
