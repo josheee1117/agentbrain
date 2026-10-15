@@ -1,0 +1,82 @@
+[
+ {
+  "variant": "relation-edges",
+  "split": "test",
+  "pos": 27,
+  "fully_missed": 4,
+  "rescued": 0,
+  "added_non_gold_on_pos": 3,
+  "added_gold": 4,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=1 cos>=0.6",
+  "split": "test",
+  "pos": 27,
+  "fully_missed": 4,
+  "rescued": 0,
+  "added_non_gold_on_pos": 19,
+  "added_gold": 6,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=2 cos>=0.6",
+  "split": "test",
+  "pos": 27,
+  "fully_missed": 4,
+  "rescued": 0,
+  "added_non_gold_on_pos": 39,
+  "added_gold": 9,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=3 cos>=0.5",
+  "split": "test",
+  "pos": 27,
+  "fully_missed": 4,
+  "rescued": 0,
+  "added_non_gold_on_pos": 66,
+  "added_gold": 10,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "relation-edges",
+  "split": "all",
+  "pos": 77,
+  "fully_missed": 12,
+  "rescued": 0,
+  "added_non_gold_on_pos": 10,
+  "added_gold": 9,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=1 cos>=0.6",
+  "split": "all",
+  "pos": 77,
+  "fully_missed": 12,
+  "rescued": 2,
+  "added_non_gold_on_pos": 55,
+  "added_gold": 17,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=2 cos>=0.6",
+  "split": "all",
+  "pos": 77,
+  "fully_missed": 12,
+  "rescued": 3,
+  "added_non_gold_on_pos": 115,
+  "added_gold": 26,
+  "added_on_negatives": 0
+ },
+ {
+  "variant": "vec-knn k=3 cos>=0.5",
+  "split": "all",
+  "pos": 77,
+  "fully_missed": 12,
+  "rescued": 4,
+  "added_non_gold_on_pos": 201,
+  "added_gold": 32,
+  "added_on_negatives": 0
+ }
+]

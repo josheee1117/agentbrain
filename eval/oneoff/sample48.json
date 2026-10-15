@@ -1,0 +1,196 @@
+[
+ {
+  "text": "继续吧",
+  "oneOff": true
+ },
+ {
+  "text": "好了。",
+  "oneOff": true
+ },
+ {
+  "text": "可以",
+  "oneOff": true
+ },
+ {
+  "text": "继续",
+  "oneOff": true
+ },
+ {
+  "text": "提交吧",
+  "oneOff": true
+ },
+ {
+  "text": "好，继续吧",
+  "oneOff": true
+ },
+ {
+  "text": "把这个更新提交推送，并 cherrypick合并到 dev_jdk17",
+  "oneOff": true
+ },
+ {
+  "text": "那就继续",
+  "oneOff": true
+ },
+ {
+  "text": "推送吧",
+  "oneOff": true
+ },
+ {
+  "text": "改吧。",
+  "oneOff": true
+ },
+ {
+  "text": "提交代码吧",
+  "oneOff": true
+ },
+ {
+  "text": "合并到 dev_jdk",
+  "oneOff": true
+ },
+ {
+  "text": "发布到 dev",
+  "oneOff": true
+ },
+ {
+  "text": "提交并推送代码",
+  "oneOff": true
+ },
+ {
+  "text": "测试完成后提交代码",
+  "oneOff": true
+ },
+ {
+  "text": "你做个整体验证，没问题的话就合并代码并推送吧",
+  "oneOff": true
+ },
+ {
+  "text": "提交并推送然后 cheerypick 到 dev 分支",
+  "oneOff": true
+ },
+ {
+  "text": "修复吧",
+  "oneOff": true
+ },
+ {
+  "text": "干吧",
+  "oneOff": true
+ },
+ {
+  "text": "先把bug改了",
+  "oneOff": true
+ },
+ {
+  "text": "按你的来",
+  "oneOff": false,
+  "note": "认可助手提出的方案=user_confirmed 决定，不是一次性授权（真实库 0cd1cfa1 即此类）"
+ },
+ {
+  "text": "按你说的改造方案做",
+  "oneOff": false,
+  "note": "认可助手提出的方案=user_confirmed 决定，不是一次性授权（真实库 0cd1cfa1 即此类）"
+ },
+ {
+  "text": "你跑一下试试看吧",
+  "oneOff": true
+ },
+ {
+  "text": "data-asset要合并到dev_jdk17分支。piops",
+  "oneOff": true
+ },
+ {
+  "text": "你帮我判断一下该如何接入，能够发挥这个插件的功能，又不会太过浪费token",
+  "oneOff": false
+ },
+ {
+  "text": "之前改的一个质量监控 job 没有把 detail 字段推送到企业微信的 bug，是不是在这个分支？有没有上线呢？",
+  "oneOff": false
+ },
+ {
+  "text": "你合并要推送啊，我看 Jenkins 都没触发",
+  "oneOff": false
+ },
+ {
+  "text": "表责任人未匹配不要影响数仓表同步进度，未匹配到的可以给默认值或空值，确保数据表能正常同步；",
+  "oneOff": false
+ },
+ {
+  "text": "继续，后面使用gpt5.6 sol high",
+  "oneOff": false
+ },
+ {
+  "text": "那就用deepseek-v4.1-flash",
+  "oneOff": false
+ },
+ {
+  "text": "给我直接浏览器打开",
+  "oneOff": false
+ },
+ {
+  "text": "达到可转测的标准了吗？你验证了哪些测试用例？效果如何？要有事实依据",
+  "oneOff": false
+ },
+ {
+  "text": "什么状态了",
+  "oneOff": false
+ },
+ {
+  "text": "master 分支有没有？",
+  "oneOff": false
+ },
+ {
+  "text": "不能修复吗？",
+  "oneOff": false
+ },
+ {
+  "text": "如果有改动也要合到main",
+  "oneOff": false
+ },
+ {
+  "text": "还是优先用herdr吧，subagent的工作细节不展示出来，没法观察",
+  "oneOff": false
+ },
+ {
+  "text": "存储位置应该只取一张表就行了",
+  "oneOff": false
+ },
+ {
+  "text": "返回字段用中文标识",
+  "oneOff": false
+ },
+ {
+  "text": "用推荐的方案就可以，注意流程更新了，上面也要显示当前使用的 skill 流程。",
+  "oneOff": false
+ },
+ {
+  "text": "帮我合入一下那个改动，另外我直接重新触发 job 就好了吧",
+  "oneOff": false
+ },
+ {
+  "text": "继续用子代理干",
+  "oneOff": false
+ },
+ {
+  "text": "这种便宜模型的thinking程度默认要调高点，medium有啥用",
+  "oneOff": false
+ },
+ {
+  "text": "不对，你改错了，应该按照官方的来，不要给我擅自调整到1m。",
+  "oneOff": false
+ },
+ {
+  "text": "太慢了，用deepseek-latest模型或者glmlatset跑吧",
+  "oneOff": false
+ },
+ {
+  "text": "当前可以转为正式使用了吗",
+  "oneOff": false
+ },
+ {
+  "text": "测了哪些场景",
+  "oneOff": false
+ },
+ {
+  "text": "开始吧。你作为总控制者使用子代理的模型做具体的任务",
+  "oneOff": false
+ }
+]

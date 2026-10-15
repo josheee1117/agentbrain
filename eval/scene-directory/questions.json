@@ -1,0 +1,827 @@
+[
+ {
+  "qid": "data-asset-01",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "e8d8c189"
+  ],
+  "question": "MaxCompute 表责任人没匹配上字典时该怎么处理？当前生效的是哪版决定，和之前那版是什么关系？",
+  "answer": "按 2026-10-08 的 ADR04，责任人未匹配字典时把 tableOwner 置空并告警，不中断同步，等字典补齐后靠全量 reconcile 恢复；它替代了 2026-09-24 版 ADR04 的『保留源值』做法，文档里要写明这一替代关系。该实现已集成并推到 dev_jdk17。",
+  "key_points": [
+   "责任人未匹配时 tableOwner 置空并告警，不中断同步",
+   "字典补齐后通过全量 reconcile 恢复",
+   "2026-10-08 版 ADR04 替代 2026-09-24 版的『保留源值』，且需在文档中写明替代关系"
+  ],
+  "source_text": "MaxCompute 表责任人未匹配字典时按 2026-10-08 ADR04：tableOwner 置空并告警，不中断同步，字典补齐后靠全量 reconcile 恢复；它替代了 2026-09-24 ADR04 的『保留源值』，文档里要写明替代关系。已集成并推到 dev_jdk17。"
+ },
+ {
+  "qid": "data-asset-02",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "1b998052"
+  ],
+  "question": "数仓表「查看引用」接口在返回报表类引用时，需要遵守哪些字段和范围约定？",
+  "answer": "报表引用必须带上 relationDesc=\"报表\"、reportId 和 reportName 三个字段，并且已被禁用但尚未删除的报表也要一并返回。",
+  "key_points": [
+   "报表引用必须包含 relationDesc=\"报表\"、reportId、reportName",
+   "禁用但未删除的报表也必须返回",
+   "该约定针对数仓表「查看引用」接口的报表引用"
+  ],
+  "source_text": "数仓表‘查看引用’接口返回报表引用时，必须包含 relationDesc=\"报表\"、reportId 和 reportName 字段，禁用但未删除的报表也需返回。"
+ },
+ {
+  "qid": "data-asset-03",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "note",
+  "confirmed": true,
+  "gold_ids": [
+   "cf9b2ac8"
+  ],
+  "question": "在 data-asset 里做宽表（form-table）动态列的批量写入时应该走哪个写入入口、批次和列集上有什么约束？实体的创建/更新审计字段初始化应该统一走哪里？",
+  "answer": "批量写入统一走 TFormDataWideMapper.insertBatchDynamic(columns, List<BatchRow>)，一批 500 行、批内使用统一列集（首行求并、缺失补 \"\"），模板/宽表列/唯一键定义每批只加载一次；审计字段初始化统一由 com.mbkj.dap.sys.common.EntityAuditSupport.initCreate/initUpdate 负责，有登录态走 BaseEntity.initCreateInfo()，无登录态线程填空串。",
+  "key_points": [
+   "批量写入入口是 TFormDataWideMapper.insertBatchDynamic，500 行/批，批内统一列集、缺失补 \"\"",
+   "模板/宽表列/唯一键定义每批只加载一次（消除原先每行 4 查的 N+1）",
+   "审计初始化唯一权威是 EntityAuditSupport.initCreate/initUpdate，无登录态（如 @Async 线程）填空串"
+  ],
+  "source_text": "form-table 重构后的实现边界：宽表动态列批量插入模式：TFormDataWideMapper.insertBatchDynamic(columns, List<BatchRow>) —；批内统一列集（首行 normalize 列集求并、缺失补 \"\"），BatchRow{row, values} 载体分离审计字段与 c 槽位值，；500 行/批。模板/宽表列/唯一键定义每批只加载一次（原 N+1：每行 4 查）。列名来自 information_schema 正则 ^c[1-9][0-9]$，${column} 插值无注入面。实体审计初始化单一权威：com.mbkj.dap.sys.common.EntityAuditSupport.initCreate/initUpdate(BaseEntity) —；有登录态走 BaseEntity.initCreateInfo()；无登录态…"
+ },
+ {
+  "qid": "data-asset-04",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "a32ab472"
+  ],
+  "question": "在 data-asset 测试库里手工补 t_standard_field 的数据、或生成 field_code 的时候，有什么容易踩的坑？",
+  "answer": "t_standard_field.field_code 有唯一索引，已删除的行也占用编码；平台按领域前缀的最大序号 +1 生成编码，手工补数据时编码不要和已删行撞。",
+  "key_points": [
+   "t_standard_field.field_code 有唯一索引，已删除的行仍占编码",
+   "平台按领域前缀最大序号 +1 生成编码",
+   "手工补数据时编码不能与已删行重复"
+  ],
+  "source_text": "测试库 t_standard_field.field_code 有唯一索引，已删除的行也占编码；平台按领域前缀最大序号 +1 生成编码，手工补数据时编码别和已删行撞。"
+ },
+ {
+  "qid": "data-asset-05",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "9888aac0"
+  ],
+  "question": "在 data-asset 里涉及派生指标槽位（dimN）的前后端改动时，开工前必须先知道哪些已知陷阱？",
+  "answer": "后端 DerivedDimensionSlots 会先剔除「空维度」哨兵再排槽位，而前端 querySql.js 让哨兵直接占 dimN。因此当输入混合了真实维度与哨兵时，两边算出的 dimN 不一致，且 slotDiffersFromSortOrder 检测不到这类差异——契约要求剔除哨兵但前端排序时未剔除，属于阻断验收的槽位契约冲突。",
+  "key_points": [
+   "后端 DerivedDimensionSlots 先剔除空维度哨兵再排槽位，前端 querySql.js 让哨兵占 dimN",
+   "真实维度与哨兵混合输入时前后端 dimN 结果不同",
+   "slotDiffersFromSortOrder 无法发现该差异，且这是阻断验收的契约冲突"
+  ],
+  "source_text": "派生指标槽位不要假定前后端逐条等价：后端 DerivedDimensionSlots 先剔除「空维度」哨兵再排槽位，前端 querySql.js 让哨兵占 dimN，遇到「真实维度+哨兵」混合输入（如 [空维度 sortOrder=1, 门店 sortOrder=2]、名称 门店_GMV）两边 dimN 结果不同，且 slotDiffersFromSortOrder 发现不了这类差异。"
+ },
+ {
+  "qid": "data-asset-06",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "rule",
+  "confirmed": true,
+  "gold_ids": [
+   "e69add94"
+  ],
+  "question": "在这个项目里新增或修改接口时，参数校验该放在哪一层做？校验不通过或遇到不可恢复的异常时应该怎么处理？",
+  "answer": "一律在边界（入口）做前置校验并立即失败：优先用 DTO 上的 Bean Validation 注解，非法参数不进入 Service/Repository；禁止用 try-catch 包住整段方法兜底、用 fallback 默认值掩盖问题或吞异常类型，也不在 Service 里做 trim/回填这类改参数的操作。",
+  "key_points": [
+   "参数校验在边界（Controller/DTO）前置完成，非法输入立即失败，不流入 Service/Repository",
+   "禁止 try-catch 兜底、fallback 默认值和吞异常类型",
+   "Service 不做参数变形，校验与规范化分开"
+  ],
+  "source_text": "Fail Fast — 边界处验证立即失败：非法输入和不可恢复的异常必须立即失败：不允许 try-catch 套整段方法兜底，不允许 fallback 默认值掩盖问题，不允许吞异常类型。"
+ },
+ {
+  "qid": "data-asset-07",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "b3293221"
+  ],
+  "question": "在这个项目里新增开放接口的鉴权凭据要怎么处理？跟已有的开放接口鉴权是什么关系？",
+  "answer": "新增开放接口必须使用独立的凭据（如 semantic.open-api.app-id / app-secret），不能复用数据质量开放接口的凭据；凭据未配置或校验失败一律返回 401（fail-closed），同时不得改变原 QmOpenApi 的行为。",
+  "key_points": [
+   "新开放接口使用独立凭据，不复用数据质量开放接口的凭据",
+   "凭据未配置或校验不通过一律返回 401（fail-closed）",
+   "不得改变原 QmOpenApi 的行为"
+  ],
+  "source_text": "新增开放接口鉴权用独立凭据（如 semantic.open-api.app-id / app-secret），不复用数据质量开放接口的凭据；凭据未配置或校验不通过一律返回 401（fail-closed），且不得改变原 QmOpenApi 的行为。"
+ },
+ {
+  "qid": "data-asset-08",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "42338dad"
+  ],
+  "question": "Matt Pocock 系 skill 在这个项目里读写 issue 用哪个 tracker？skill 拍板产生的新决策应该落到哪里、用什么格式？",
+  "answer": "issue tracker 统一用 GitHub 上的 github.com/josheee1117/data-asset-tracker，不用内部 GitLab；skill 拍板的新决策当场按 pensieve 格式写入 .pensieve/short-term/decisions/，而不是 Matt Pocock 默认的单段 ADR 格式，图谱由 auto-sync 刷新。",
+  "key_points": [
+   "issue tracker 落在 github.com/josheee1117/data-asset-tracker，不用内部 GitLab",
+   "skill 新决策按 pensieve 格式写入 .pensieve/short-term/decisions/，不用 Matt Pocock 单段 ADR 格式",
+   "决策图谱由 auto-sync 刷新"
+  ],
+  "source_text": "外部 issue tracker 选型（GitHub over 内部 GitLab）与 skill 决策写入契约：Matt Pocock 系 skill 的 issue tracker 落在 github.com/josheee1117/data-asset-tracker（不用内部 GitLab）；skill 拍板的新决策当场按 pensieve 格式写入 .pensieve/short-term/decisions/，不用 Matt Pocock 的单段 ADR 格式，图谱由 auto-sync 刷新。"
+ },
+ {
+  "qid": "data-asset-09",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "8b6bf402"
+  ],
+  "question": "派生维度里出现空维度哨兵时，前端和后端的 SQL 处理不一致，这个差异该怎么处理、以哪边为准？",
+  "answer": "后端 DerivedDimensionSlots 会先剔除空维度哨兵（与 developmentScript.js 的写数逻辑一致），而前端 querySql.js 复制 SQL 时不过滤、让哨兵占住 dimN；因此含空维度的派生在两边不等价，契约上以后端为准、前端不改。ai-data 对空维度与真实维度并存的派生本来就阻断，只有空维度时归一成总计，不受此差异影响。",
+  "key_points": [
+   "后端剔除空维度哨兵，前端不过滤并让哨兵占 dimN",
+   "含空维度的派生两边不等价，以后端为准、前端不改（记入契约）",
+   "ai-data 对空维度+真实维度并存的派生阻断，仅空维度归一成总计"
+  ],
+  "source_text": "派生维度槽位：后端 DerivedDimensionSlots 先剔除空维度哨兵（与 developmentScript.js 写数一致），前端 querySql.js 复制 SQL 让哨兵占 dimN；含空维度的派生两边不等价，以后端为准，记入契约，前端不改。ai-data 对空维度+真实维度并存的派生本来就阻断，只有空维度的归一成总计，不受影响。"
+ },
+ {
+  "qid": "data-asset-10",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "note",
+  "confirmed": true,
+  "gold_ids": [
+   "ec65b1ac"
+  ],
+  "question": "在这个项目里做修饰词或衍生指标相关开发时，有哪些需要提前知道的实现约定和持续约束？",
+  "answer": "修饰词删除时要同步清理关联表；派生关系已改用批量插入；sqlExample 和 extraCondition 目前只存储不执行，智能问数上线前需重新评估安全边界；版本联动采用轻量 outdated flag，不自动级联更新，且保存 INDICATOR 修饰词时必须将 flag 置回 0。",
+  "key_points": [
+   "删除修饰词需清理关联表",
+   "sqlExample/extraCondition 只存储不执行，智能问数上线前需重新评估安全边界",
+   "版本联动用 outdated flag，不自动级联，保存 INDICATOR 修饰词时需将 flag 置回 0"
+  ],
+  "source_text": "修饰词与衍生指标改造 — 实现契约与持续约束：审查发现 2 个 BUG + 1 个安全风险，均已修复：deleteModifier 未清理关联表 — IndicatorModifierBizServiceImpl.deleteModifier 软删修饰词时遗漏 modifierDerivedRelMapper.deleteByModifierId(id)，导致 INDICATOR 类型修饰词删除后关联表产生孤儿数据。已修复：在 softDelete 前加清理调用。"
+ },
+ {
+  "qid": "data-asset-11",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "d0102761"
+  ],
+  "question": "项目里的 indicatorType 字段在不同表之间编码一致吗？对外输出时应该怎么处理？",
+  "answer": "不一致，indicatorType 有三套编码：t_indicator_storage_location 为 1 派生/2 衍生/3 原子，t_indicator_category_rel 为 1 原子/2 派生/3 衍生（其字段注释只写了 1、3），t_indicator_atomic 则用 BASIC/COMPOSITE。对外导出一律改用字符串 kind，直接透传数字会把原子误当成派生。",
+  "key_points": [
+   "indicatorType 在不同表中存在三套互不相同的编码",
+   "对外导出一律使用字符串 kind，不能透传原始数字",
+   "直接透传数字会导致原子被当成派生"
+  ],
+  "source_text": "indicatorType 有三套编码：t_indicator_storage_location 1派生/2衍生/3原子；t_indicator_category_rel 1原子/2派生/3衍生（字段注释只写1、3）；t_indicator_atomic 用 BASIC/COMPOSITE。对外导出一律改用字符串 kind"
+ },
+ {
+  "qid": "data-asset-12",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "42e426c3"
+  ],
+  "question": "在 data-asset 里把前端 JS 的同一套字符串处理或派生槽位逻辑搬到 Java 时，有哪些容易被忽略的兼容性约定需要提前知道？",
+  "answer": "Java 的 String.trim() 只去除 ≤ U+0020 的字符，而 JS trim 还会去除 U+00A0、U+FEFF、U+3000 等 Zs 以及 U+2028/2029。因此 Java 侧应实现等价的 ecmaTrim，并让相关类所有去空白都走它，否则 dimN 槽位会和前端不一致，甚至把全角空格等名称处理成重复记录而合并。",
+  "key_points": [
+   "Java String.trim() 与 JS trim 去除的空白字符范围不同",
+   "Java 侧需实现等价 ecmaTrim 并统一使用",
+   "否则维度槽位 dimN 会与前端不一致，导致重复记录被合并"
+  ],
+  "source_text": "把前端 querySql.js / developmentScript.js 的空白判定移植到 Java 时不能用 String.trim()：它只去 ≤U+0020，JS trim 还去 U+00A0、U+FEFF、U+3000 等 Zs 和 U+2028/2029，维度槽位 dimN 会和前端不一致。在 Java 侧写等价的 ecmaTrim，并让该类所有去空白都走它。"
+ },
+ {
+  "qid": "data-asset-13",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": true,
+  "gold_ids": [
+   "2c83a600"
+  ],
+  "question": "这个项目里写异步任务的失败标记、补偿状态时，事务边界该怎么安排？",
+  "answer": "失败标记、补偿状态、审计失败记录必须写在已提交的短事务里，不能和随后会被回滚的事务共用；远程调用、耗时生成等不可控 I/O 不要包在持有行锁的长事务中，优先拆成\"提交状态短事务 -> 事务外执行 -> 提交结果短事务\"，也不要在已锁同一行的外层事务内直接对该行开 REQUIRES_NEW 更新。仅当失败标记本身是主业务写入的一部分、应随主业务一起回滚时，或只有纯内存状态/不落库日志时，才不适用。",
+  "key_points": [
+   "失败/补偿/审计失败状态必须在已提交的短事务中写入，不参与随后回滚的事务",
+   "远程调用、耗时生成、不可控 I/O 不应放在持 for update 行锁的长事务里",
+   "不要在外层锁同一行的事务内对该行开 REQUIRES_NEW，应拆分为提交状态短事务 -> 事务外执行 -> 提交结果短事务"
+  ],
+  "source_text": "Failure State Must Not Share Rollback Transaction：失败标记、补偿状态、审计失败记录不能写在随后会被回滚的同一事务里；应使用已提交的短事务边界。"
+ },
+ {
+  "qid": "data-asset-14",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "dd03a351"
+  ],
+  "question": "导出指标口径时，'计算方式'这个字段应该怎么生成和呈现？",
+  "answer": "要把计算方式拼成一段人类可读的完整口径文本，内容涵盖计算方式/聚合函数、计算参数、时间周期、维度、依赖指标条件、修饰词，并合并到单个字段里，不要用多个原始字段列来表达。",
+  "key_points": [
+   "计算方式要拼成人类可读的完整口径文本",
+   "口径内容包含聚合函数、计算参数、时间周期、维度、依赖指标条件和修饰词",
+   "最终合并为单个字段，避免拆成多列原始字段"
+  ],
+  "source_text": "导出指标口径时，'计算方式'要拼成一段人类可读的完整口径文本（计算方式/聚合函数、计算参数、时间周期、维度、依赖指标条件、修饰词）并合并到单个字段，不要用多个原始字段列表达。"
+ },
+ {
+  "qid": "data-asset-15",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "c48c014a"
+  ],
+  "question": "字典平台是怎么区分字典是谁创建的、以及能不能给别的平台用的？",
+  "answer": "在 t_sys_dict_type 表上用 platform_type 字段记录创建来源（取值 DAP 或 AI_CENTER，默认 'DAP'），用 shared 字段（TINYINT(1)，默认 0）标记是否共享给其他平台；这样数据资产平台与 AI 中台共用字典管理时既能区分来源，也支持跨平台复用。",
+  "key_points": [
+   "t_sys_dict_type 表新增 platform_type 与 shared 两个字段",
+   "platform_type 表示创建来源（DAP / AI_CENTER），默认 'DAP'",
+   "shared 默认 0，表示是否共享给其他平台"
+  ],
+  "source_text": "字典平台区分使用 platform_type（来源）+ shared（共享）双字段：在 t_sys_dict_type 表新增两个字段：platform_type VARCHAR(32) DEFAULT 'DAP' — 创建来源（DAP / AI_CENTER）；shared TINYINT(1) DEFAULT 0 — 是否共享给其他平台"
+ },
+ {
+  "qid": "data-asset-16",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "e3de2a84"
+  ],
+  "question": "语义目录导出里，派生的名称/编码映射要从哪里取、按什么范围查？已上线（status==1）的过滤该在哪一层做？",
+  "answer": "映射改为用全部未删除派生（selectActive，del_flag=0）一次性建 Map，导出列表再在 Java 侧按 status==1 过滤；变量、值过滤也从这份全量 Map 取名称编码。只查已上线的 selectOnline 因此被删掉——因为变量、值过滤会引用到编辑中的派生（status != 1），必须能拿到它们的编码和名称。",
+  "key_points": [
+   "名称/编码映射改用全部未删除派生（selectActive，del_flag=0）建一次 Map",
+   "已上线过滤（status==1）下移到 Java 导出列表侧，selectOnline 已删除",
+   "变量、值过滤需引用编辑中的派生（status != 1），故必须从全量 Map 取名称编码"
+  ],
+  "source_text": "语义目录导出中派生的名称/编码映射改用全部未删除派生（selectActive，按 del_flag=0）建一次 Map，导出列表在 Java 里按 status==1 过滤；变量、值过滤从全量 Map 取名称，删掉只查已上线派生的 selectOnline。"
+ },
+ {
+  "qid": "data-asset-17",
+  "project": "data-asset",
+  "split": "tune",
+  "kind": "note",
+  "confirmed": true,
+  "gold_ids": [
+   "37106617"
+  ],
+  "question": "企微 OAuth 登录编排迁到 data-asset 之后，企微账号和系统用户之间的绑定关系应该由哪边负责、data-asset 这边要怎么拿到绑定用户？",
+  "answer": "迁移到 data-asset 的只是登录编排；企微账号与系统用户的绑定关系仍以 CRM 为权威。data-asset 不直查或复制 CRM 账号表，而是通过 CRM 提供的接口（Feign）查询绑定的系统用户。",
+  "key_points": [
+   "迁移范围仅限登录编排，绑定关系权威仍在 CRM",
+   "data-asset 不在本地直查或复制 CRM 账号表",
+   "通过调用 CRM 的接口查询企微账号绑定的系统用户"
+  ],
+  "source_text": "企微 OAuth 与 CRM 账号绑定边界：企微 OAuth 回调迁移到 data-asset 时，只迁移登录编排；企微账号与系统用户的绑定关系仍以 CRM 为权威。"
+ },
+ {
+  "qid": "data-asset-18",
+  "project": "data-asset",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "4917fff6"
+  ],
+  "question": "在 data-asset 里编译代码时，JDK 版本该按什么来选？选错会有什么现象？",
+  "answer": "编译用的 JDK 要跟所在分支 pom 里的 java.version 一致：master 系分支是 11，dev_jdk17 分支的 pom 是 17。本机默认是 JDK 17，用错版本时 Lombok 会报 TypeTag :: UNKNOWN。",
+  "key_points": [
+   "JDK 版本由分支 pom 的 java.version 决定（master 系为 11，dev_jdk17 为 17）",
+   "本机默认 JDK 是 17",
+   "JDK 版本用错会导致 Lombok 报 TypeTag :: UNKNOWN"
+  ],
+  "source_text": "data-asset 编译用的 JDK 跟分支的 pom java.version 走：master 系分支是 11（见 bc2da617），dev_jdk17 的 pom 是 17。本机默认 JDK 是 17，用错版本 Lombok 报 TypeTag :: UNKNOWN。"
+ },
+ {
+  "qid": "ai-data-01",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "b5c4cec7"
+  ],
+  "question": "ai-data 里的指标、平台字段、术语这些元数据是怎么从资产平台同步进来的？为什么不用别的方案？",
+  "answer": "通过 data-asset 的只读快照接口定时拉取，落到 ai-data PG 的 AssetSnapshot 表，用 pgvector 加 text-embedding-v4 生成 1024 维向量；方案上明确不复制资产平台表结构、不接 RagFlow、不给模型直接接 MCP，SQLBot/WrenAI 只作参考。",
+  "key_points": [
+   "来源是 data-asset 只读快照接口定时拉取，存入 ai-data PG 的 AssetSnapshot 表（pgvector + text-embedding-v4 1024 维）",
+   "不复制表结构、不接 RagFlow、不给模型接 MCP",
+   "SQLBot/WrenAI 仅作参考"
+  ],
+  "source_text": "ai-data 的指标、平台字段、术语、修饰词从 data-asset 只读快照接口定时拉取，存进 ai-data PG 的 AssetSnapshot 表（pgvector + text-embedding-v4 1024 维）；不复制表结构、不接 RagFlow、不给模型接 MCP；SQLBot/WrenAI 只作参考"
+ },
+ {
+  "qid": "ai-data-02",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "580993ad"
+  ],
+  "question": "做目录归一化时如果发现某个 code 重复，阻断应该作用在哪一层、影响范围有多大？",
+  "answer": "阻断只落在派生这一层：重复的是周期 code 或维度字段 code 时，只把该派生标为 blocked（原因 DUPLICATE_CODE），周期与字段本身仍只告警，其他派生不受牵连。被阻断的派生不进入 combosOf，locate 对它返回 DERIVED_BLOCKED。",
+  "key_points": [
+   "阻断粒度仅限派生一层，周期/字段只告警，其余派生不受影响",
+   "blocked 原因为 DUPLICATE_CODE，message 需写明是周期还是维度字段重复及重复的 code",
+   "被阻断派生不进 combosOf，locate 返回 DERIVED_BLOCKED"
+  ],
+  "source_text": "ai-data 目录归一化：派生引用的周期 code 或维度字段 code 重复时，只把该派生标 blocked（原因 DUPLICATE_CODE，message 写清是周期还是维度字段重复及重复 code）；周期、字段本身仍只告警，其余派生不受影响，被阻断派生不进 combosOf、locate 返回 DERIVED_BLOCKED。"
+ },
+ {
+  "qid": "ai-data-03",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "24dc3f0b"
+  ],
+  "question": "在资产平台看到口径里的修饰词显示为「无」或为空时，应该先怀疑什么原因，而不是急着排查什么？",
+  "answer": "测试库补的生产样例（原子 394/398）本身没带修饰词关系，所以口径里修饰词会显示「无」；生产环境则有「有效订单、订单已生效、订单未到期」等修饰词。遇到修饰词为空应先判断为样例数据缺失，而不是同步 bug。",
+  "key_points": [
+   "测试样例（原子 394/398）缺修饰词关系导致口径修饰词显示「无」",
+   "生产环境包含「有效订单、订单已生效、订单未到期」等修饰词",
+   "修饰词为空优先归因于样例数据缺失，而非同步 bug"
+  ],
+  "source_text": "资产平台测试库补的生产样例（原子 394/398）没带修饰词关系，口径里修饰词显示「无」；生产有「有效订单、订单已生效、订单未到期」。看到修饰词为空先想到是样例数据缺，不是同步 bug。"
+ },
+ {
+  "qid": "ai-data-04",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "3e42cfd4"
+  ],
+  "question": "在 askdata 测试环境里配置统一登录时，SSO_FLOW 该选哪种模式？旧版通道为什么用不了，有什么前提条件？",
+  "answer": "测试环境只能用 SSO_FLOW=auto（走标准通道，租户 soda）；legacy 旧通道不可用，因为网关 [REDACTED:host] 解析到 [REDACTED:ip]，[REDACTED:host] 上的容器连它 443 端口超时。若确实要走旧通道，需先请运维放通 [REDACTED:host] 到 [REDACTED:ip]，或提供该网关的内网地址。",
+  "key_points": [
+   "askdata 测试环境必须用 SSO_FLOW=auto，实际走标准通道，租户为 soda",
+   "旧通道失败原因：[REDACTED:host] 容器访问 [REDACTED:host]（[REDACTED:ip]）超时不可达",
+   "启用 legacy 的前提是运维放通该网段/端口或提供网关内网地址"
+  ],
+  "source_text": "旧版统一登录通道的网关 [REDACTED:host] 解析到 [REDACTED:ip]（孙猛那台服务器），[REDACTED:host] 上的容器连它超时，所以 askdata 测试环境不能用 SSO_FLOW=legacy，只能 auto（实际走标准通道，租户 soda）。要走旧通道，先请运维放通 [REDACTED:host] 到 [REDACTED:ip]，或给出该网关的内网地址。"
+ },
+ {
+  "qid": "ai-data-05",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": true,
+  "gold_ids": [
+   "1dd1e09e"
+  ],
+  "question": "我在这个项目里为了跑验证自己拉起了 dev server 和 worker 子进程，任务收尾时有什么必须遵守的约定？",
+  "answer": "任务结束时必须把自己起的 dev server 和 worker 子进程停掉，并确认它们占用的端口已经释放，避免残留进程影响用户。",
+  "key_points": [
+   "任务结束必须停掉自己启动的 dev server 和 worker 子进程",
+   "必须确认占用的端口已释放",
+   "目的是避免残留进程影响用户"
+  ],
+  "source_text": "自己起的 dev server 和 worker 子进程在任务结束时必须停掉，并确认占用的端口已释放。"
+ },
+ {
+  "qid": "ai-data-06",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "c3403fb0"
+  ],
+  "question": "在这个项目里做 review 时，报告要按什么结构和分挡方式来写？",
+  "answer": "按严重程度分挡排列（阻断 / 重要 / 次要），每条给出文件:行号、问题、触发条件或失败场景、建议修法；只报核实过的问题、不报风格偏好，未发现问题的风险项也要写「已检查，无问题」；末尾单独列出「新坑 / 决定」并附证据。",
+  "key_points": [
+   "输出按阻断 / 重要 / 次要从高到低分挡，每条含文件:行号、问题、触发条件或失败场景、建议修法",
+   "只报核实过的问题、不报风格偏好；没问题的风险项也写「已检查，无问题」",
+   "报告末尾单列「新坑 / 决定」并附证据"
+  ],
+  "source_text": "ai-data 的 review 输出按严重程度（阻断 / 重要 / 次要）分挡排列，每条含 文件:行号、问题、触发条件或失败场景、建议修法；只报核实过的问题、不报风格偏好；没问题的风险项也要写「已检查，无问题」；末尾单列「新坑 / 决定」并附证据。"
+ },
+ {
+  "qid": "ai-data-07",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "4efd9fd6"
+  ],
+  "question": "测试环境 askdata 的查数链路现在指向哪个数据源，有哪些访问与 schema 上的限制需要遵守？",
+  "answer": "按 2026-10-15 用户决定，askdata 改为读 Polar 生产结果库 polar.mbkj_ads：Trino 只读规则仅放行 polar.mbkj_ads 的 SELECT，TRINO_SCHEMA=mbkj_ads，SEMANTIC_TARGETS 把 polar 指向 polar.mbkj_ads。生产表每天整表覆盖、只保留最新一天；本机 e2e 仍使用 mbkj_ads_test。",
+  "key_points": [
+   "askdata 经 Trino 只读读 polar.mbkj_ads，TRINO_SCHEMA=mbkj_ads，SEMANTIC_TARGETS polar→polar.mbkj_ads",
+   "生产表每天整表覆盖，只保留最新一天数据",
+   "本机 e2e 仍用 mbkj_ads_test"
+  ],
+  "source_text": "测试环境 askdata 的查数改读 Polar 生产结果库 mbkj_ads（2026-10-15 用户决定）：Trino 只读规则只放行 polar.mbkj_ads SELECT，TRINO_SCHEMA=mbkj_ads，SEMANTIC_TARGETS polar→polar.mbkj_ads。生产表每天整表覆盖只留最新一天。本机 e2e 仍用 mbkj_ads_test。"
+ },
+ {
+  "qid": "ai-data-08",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "7be5200e"
+  ],
+  "question": "在 ai-data 里，衍生（composite）类指标目前应该怎么处理查询返回和搜索结果展示？",
+  "answer": "衍生/composite 指标的结果表结构尚未确定，因此对其查询一律返回 DATA_SOURCE_NOT_CONFIGURED，并且在搜索结果中不得标记为可查。",
+  "key_points": [
+   "composite（衍生）指标的结果表结构未定",
+   "查询一律返回 DATA_SOURCE_NOT_CONFIGURED",
+   "搜索结果不得标为可查（按不可查处理）"
+  ],
+  "source_text": "ai-data 指标目录里衍生（composite）指标结果表结构未定，一律返回 DATA_SOURCE_NOT_CONFIGURED，搜索结果不得标为可查。"
+ },
+ {
+  "qid": "ai-data-09",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "af98030f"
+  ],
+  "question": "在这个项目里跑 tests/storage 相关测试时，执行方式上有没有必须提前知道的限制？",
+  "answer": "tests/storage 下的用例必须串行执行，因为产品保留了数据库级的单实例锁（单 Web 实例锁），多个测试文件并行会因锁互相拒绝连接而失败。",
+  "key_points": [
+   "tests/storage 用例必须串行执行",
+   "产品保留数据库级单实例锁（单 Web 实例锁）",
+   "并行测试文件会因锁互相拒绝连接而失败"
+  ],
+  "source_text": "tests/storage 下的用例必须串行执行并保留数据库级单实例锁：固定锁会让不同测试文件互相拒绝连接。"
+ },
+ {
+  "qid": "ai-data-10",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "d6f2d66b"
+  ],
+  "question": "在本项目跑 e2e 时，如果把 QUERY_EXECUTOR 换成 trino（而非默认 fake 执行器），有哪些行为差异会直接导致断言对不上？",
+  "answer": "dt 按服务器上海当天计算，SEMANTIC_TODAY 只固定 worker 的问题时间范围、不影响 dt，因此结果表的 dt 与断言要按当天对齐；返回行顺序以真实 SQL 排序为准，不能沿用 fake 的顺序。另外界面/提示文案也会变：登录页按钮变为『进入真实数据联调』『验证未授权身份』（仍对应 alice/bob），开启向量检索后 mock worker 的澄清提示从『没有找到可查询的原子指标』变为『没有与问题匹配的维度组合』。",
+  "key_points": [
+   "dt 按服务器上海当天算，SEMANTIC_TODAY 不影响 dt，断言需按当天对齐",
+   "返回行顺序以真实 SQL 排序为准，不能沿用 fake 的顺序",
+   "登录页按钮文案及开启向量检索后的澄清提示文案与 fake 模式不同"
+  ],
+  "source_text": "e2e 用 QUERY_EXECUTOR=trino 时和 fake 执行器的差异：1) 数仓分区 dt 按服务器上海当天算，SEMANTIC_TODAY 只固定 worker 的问题时间范围，不影响 dt，结果表的 dt 和断言要按当天对齐；2) 返回行顺序以真实 SQL 排序为准，不能沿用 fake 的顺序；3) 登录页按钮文案变成『进入真实数据联调』『验证未授权身份』（workspace.tsx 按 realData 切换，对应的仍是 alice/bob）；4) 开了向量检索后无关问题也会命中最近的指标，mock worker 的澄清提示从『没有找到可查询的原子指标』变成『没有与问题匹配的维度组合』。"
+ },
+ {
+  "qid": "ai-data-11",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": true,
+  "gold_ids": [
+   "5cb5b749"
+  ],
+  "question": "在这个项目里需要开新分支做开发时，应该以哪个分支为基线拉取？",
+  "answer": "开发以 dev 分支的代码为准，所有新分支都要从 origin/dev 拉取，而不是从 main 拉。",
+  "key_points": [
+   "新分支一律基于 origin/dev 拉取",
+   "不以 main 作为拉取基线",
+   "项目开发以 dev 分支为准"
+  ],
+  "source_text": "ai-data 开发以 dev 分支为准：新分支一律从 origin/dev 拉，不从 main 拉"
+ },
+ {
+  "qid": "ai-data-12",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "f8698f50"
+  ],
+  "question": "在这个 worktree 里推进当前阶段时，有哪些目录、代码或接口是我不能碰的？为什么？",
+  "answer": "不要改动 prisma/、packages/storage/ 以及同步和 embedding 相关的代码，也不要新增 /api/catalog/sync。原因是另一个 agent 正在别的 worktree 做阶段 2，两边改动需要之后能合并，所以要避免边界冲突。",
+  "key_points": [
+   "禁改范围：prisma/、packages/storage/、同步与 embedding 相关代码",
+   "不要新增 /api/catalog/sync 接口",
+   "原因：另一 worktree 有并行改动，需保证后续可合并"
+  ],
+  "source_text": "在 ai-data-catalog-pages worktree 做阶段 4 时不要动 prisma/、packages/storage/、同步与 embedding 相关代码，也不要加 /api/catalog/sync（另一个 agent 在别的 worktree 做阶段 2，为了之后能合并）。"
+ },
+ {
+  "qid": "ai-data-13",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "fba9d5c6"
+  ],
+  "question": "测试环境的问数指标目录数据是怎么来的，同步方面有哪些要特别注意的坑？",
+  "answer": "测试问数库的指标目录是 2026-10-15 的生产快照，由本机 data-asset 从 Polar 生产副本导出后，用 ai-data CatalogSyncService force 写入，导入前会清空 CatalogObject/CatalogSync/WarehouseTable。测试环境同步间隔设得极长（约 24.8 天），网站重启时的自动同步会被保护阈值中止，但管理员点强制同步会冲回测试数据。",
+  "key_points": [
+   "测试指标目录来自生产快照，导入前清空 CatalogObject/CatalogSync/WarehouseTable",
+   "测试环境同步间隔极长，自动同步会被保护阈值中止",
+   "管理员强制同步会覆盖冲回测试数据"
+  ],
+  "source_text": "测试问数库 askdata 的指标目录改为生产快照（2026-10-15）：本机 data-asset 连 Polar data-asset 生产副本导出，本机 ai-data CatalogSyncService force 写入，导入前清空 CatalogObject/CatalogSync/WarehouseTable；测试环境 CATALOG_SYNC_INTERVAL_MIN=35791（约 24.8 天，到 2026-11-09 左右），网站重启时的自动同步靠保护阈值（派生 166→22）中止。管理员点强制同步会冲回测试数据。"
+ },
+ {
+  "qid": "ai-data-14",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "ea7315e8"
+  ],
+  "question": "同步完成后重载内存目录时，QueryService.catalog 应该怎么更新？内存目录里要包含哪些状态的条目？",
+  "answer": "重载时对 QueryService.catalog 做整体替换，且内存目录只放在线上线条目，不含 offline 条目；离线状态由库和 locate/staleOf 判定。",
+  "key_points": [
+   "重载采用整体替换而非增量修改",
+   "内存目录只含在线上线条目、不含 offline 条目",
+   "离线语义由库和 locate/staleOf 判定"
+  ],
+  "source_text": "同步后重载内存目录时整体替换 QueryService.catalog，且内存目录只含在线上线条目、不含 offline 条目（离线状态留给库和 locate/staleOf 判定）。"
+ },
+ {
+  "qid": "ai-data-15",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": true,
+  "gold_ids": [
+   "ea98638a"
+  ],
+  "question": "在 ai-data 里 mock 图表数据时，图表取数依赖哪些字段信息？如果必须改动字段名，还要同步改什么？",
+  "answer": "图表是按结果里的原始列名加上 UI spec 的 yFields 来取数的；用 page.route 拦截 /api/results 造数据时只应改行、保留原列名。确需改字段名就必须同步修改 presentation/spec 里的字段映射，否则折线图取不到数不渲染（表现为 getByRole('img', /折线图/) element not found，容易误判成视图或权限问题）。",
+  "key_points": [
+   "图表取数依赖结果原列名与 spec 的 yFields 映射",
+   "mock /api/results 时只改行、保留原始列名",
+   "要改字段名需同步改 presentation/spec 的字段映射，否则折线图不渲染"
+  ],
+  "source_text": "用 page.route 拦截 /api/results 造数据时只改行、保留原始列名（如 metric_value）：图表按结果原列名和 UI spec 的 yFields 取数，改列名会让折线图直接不渲染。确需改字段就同步改 presentation/spec 的字段映射。"
+ },
+ {
+  "qid": "ai-data-16",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "d7c3b93c"
+  ],
+  "question": "在这台机器上本地起 pnpm dev 时，如果 Next 一直反复重启、e2e 又冒出一堆失败，我该先怀疑什么、该用什么命令启动？",
+  "answer": "默认 Watchpack 会耗尽文件描述符，持续报 EMFILE，检测不到 .next/dev 导致 Next 反复 Restarting the server；改用 WATCHPACK_POLLING=true pnpm dev 启动即可绕过，此时 e2e 的失败属于环境故障而非产品缺陷。",
+  "key_points": [
+   "Watchpack 耗尽文件描述符导致 EMFILE 与 Next 反复重启",
+   "绕过方式是 WATCHPACK_POLLING=true pnpm dev",
+   "这类环境故障引起的 e2e 失败不是业务/产品缺陷"
+  ],
+  "source_text": "本机跑 pnpm dev 时 Watchpack 会持续报 EMFILE 并检测不到 .next/dev 而反复重启；用 WATCHPACK_POLLING=true pnpm dev 启动可绕过，别把这类环境故障混进业务失败排查。"
+ },
+ {
+  "qid": "ai-data-17",
+  "project": "ai-data",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": true,
+  "gold_ids": [
+   "3b1da41c"
+  ],
+  "question": "在 ai-data 仓库提交代码时，除了代码改动本身，我还需要同步维护哪些文档、遵循什么约定？",
+  "answer": "每次提交都要更新 docs/adr/ 下相关的 ADR（一个决定一个文件，包含背景、决定、现状、下一步）以及 ADR README 里的当前状态和下一步清单，用来记录我们做了什么、当前状态和后续计划。",
+  "key_points": [
+   "提交代码时需更新 docs/adr/ 下相关 ADR 与 README 的当前状态",
+   "ADR 采用一个决定一个文件，含背景、决定、现状、下一步",
+   "目的是记录做了什么、当前状态和下一步（给自己后续查看）"
+  ],
+  "source_text": "ai-data 提交代码时，用仓库里的 ADR（docs/adr/，一个决定一个文件，含背景、决定、现状、下一步；README 写当前状态和下一步清单）记录我们做了什么、当前状态、下一步。每次提交更新相关 ADR 和 README 的当前状态。给我们自己后续看，也方便孙猛了解。"
+ },
+ {
+  "qid": "ai-data-18",
+  "project": "ai-data",
+  "split": "test",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "e9eeb0e1"
+  ],
+  "question": "在这个项目里，如果实现功能时发现需要给数据库加新列或改 schema，我能自己写 prisma 迁移吗？应该怎么做？",
+  "answer": "不能。Prisma 迁移由用户自己掌控，助手修改或新增迁移是被明确禁止的操作；如果需要新的列或 schema 变更，应停下来，在汇报里说明需求，等用户来处理。",
+  "key_points": [
+   "禁止自行新增或修改 prisma 迁移",
+   "需要新列/schema 变更时停下来在汇报中说明，交由用户处理"
+  ],
+  "source_text": "不要自己加或改 prisma 迁移；实现若需要新列，停下来在汇报里说明，等用户处理。"
+ },
+ {
+  "qid": "insuranceagent-01",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "63f99b47"
+  ],
+  "question": "标签打标后异步通知下游失败导致数据不一致，我们最终采用什么机制来保证最终一致性？",
+  "answer": "采用本地事务表补偿：在 upsertOneGroup 的同一本地事务内写入 tag_pending_sync 记录，syncOne 成功后删除该记录，再由定时 Job 扫描残留记录做补偿重试。",
+  "key_points": [
+   "在与 upsertOneGroup 同一事务内写入 tag_pending_sync 本地事务表记录",
+   "syncOne 成功后删除该记录",
+   "定时 Job 扫描残留记录进行补偿重试"
+  ],
+  "source_text": "标签同步补偿采用本地事务表（pending_sync）：在 upsertOneGroup 同一事务内写 tag_pending_sync 记录，syncOne 成功后删除，定时 Job 扫描残留记录补偿重试。"
+ },
+ {
+  "qid": "insuranceagent-02",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "89c7d7d2"
+  ],
+  "question": "自动打标从源表读 ID 时，处理逻辑是按对象类型区分，还是统一判断？这段逻辑放在哪里，有哪些地方在用？",
+  "answer": "统一按 ID 值本身判断：能转成数字就按数字处理，转不了就原样当字符串使用，不再按对象类型写死分支。逻辑集中在 TagGroupService.toObjectId 一处，由全量同步、数据就绪、DTS 三条路径共用。",
+  "key_points": [
+   "按 ID 值判断（能转数字用数字，否则用字符串），而非按对象类型分支",
+   "逻辑集中在 TagGroupService.toObjectId 一处",
+   "全量同步、数据就绪、DTS 三条路径共用该逻辑"
+  ],
+  "source_text": "规则自动打标读源表 ID 不按对象类型写死，统一按值判断：能转成数字就按数字处理，转不了就原样用字符串；逻辑集中在一处（TagGroupService.toObjectId），全量同步、数据就绪、DTS 三条路径共用。"
+ },
+ {
+  "qid": "insuranceagent-03",
+  "project": "insuranceagent",
+  "split": "test",
+  "kind": "note",
+  "confirmed": true,
+  "gold_ids": [
+   "0c252de2"
+  ],
+  "question": "这个项目里逻辑删除是怎么实现的？删除数据时有哪些坑或需要遵守的约定？",
+  "answer": "默认仍沿用 del_flag=1；对包含 del_flag 的唯一索引的表，可按表显式开启兼容方案，删除时把 del_flag 置为该行主键 id，从而避免同一业务键被再次删除时唯一索引冲突。该方案默认关闭、按表灰度，通过 DataScopeSqlInjector 替换了 MyBatis-Plus 默认的 delete(wrapper)/deleteById/deleteBatchIds/deleteByMap，实体没有主键列时自动回退旧逻辑，且要求 del_flag 字段类型与主键兼容。",
+  "key_points": [
+   "默认行为不变（del_flag=1），兼容方案按表显式开启、灰度生效",
+   "开启后逻辑删除把 del_flag 设为主键 id，解决含 del_flag 唯一索引的重复删除冲突",
+   "由 DataScopeSqlInjector 替换 MyBatis-Plus 默认删除方法，实体无主键列时回退旧逻辑，且 del_flag 类型需与主键兼容"
+  ],
+  "source_text": "逻辑删除值策略（del_flag 唯一索引兼容）：按表显式开启的逻辑删除兼容方案：默认沿用 del_flag=1，开启后改为 del_flag=id，解决包含 del_flag 的唯一索引冲突。"
+ },
+ {
+  "qid": "insuranceagent-04",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "86f13522"
+  ],
+  "question": "在这个项目里编译或跑测试之前，需要先做哪些环境准备？",
+  "answer": "必须先显式 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home，因为本机默认 JDK 不是 11，仓库基线是 JDK 11；不设置的话 mvn 会在 insuranceagent-common-core 编译阶段就失败，测试代码也编不过。",
+  "key_points": [
+   "编译/测试前需先 export JAVA_HOME 指向 temurin-11",
+   "本机默认 JDK 不是 11，仓库基线为 JDK 11",
+   "直接用默认 JAVA_HOME 跑 mvn 会在 insuranceagent-common-core 编译失败"
+  ],
+  "source_text": "编译或跑测试前先 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home；用本机默认 JAVA_HOME 跑 mvn 会在 insuranceagent-common-core 编译就失败，测试代码也编不过。"
+ },
+ {
+  "qid": "insuranceagent-05",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "36dd48e4"
+  ],
+  "question": "在这个项目里，按场景查询（listByScene）时，不同对象类型的 sceneKey 取值有什么约定？",
+  "answer": "object=cust 和 wework 必须使用各自不同的 sceneKey，不能复用同一个；这是场景键因对象类型而异的业务硬约束。",
+  "key_points": [
+   "listByScene 在 object=cust 与 wework 时使用不同的 sceneKey",
+   "不能对两者复用同一 sceneKey，属于业务逻辑硬约束"
+  ],
+  "source_text": "用户要求：listByScene 接口在 object=cust 和 wework 时使用不同的 sceneKey。"
+ },
+ {
+  "qid": "insuranceagent-06",
+  "project": "insuranceagent",
+  "split": "test",
+  "kind": "decision",
+  "confirmed": true,
+  "gold_ids": [
+   "fbd13292"
+  ],
+  "question": "TagDataReadyListener 一条消息可能匹配多个 TagGroup、需要逐个处理，如果其中某个 group 处理失败，我们定的重试策略是什么？",
+  "answer": "采用方案1：接受重复执行。某个 group 处理失败时返回 FAILURE，让整条消息重投，已成功处理过的 group 会被重复执行。",
+  "key_points": [
+   "单个 group 失败时返回 FAILURE，触发整条消息重投",
+   "已成功的 group 会重复执行，这是被接受的取舍",
+   "其他备选（只记日志返回 SUCCESS、记录 group 状态、发送新消息重试单个 group）均因丢失/复杂度/消息风暴未采用"
+  ],
+  "source_text": "标签同步 MQ 消费失败重试策略：接受重复执行（方案1）"
+ },
+ {
+  "qid": "insuranceagent-07",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "decision",
+  "confirmed": false,
+  "gold_ids": [
+   "3d8eeb42"
+  ],
+  "question": "为什么 tag_marker、tag_marker_log、tag_pending_sync 这几张表的主标识字段用的是字符串类型而不是数字 ID？",
+  "answer": "因为企微客户身份由 external_userid（形如 'wmXXX' 的字符串）唯一标识，库中没有稳定的数字 ID 可替代，所以三张表的 object_id 从 bigint 改成了 varchar(64)，并采用 utf8mb4_bin 排序规则。相比新增 object_key 字段会造成查询逻辑分裂，统一字符串 ID 可以消除特殊分支、简化数据流。",
+  "key_points": [
+   "object_id 由 bigint 改为 varchar(64)，排序规则 utf8mb4_bin",
+   "企微 external_userid 是字符串且没有稳定数字 ID 可替代",
+   "统一字符串 ID 避免加 object_key 导致的查询逻辑分裂"
+  ],
+  "source_text": "将 tag_marker、tag_marker_log、tag_pending_sync 三张表的 object_id 字段从 bigint 改为 varchar(64) utf8mb4_bin，以支持企微 external_userid 字符串标识。"
+ },
+ {
+  "qid": "insuranceagent-08",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "note",
+  "confirmed": true,
+  "gold_ids": [
+   "69a9b0f9"
+  ],
+  "question": "这个项目里文件 URL（FTP/OSS/CDN）是怎么统一处理的？我新增文件字段或域名时要动哪些地方？",
+  "answer": "文件访问是存储态与访问态分离：数据库只存原始稳定地址（落库、删除、内部处理前先做 normalizeFileUrl()），对外输出时自动加签、入参自动去签。业务层不判断 FTP/OSS，统一下沉到 FtpProvider，序列化链路靠 @SignedFileUrl + Jackson + ResponseBodyAdvice 自动完成；新增文件字段只需在 Entity/DTO/VO/Command 字段上标 @SignedFileUrl，新增 OSS/CDN 域名则在配置中心的 managed-url-auths 里配 key，不写业务代码。",
+  "key_points": [
+   "DB 只存原始地址，出参加签、入参去签（存储态与访问态分离）",
+   "业务层不区分 FTP/OSS，统一由 FtpProvider + @SignedFileUrl/Jackson/ResponseBodyAdvice 自动处理",
+   "新增文件字段加 @SignedFileUrl，新增 OSS/CDN 域名在配置中心 managed-url-auths 配置"
+  ],
+  "source_text": "文件安全访问统一方案（FTP + OSS/CDN）：数据库只存稳定原始地址，出参自动加签、入参自动去签的统一文件访问方案，避免每次改文件 URL 逻辑时重新理解签名链路。"
+ },
+ {
+  "qid": "insuranceagent-09",
+  "project": "insuranceagent",
+  "split": "test",
+  "kind": "pitfall",
+  "confirmed": false,
+  "gold_ids": [
+   "cfaa9328"
+  ],
+  "question": "这个项目里 ID / object_id 字段用什么类型？写相关查询或实体映射时有什么必须注意的坑？",
+  "answer": "数字型 ID 字段已经改成 varchar，所以 Java 侧 objectId 必须统一用 String；SQL 里比较常量也要写成字符串形式（如 = '0' 而不是 = 0）。否则 MySQL 会做隐式数值转换，导致索引用不上退化为全表扫描，并且非数字 ID 与 0 比较会被判为真，查出多余数据。",
+  "key_points": [
+   "ID 字段已由数字型改为 varchar，Java 侧 objectId 必须用 String",
+   "SQL 中常量比较要加引号（= '0'），否则索引失效变全表扫描",
+   "非数字 ID 与 0 比较为真，会查出不该有的多余数据"
+  ],
+  "source_text": "把数字型 ID 字段改成 varchar 后，Java 侧 objectId 必须全部换成 String，SQL 里写死的 `m.object_id = 0` 要改成 `= '0'`；否则索引失效变全表扫描，且 `'wmXXX' = 0` 会被判为 true 查出多余数据。"
+ },
+ {
+  "qid": "insuranceagent-10",
+  "project": "insuranceagent",
+  "split": "tune",
+  "kind": "rule",
+  "confirmed": false,
+  "gold_ids": [
+   "24bf7b77"
+  ],
+  "question": "企微标签推送时，标签组推送和客户标签推送在筛选/过滤规则上有什么区别？",
+  "answer": "标签组推送不检查 `sync_wecom=1`，会推送该企微客户名下的全部标签；客户标签推送则仍然只推送 `sync_wecom=1` 的标签。",
+  "key_points": [
+   "标签组推送不做 sync_wecom=1 过滤，推送该企微客户的全部标签",
+   "客户标签推送仍只推 sync_wecom=1 的标签"
+  ],
+  "source_text": "用户要求：企微标签组推送时不检查 `sync_wecom=1`，而是推送该企微客户的全部标签；客户标签推送仍只推 `sync_wecom=1` 的标签。"
+ }
+]

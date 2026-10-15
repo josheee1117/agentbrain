@@ -1,0 +1,1086 @@
+[
+ {
+  "set": "fresh",
+  "n": 1,
+  "id": "e01a8364-652e-402d-a0c6-67f274471f48",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "MyBatis 用 resultType=\"java.lang.Long\" 查询可能为 NULL 的列时，返回的 List 可能非空但元素为 null；直接把它当有效 ID 写入会造出 object_id=NULL 的脏数据。用之前必须逐元素判空并跳过（continue），不能只判 list 是否为空。",
+   "scenario": "用 resultType=java.lang.Long（或类似包装类型）查询可能为 NULL 的单列，并把结果直接用于后续写入/关联时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 2,
+  "id": "d00c1019-201b-42fd-af3b-172ad2994f42",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 3,
+  "id": "7ffa9ffb-7ed6-4cf8-acef-4b98ae827633",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 4,
+  "id": "8aad6f9c-fe54-46ef-9a5e-656a47b7fc63",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 5,
+  "id": "ba3d188d-0e5b-4e85-bd50-f53f66766516",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "审计 real-dataasset-lab 波次目录（model-phase-attempt-N）时，不要照抄执行报告的步骤/命令计数：中止的首跑会留下清理残留（如 001-stop-containers、多出的编号文件），报告会漏报中止首跑、计数失准。应以目录中实际存在的编号命令文件为准逐条核对。",
+   "scenario": "核对/审计 real-dataasset-lab 波次产物与执行报告时，尤其要验证「唯一一次故障请求」「模型调用在预算内」这类断言",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "不要照抄执行报告里的步骤数/命令数/过程分段，以目录里实际存在的编号命令文件为准逐一清点：中止的首跑会留下清理残留（如 001-stop-containers、多出的编号文件），报告计数会失准并漏报中止的首跑。",
+   "scenario": "当核对 real-dataasset-lab 波次目录（model-phase-attempt-N）的产物与其执行报告、并要下「唯一一次故障」「模型调用在预算内」这类断言时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 6,
+  "id": "03aac5e5-4552-40fb-a015-56f288e6ff77",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 7,
+  "id": "758db09f-3504-4156-8019-c3ddd8231e69",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 8,
+  "id": "1afae561-e5a8-4735-89ee-6fe58d215a36",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "Filter 只在单一注册配置（ApiFilterRegistrationConfig）里用 FilterRegistrationBean 声明实例、URL pattern 和顺序，Filter 类上不要再用 @WebFilter：@Component 已让 Spring Boot 把 Filter 自动注册到 /，再加 @WebFilter 会产生第二份注册，注解路径不再代表真实覆盖范围，可能重复执行或把鉴权范围扩大到全站。新增前先确认覆盖路径、相对顺序和是否存在重复注册；开放接口若设置 UserContextHolder，要在自己的 try/finally 中清理。",
+   "scenario": "当在 data-asset 里新增 Servlet Filter 或开放接口时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 9,
+  "id": "1b998052-db9e-4232-81b2-7bf67639c3e6",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 10,
+  "id": "6f457d5e-7cf9-4ad4-be11-a6215c861814",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 11,
+  "id": "73833a19-350e-4a88-b596-6914e6273a45",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 12,
+  "id": "580993ad-39e9-4e84-89d5-2aebfbf0a297",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "ai-data 目录归一化中若派生引用的周期 code 或维度字段 code 重复，只把该派生标 blocked（DUPLICATE_CODE，message 写明是周期还是维度字段及重复 code），周期/字段本身仍只告警，其余派生不受影响；被阻断的派生不进 combosOf，locate 返回 DERIVED_BLOCKED。",
+   "kind": "decision"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 13,
+  "id": "6eaf76e9-f8f9-44b6-95e7-daad8a8ee594",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "要 resume 某个已结束的 subagent 继续干活时，必须保留它那次运行创建的 managed worktree；handoff 会将其标记为 preserved（retained child resume requires managed worktree cwd），工作树被剪枝或删除后就无法按原协议恢复。",
+   "scenario": "计划 resume 一个已结束的子代理、动手清理它的工作树之前",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "要 resume 恢复某个子代理继续干活，就不能删掉或剪枝它那次运行创建的 managed worktree（handoff 会以 retained child resume requires managed worktree cwd 为由把它标为 preserved）；worktree 一旦被清理，该子代理就无法按原协议恢复。",
+   "scenario": "当打算稍后用 resume 恢复一个已结束的子代理、或在动手清理它的工作树之前时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 14,
+  "id": "5f447b88-5e9f-4f47-a3e8-cf4ff79c7045",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 15,
+  "id": "ced330f8-69d2-42f5-ba9e-00a1e3d412e3",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 16,
+  "id": "b336785a-d2a8-4def-99f2-88b4a136f5d0",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "排查渠道/案件标签打标对象错误或修改 UPMS tag_derive 规则时，先看 UPMS 的 tag_derive.rule.sql 和 markDerive() 追加逻辑，不要先怀疑 data-asset 的 TagController 透传链路；TagDerive.Rule 只有 type/ds/sql，sql 是必须以比较符结尾的 SQL 前缀，不是完整 PreparedStatement，不要套用 TagGroup.Rule 的 tenantId/filter/condition 字段。",
+   "scenario": "排查渠道/案件标签打标对象错误，或编写/修改 UPMS tag_derive 规则时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 17,
+  "id": "c88f3744-8c2b-44df-a60a-4cccedcf3833",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 18,
+  "id": "5385e32b-10cd-4583-9723-a4f2f75c4035",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "verify-container.mjs 门禁要求 app 容器 status=created，复用已 exited 的容器会被误拦；不要改门禁脚本来放行，改用等价的 fail-closed 检查顶替（容器 ID/label/网络集合/RestartCount/OOMKilled/当前未运行）证明容器合法。",
+   "scenario": "当在 real-dataasset-lab 里复用上一阶段已启动过的 app 容器继续推进后续阶段时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 19,
+  "id": "2c83a600-e35f-4090-b7ec-cfbee838ea08",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 20,
+  "id": "360715f2-1d86-4b4f-acbd-608e1cc10a7f",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 21,
+  "id": "9c77c19f-0a51-47ac-a7b6-3839da60d522",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 22,
+  "id": "2fac9f85-0407-418d-a373-892e8c431a12",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "改 ai-data 的 README、docs 或默认提示词里的指标口径时，先以 packages/integrations/src/fixtures/catalog*.json 的实际指标名、周期、日期范围为准；核对不上的口径直接删掉，不要自己编一个补上。",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "文档和提示词里的指标口径要以 packages/integrations/src/fixtures/catalog*.json 里的实际指标名、周期、日期范围为准；对不上的旧口径直接删掉，不要自己编一个看似合理的版本补上。",
+   "scenario": "当为 ai-data 编写或校对 README、docs、默认提示词里的指标口径时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 23,
+  "id": "2611d4bd-7780-4df7-8728-2ef1af986a8e",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 24,
+  "id": "22ed121d-ce94-4af4-8c00-cfd92e26a9c4",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 25,
+  "id": "ea9c0bec-9ce6-4406-acb8-ce384df04ff1",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "表单部门相关逻辑一律以 t_sys_department.id 本地主键为权威口径做匹配（查询、权限闭包、名称回填），不要与企业微信 department_id 混用；两套 ID 都是数字、数值可能碰撞，混用会导致「展示部门与勾选部门不一致」。",
+   "scenario": "当在 data-asset 里实现或排查表单部门选择、部门权限闭包、部门名称回填等逻辑时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 26,
+  "id": "b5193fc8-1496-4c55-b765-eedb778f88d4",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "派子代理做独立复核时，先确认复核者能否直接查原始数据源：内建 reviewer 代理没有 bash/sqlite，只能读执行者产出的 JSON 快照，独立性弱一档，关键结论最后仍要主 agent 自己查原库补证据；需要真独立复核就单独起带 bash/sqlite 的复核代理，让它直接查原库。",
+   "scenario": "需要子代理独立复核数据/结果时，直接使用内建 reviewer 代理",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "给复核子代理直接访问原始数据的能力（bash / sqlite 等），让它自己查原库、跑命令，不要让它只读被复核方生成的 JSON 快照——否则复核独立性弱一档，关键结论还得主 agent 再补一次直接证据。",
+   "scenario": "当派子代理去做独立复核、验证结论是否成立时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 27,
+  "id": "1c264b0e-5c6b-4721-800e-2134bffb6c10",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "内容核验变更判定不靠单纯 Chunk ID 差异：对最新成功 execution 的最终 evidence 分层校验——原 Chunk 存在则比对正文，原 Chunk 缺失则在该 Dataset 的同名 Document 中读出由历史正文生成的预期 Chunk 再比对正文；候选变化须连续两轮成立才通知。",
+   "kind": "decision"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "判断 DataAsset 内容核验是否发生变化，必须对最新成功 execution 的最终 evidence 做分层检查：原 Chunk 仍在就比正文；原 Chunk 缺失就在同 Dataset 的同名 Document 中读取由历史正文生成的预期 Chunk 并比正文。且候选变化要连续两轮成立才通知，不能单看 Chunk ID 是否变化就下结论。",
+   "scenario": "当实现或修改内容核验的 evidence 变更检测（是否判定变化并通知）逻辑时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "decision"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 28,
+  "id": "1f2551c5-bd09-4599-bdfa-84760bd52251",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "用 tools/sync-upstream.mjs 同步上游后合并，冲突若落在 adapter/ 的项目自有实现文件（如 worktree-audit.mjs），可整文件取我方版本，但必须逐项把上游该文件新增或改名的接口参数（如 -b）补回我方实现，否则上游 playbook 里的新调用会失效。",
+   "scenario": "同步上游并合并 upstream 分支时，冲突出现在 adapter/ 自有实现文件而不是上游镜像正文。",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 29,
+  "id": "31cc047b-b32c-4619-be81-4723be72bb9b",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "构造响应包装类（Result/PageResult）时要用静态工厂方法或带参构造函数，禁止无参构造函数+setter 逐个赋值，否则 code/msg/success 等字段为 null/false，前端拿不到 code=200 会误判请求失败（标签模块迁移时 6 个分页接口全部中招）。",
+   "scenario": "新增或迁移接口、需要用 Result/PageResult 包装返回值时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "fresh",
+  "n": 30,
+  "id": "838988d9-5d98-443f-9da5-30e2c26538bf",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 1,
+  "id": "9888aac0-9e62-4c75-9c65-03f0cc26ccfa",
+  "gold": true,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 2,
+  "id": "25fc47d4-44bc-4a57-b2b0-eb0d90664266",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "real-dataasset-lab 里新增回环端口（如 pi-runtime 的 28182）时，除设 RDL_HTTP_PORT 外必须同步把端口加进 central/loopback-preload.cjs 的白名单和报错文本；只设环境变量会在 preload 加载阶段抛 RDL_LOOPBACK_REFUSE，进程起不来（hono serve 默认绑 :: 通配，不会自动只回环）。",
+   "scenario": "在 real-dataasset-lab 新增进程端口或给服务改回环绑定时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 3,
+  "id": "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "在 apps/agent-worker 的 Harness 提示词末尾追加统一 JSON 回复协议时，必须保留模型返回的 presentation/preferredChart 等展示偏好字段，否则协议会把展示意图覆盖成 auto，用户指定的图表失效。",
+   "scenario": "修改 apps/agent-worker 的 Harness 提示词或在末尾追加统一回复协议后",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "在 Harness 提示词末尾追加统一 JSON 回复协议时，必须让协议保留并透出模型已给出的合法展示偏好字段（如 presentation / preferredChart），不能把展示意图统一压成 auto；改完要用真实 e2e 验收展示形态。",
+   "scenario": "当修改 ai-data 的 apps/agent-worker Harness 提示词、在末尾追加统一 JSON 回复协议时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 4,
+  "id": "22b0fb9d-87e8-46d2-8538-d0d033b6bb24",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "把「可按需查询/取证」和「能主动发现并告警」当成两回事：查询工具存在不等于检测已覆盖。汇报时只把接入主动检测路径的能力算作已支持，其余明确写成能力缺口，不要含糊暗示已覆盖。",
+   "scenario": "当评估、验收或对外汇报某类监控/检测能力（如资源指标、日志异常）时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 5,
+  "id": "db1a5436-cf9a-4470-bff7-ba0c62e80314",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "用 curl 调 Jenkins 的 JSON API 时，URL 里的方括号（如 tree=actions[lastBuiltRevision[SHA1]]）会被 curl 当通配符展开，请求直接失败；要加 -g 或对参数做 URL 编码。轮询循环里若加 2>/dev/null，这个报错会被吞掉，循环只会一直空转，看不到任何提示。",
+   "scenario": "curl 请求的 URL 中带有 []（如 Jenkins tree 过滤参数）时；以及在轮询/重试循环里用 2>/dev/null 屏蔽 curl 输出时。",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "curl 会把 URL 里的方括号按通配展开导致请求失败，含方括号的参数要加 -g 或改用 URL 编码；轮询循环里不要 2>/dev/null，否则 curl 的报错被吞掉，循环会一直空转看不出原因。",
+   "scenario": "当用 curl 调用 Jenkins 等 JSON API（URL 里含 actions[...] 这类方括号）或写轮询等待远程任务完成时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 6,
+  "id": "c09b0151-0b7e-4912-9975-31fc955158a1",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "在 pnpm 项目的 scripts/smoke 脚本里不要用 `NODE` 当自定义环境变量名，pnpm 会把它设成 node 可执行文件路径；要传的 token 等改用 `NODE_TOKEN` 之类的名字，也不要靠“值以 /node 结尾”这类启发式去兜底。",
+   "scenario": "给 pnpm scripts、smoke 或测试脚本用环境变量传 token/配置，且想用 `NODE` 作变量名时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "在 pnpm/npm 脚本里用环境变量传自定义参数（如 token）时，不要命名为 NODE —— 包管理器会把 NODE 设成 node 可执行文件路径，覆盖你的值；改用带前缀的名字如 NODE_TOKEN。也不要靠“值以 /node 结尾”之类启发式在代码里兜底兼容。",
+   "scenario": "当给 pnpm scripts 或 smoke 脚本用环境变量传 token 等自定义参数、且想用 NODE 当变量名时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 7,
+  "id": "4238a311-485f-46f0-9cf1-2f9cdedb589c",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "给写者+独立审查的子代理流程备料时，必须交完整可应用的补丁或真实文件 diff 加前后快照（含哈希）；报告里只贴缩略 diff 不能当证据重放，材料没在时限内补齐会以 acceptance rejected 结束，表现为 run failed 而不是测试失败。",
+   "scenario": "用 pi-subagents 等写者+独立审查流程交付、声明 acceptance evidence 或要求交接材料时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "给独立审查/验收方准备材料时，必须交完整可应用的补丁或真实文件 diff，并附前后快照（含哈希）与完整 delta；子代理报告里的缩略 diff 不能当证据重放，材料不全会以 acceptance 直接 rejected 结束。",
+   "scenario": "当用写者+独立审查的子代理流程交接材料、或声明 acceptance evidence 时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 8,
+  "id": "dd03a351-6ce6-4077-95e6-da08b7cf99c4",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "导出/输出指标口径时，要把计算方式拼成一段人类可读的完整口径文本（聚合方式、参数、时间周期、维度、依赖指标、修饰词），并合并进单个字段，不要按表结构拆成多列原始字段。",
+   "scenario": "需要导出或展示指标口径、指标定义时",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "把计算方式拼成一段人类可读的完整口径文本（聚合函数、计算参数、时间周期、维度、依赖指标条件、修饰词），合并到单个字段输出，不要拆成 agg_func、来源类型、依赖、修饰词等多列原始字段。",
+   "scenario": "当向用户导出或展示某个指标的口径（计算方式）时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 9,
+  "id": "94cf1473-8cb8-4e57-8ba5-ce0a43a8827c",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 10,
+  "id": "42830c38-60e9-4709-b8c0-3cec697173cf",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 11,
+  "id": "dda5bdf3-09bc-49fe-b380-7866d97d017b",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "向用户汇报评审结论或设计方案时先给「人话版本」：一句话结论加大白话解释，不要通篇 gate、切片、LOCKED 这类设计术语和表格。",
+   "scenario": "",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "先用一句话给出人话版结论，避免 gate、切片、LOCKED 之类只有设计内部才懂的黑话；术语可以另附，但不能替代结论。",
+   "scenario": "当向用户汇报评审、设计方案或分析结论时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 12,
+  "id": "e6aa6726-e1ec-436d-b37c-3ae838181434",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "汇报耗时统一用端到端口径：从提交请求算到任务执行完毕（进入终态、结果落库），不要只报提交受理成功的时间。",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "汇报异步任务耗时统一用端到端口径：从提交请求算到任务真正执行完毕（进入终态、结果落库），不要只报提交受理成功的时间，也不要拿两个口径混着报。",
+   "scenario": "当向用户汇报接口或异步任务耗时指标时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 13,
+  "id": "77cbf3ea-fdbe-4e83-94bd-b166ee8f077e",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 14,
+  "id": "8d281513-643e-4cc0-a544-e6d7a3ab43bf",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 15,
+  "id": "d7fbd3d6-b544-4584-9725-b72fb4970d75",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "派 pi 干活时优先用 pi --mode rpc（常驻进程，JSONL 收发 prompt/steer/follow_up/abort），而不是一次性 pi -p：可实时看进度、中途纠偏、修复轮接原会话；协议见 rpc.md / rpc-commands.md。",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "优先尝试用常驻 rpc 模式（pi --mode rpc，JSONL 收发 prompt/steer/follow_up/abort，事件实时写日志）替代一次性的 pi -p：这样可以实时看进度、中途纠偏，修复轮还能接着原会话。",
+   "scenario": "当要派 pi/coding-agent 干活（跑任务、修 bug、多轮跟进）时",
+   "durability": "exploration",
+   "guidance": true,
+   "kind": "decision"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 16,
+  "id": "ed9f5e6c-b8f9-4d0c-979d-5deda3de7e58",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 17,
+  "id": "4afbee8f-5c5e-428e-bdc1-4d59b212e9b5",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "ai-data 的 e2e 跑真实链路时，若 Trino 镜像、connector 等真实依赖拉不起来，不要用 fake 执行器或内存结果顶替凑绿；停在已完成的步骤，把具体报错原文汇报给用户。",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "不要用 fake 执行器、内存结果或假数据顶替真实依赖来让验证变绿；停在已完成的那一步，把具体报错原文汇报给用户，宁可少完成一步。",
+   "scenario": "当真实依赖（外部服务、镜像、连接器）不可用，导致测试或验证跑不通时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 18,
+  "id": "2a8382aa-6b32-43d0-9819-2d352a8e083f",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "合并/同步两套实现时，同一件事一边各有一套逻辑就只保留正确的那套，直接删掉另一套，不加兼容分支、不留开关、不按作者区分；不要长期维护双轨。",
+   "kind": "rule"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "只保留正确的那一套实现，另一套直接删除；不做兼容分支、不留开关，也不因为某套是别人写的而保留。删哪套要逐项定下来，不留双轨。",
+   "scenario": "当合并或同步两套实现（同一件事在多个分支/模块里各有一套逻辑）时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 19,
+  "id": "2352b4ab-b85f-46a0-ae63-bbef45eeac3d",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "最终结论和汇报直接写在回复正文里，报告文件只作补充材料，不能让用户只能去翻文件才能看到结论。",
+   "scenario": "当向用户汇报任务结果或验证结论时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 20,
+  "id": "2018b871-1a53-4279-bb47-5a959ee77f76",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "平台模型里比率类指标（如满期赔付率）只能建模为衍生：原子只有单一聚合，比率写成 ${A}/${B}*100，分子分母取衍生公式的变量；周期与更新频率挂在派生上，原子层没有；页面不能按『原子+分子/分母』渲染，指标改动要同步改页面稿。",
+   "kind": "decision"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "比率类指标只能建成衍生指标：原子只支持单一聚合，比率写成 ${A}/${B}*100，分子分母是衍生公式里引用的变量；周期与更新频率挂在每个派生上，原子层不带。页面不要按“原子 + 分子/分母”渲染。",
+   "scenario": "当在 ai-data 平台模型里建模比率类指标（如满期赔付率）时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "decision"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 21,
+  "id": "bc2da617-d5f7-4860-9eae-7a9ae90025b7",
+  "gold": false,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "本地编译 data-asset 前先切到 JDK 11（export JAVA_HOME=$(/usr/libexec/java_home -v 11)）；机器默认 JDK 17 时 maven-compiler 会因 Lombok 注解处理失败报 TypeTag :: UNKNOWN。可用 mvn -q -o -DskipTests compile 离线验证。",
+   "scenario": "在本地用 Maven 编译或跑测试 data-asset，而当前 JAVA_HOME 指向 JDK 17（macOS 默认）时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": true,
+   "reason": "",
+   "text": "本地编译 data-asset 必须切到 JDK 11（export JAVA_HOME=$(/usr/libexec/java_home -v 11)）再跑 mvn -q -o -DskipTests compile；用默认 JDK 17 时 maven-compiler 会因 Lombok 报 TypeTag :: UNKNOWN 而失败。",
+   "scenario": "当在本地编译 data-asset 时",
+   "durability": "permanent",
+   "guidance": false,
+   "kind": "pitfall"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 22,
+  "id": "0f00e247-0f53-4c56-bf41-527e88f1b4d4",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "在 apps/agent-worker 的工具代理层里，工具失败要把 { code, message, details } 序列化成 JSON 字符串再交给模型；直接 throw new Error(body.error) 会把对象塞进 Error 消息，模型只看到 [object Object]，拿不到错误码和 details 无法自纠。",
+   "scenario": "新增或修改 Worker 里代理 Web 工具的 fetch 包装、需要在工具失败时把错误信息传回模型时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 23,
+  "id": "8279061f-89d6-4e91-946f-367f3625e663",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 24,
+  "id": "aa1c4bf4-446f-4214-9cb6-2a680a5f1ccf",
+  "gold": false,
+  "worker": true,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "QUERY_EXECUTOR=trino 时登录页按钮文案会从「以张三体验」变成「进入真实数据联调」，e2e 里不要写死按钮文字，用角色/可配置文案定位，或按当前执行器模式适配。",
+   "scenario": "在 Trino（真实数据联调）模式下跑 e2e、点击登录/进入按钮时",
+   "kind": "pitfall"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 25,
+  "id": "e36fde1b-619b-484f-a016-b65e85b554eb",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 26,
+  "id": "1d093577-e2e7-4676-9cae-d17200b6b736",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 27,
+  "id": "210464bc-2699-4207-998e-e67bfae9298f",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": true,
+   "reason": "",
+   "text": "保单 PDF 的“特别约定”章节解析按单文档版式画像切分：以当前 PDF 候选章节的字号、位置、列关系、编号连续性和跨页重复行为建立临时画像，用组合结构证据区分正文与边界，不按保司维护模板；不确定时 fail-closed。",
+   "kind": "decision"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 28,
+  "id": "1f6f6ecb-a2d3-4660-8161-31b37b741ca3",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 29,
+  "id": "dc4cfa4d-bf99-4680-9f32-0db8585daee2",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "model_skip"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 30,
+  "id": "7935d750-a72f-4eda-87d1-2d0b006cf43f",
+  "gold": true,
+  "worker": false,
+  "old": {
+   "admit": false,
+   "reason": "model_skip"
+  },
+  "new": {
+   "admit": false,
+   "reason": "narrative",
+   "text": "在 data-asset 写代码默认走过程式（函数 + if/else + enum + switch + Map<K,Config>）；引入状态机、Processor、策略模式、工厂、责任链、管道等设计模式前必须先过三准入：①已有代码在用该模式且本次是扩展它（如已有 5 个策略加第 6 个）；②用户明确要求用该模式；③有性能/并发/事务的真实需求驱动，且已批准的设计文档已显式拒绝过其他模式并写明理由。",
+   "scenario": "当在 data-asset 新写功能、扩展已有实现，或想引入状态机/策略/工厂/责任链等设计模式时",
+   "durability": "permanent",
+   "guidance": true,
+   "kind": "rule"
+  }
+ }
+]

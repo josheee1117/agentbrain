@@ -1,0 +1,153 @@
+{
+ "at": "2026-10-14T23:52:25.714Z",
+ "panel": [
+  "sol:gpt-6.1-sol",
+  "ark:deepseek-v4-pro",
+  "qwen:qwen3.8-max-0902"
+ ],
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 496824,
+ "all": {
+  "n": 60,
+  "discard_useless": "16/22 = 73%",
+  "keep_useful": "31/38 = 82%",
+  "undecided": 0,
+  "arbiter_rate": "55/60 = 92%",
+  "arbiter_decides_fate": "29/60 = 48%",
+  "arbiter_wording_only": "26/60 = 43%",
+  "unanimous": "5/60 = 8%",
+  "panel_admit_split": "25/60 = 42%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "47/60 = 78%",
+    "discard_useless": "16/22 = 73%",
+    "keep_useful": "31/38 = 82%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "40/60 = 67%",
+    "discard_useless": "4/22 = 18%",
+    "keep_useful": "36/38 = 95%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "37/60 = 62%",
+    "discard_useless": "12/22 = 55%",
+    "keep_useful": "25/38 = 66%",
+    "invalid": 4
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "43/60 = 72%",
+   "sol~qwen": "39/60 = 65%",
+   "ark~qwen": "40/60 = 67%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "12/15 = 80%",
+  "keep_useful": "12/15 = 80%",
+  "undecided": 0,
+  "arbiter_rate": "26/30 = 87%",
+  "arbiter_decides_fate": "15/30 = 50%",
+  "arbiter_wording_only": "11/30 = 37%",
+  "unanimous": "4/30 = 13%",
+  "panel_admit_split": "12/30 = 40%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "24/30 = 80%",
+    "discard_useless": "12/15 = 80%",
+    "keep_useful": "12/15 = 80%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "18/30 = 60%",
+    "discard_useless": "4/15 = 27%",
+    "keep_useful": "14/15 = 93%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "17/30 = 57%",
+    "discard_useless": "8/15 = 53%",
+    "keep_useful": "9/15 = 60%",
+    "invalid": 3
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "20/30 = 67%",
+   "sol~qwen": "20/30 = 67%",
+   "ark~qwen": "20/30 = 67%"
+  }
+ },
+ "fresh": {
+  "n": 30,
+  "discard_useless": "4/7 = 57%",
+  "keep_useful": "19/23 = 83%",
+  "undecided": 0,
+  "arbiter_rate": "29/30 = 97%",
+  "arbiter_decides_fate": "14/30 = 47%",
+  "arbiter_wording_only": "15/30 = 50%",
+  "unanimous": "1/30 = 3%",
+  "panel_admit_split": "13/30 = 43%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "23/30 = 77%",
+    "discard_useless": "4/7 = 57%",
+    "keep_useful": "19/23 = 83%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "22/30 = 73%",
+    "discard_useless": "0/7 = 0%",
+    "keep_useful": "22/23 = 96%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "20/30 = 67%",
+    "discard_useless": "4/7 = 57%",
+    "keep_useful": "16/23 = 70%",
+    "invalid": 1
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "23/30 = 77%",
+   "sol~qwen": "19/30 = 63%",
+   "ark~qwen": "20/30 = 67%"
+  }
+ },
+ "cost": {
+  "qwen/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 64579,
+   "p50_ms": 16425,
+   "max_ms": 31910,
+   "errors": []
+  },
+  "sol/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 75429,
+   "p50_ms": 37761,
+   "max_ms": 82596,
+   "errors": []
+  },
+  "ark/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 125872,
+   "p50_ms": 90558,
+   "max_ms": 136472,
+   "errors": []
+  },
+  "sol/arbiter": {
+   "calls": 55,
+   "failed": 0,
+   "tokens": 186756,
+   "p50_ms": 33337,
+   "max_ms": 94147,
+   "errors": []
+  }
+ }
+}

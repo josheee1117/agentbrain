@@ -1,0 +1,149 @@
+{
+ "at": "2026-10-15T03:34:39.049Z",
+ "panel": [
+  "astra:gpt-6-astra",
+  "grok:grok-latest",
+  "deepseek:deepseek-v4-pro"
+ ],
+ "mode": "primary",
+ "primary": "astra",
+ "arbiter": null,
+ "batch": 10,
+ "wall_ms": 2420821,
+ "all": {
+  "n": 90,
+  "discard_useless": "19/27 = 70%",
+  "keep_useful": "49/63 = 78%",
+  "undecided": 0,
+  "arbiter_rate": "0/90 = 0%",
+  "arbiter_decides_fate": "0/90 = 0%",
+  "arbiter_wording_only": "0/90 = 0%",
+  "unanimous": "0/90 = 0%",
+  "panel_admit_split": "30/90 = 33%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "68/90 = 76%",
+    "discard_useless": "19/27 = 70%",
+    "keep_useful": "49/63 = 78%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "56/90 = 62%",
+    "discard_useless": "18/27 = 67%",
+    "keep_useful": "38/63 = 60%",
+    "invalid": 10
+   },
+   "deepseek": {
+    "vs_gold": "64/90 = 71%",
+    "discard_useless": "9/27 = 33%",
+    "keep_useful": "55/63 = 87%",
+    "invalid": 1
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "69/90 = 77%",
+   "astra~deepseek": "66/90 = 73%",
+   "grok~deepseek": "55/90 = 61%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "12/15 = 80%",
+  "keep_useful": "11/15 = 73%",
+  "undecided": 0,
+  "arbiter_rate": "0/30 = 0%",
+  "arbiter_decides_fate": "0/30 = 0%",
+  "arbiter_wording_only": "0/30 = 0%",
+  "unanimous": "0/30 = 0%",
+  "panel_admit_split": "12/30 = 40%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "23/30 = 77%",
+    "discard_useless": "12/15 = 80%",
+    "keep_useful": "11/15 = 73%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "20/30 = 67%",
+    "discard_useless": "12/15 = 80%",
+    "keep_useful": "8/15 = 53%",
+    "invalid": 0
+   },
+   "deepseek": {
+    "vs_gold": "18/30 = 60%",
+    "discard_useless": "6/15 = 40%",
+    "keep_useful": "12/15 = 80%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "25/30 = 83%",
+   "astra~deepseek": "21/30 = 70%",
+   "grok~deepseek": "20/30 = 67%"
+  }
+ },
+ "s60": {
+  "n": 60,
+  "discard_useless": "7/12 = 58%",
+  "keep_useful": "38/48 = 79%",
+  "undecided": 0,
+  "arbiter_rate": "0/60 = 0%",
+  "arbiter_decides_fate": "0/60 = 0%",
+  "arbiter_wording_only": "0/60 = 0%",
+  "unanimous": "0/60 = 0%",
+  "panel_admit_split": "18/60 = 30%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "45/60 = 75%",
+    "discard_useless": "7/12 = 58%",
+    "keep_useful": "38/48 = 79%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "36/60 = 60%",
+    "discard_useless": "6/12 = 50%",
+    "keep_useful": "30/48 = 63%",
+    "invalid": 10
+   },
+   "deepseek": {
+    "vs_gold": "46/60 = 77%",
+    "discard_useless": "3/12 = 25%",
+    "keep_useful": "43/48 = 90%",
+    "invalid": 1
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "44/60 = 73%",
+   "astra~deepseek": "45/60 = 75%",
+   "grok~deepseek": "35/60 = 58%"
+  }
+ },
+ "cost": {
+  "deepseek/judge": {
+   "calls": 9,
+   "failed": 0,
+   "tokens": 178838,
+   "p50_ms": 115361,
+   "max_ms": 268827,
+   "errors": []
+  },
+  "grok/judge": {
+   "calls": 9,
+   "failed": 1,
+   "tokens": 210502,
+   "p50_ms": 413371,
+   "max_ms": 525275,
+   "errors": [
+    "模型请求失败: The operation was aborted due to timeout"
+   ]
+  },
+  "astra/judge": {
+   "calls": 9,
+   "failed": 0,
+   "tokens": 133698,
+   "p50_ms": 40940,
+   "max_ms": 46931,
+   "errors": []
+  }
+ }
+}

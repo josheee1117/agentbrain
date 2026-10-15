@@ -1,0 +1,9 @@
+{'elig': False, 'method': 'top3', 'cap': None, 'th': np.float64(0.61), 'tune': (0.92, 0, 11, 267, 2.3), 'test': (0.852, 0, 7, 259, 2.4)}
+{'elig': False, 'method': 'scene', 'cap': 1500, 'th': np.float64(0.61), 'tune': (0.88, 0, 11, 278, 2.3), 'test': (0.926, 0, 7, 307, 2.7)}
+{'elig': False, 'method': 'entries', 'cap': 1500, 'th': np.float64(0.61), 'tune': (0.94, 0, 11, 1098, 10.0), 'test': (0.926, 0, 7, 1023, 9.6)}
+{'elig': False, 'method': 'entries', 'cap': 450, 'th': np.float64(0.61), 'tune': (0.88, 0, 11, 276, 2.9), 'test': (0.852, 0, 7, 262, 2.9)}
+{'elig': True, 'method': 'top3', 'cap': None, 'th': np.float64(0.61), 'tune': (0.8, 0, 11, 195, 1.9), 'test': (0.741, 0, 7, 176, 1.9)}
+{'elig': True, 'method': 'scene', 'cap': 1500, 'th': np.float64(0.61), 'tune': (0.78, 0, 11, 199, 1.9), 'test': (0.815, 0, 7, 239, 2.3)}
+{'elig': True, 'method': 'entries', 'cap': 1500, 'th': np.float64(0.61), 'tune': (0.82, 0, 11, 951, 9.0), 'test': (0.778, 0, 7, 941, 9.3)}
+{'elig': True, 'method': 'entries', 'cap': 450, 'th': np.float64(0.61), 'tune': (0.82, 0, 11, 245, 2.7), 'test': (0.741, 0, 7, 243, 2.7)}
+polB test {'n': 34, 'pos': 27, 'neg': 7, 'recall@3': 0.852, 'MRR': 0.852, 'precision': 0.833, 'injectedPerPos': 1.11, 'eligiblePos': 19, 'eligibleRecall@3': 0.789, 'falseInjection': 0, 'p50ms': 16.5, 'p95ms': 21.9}

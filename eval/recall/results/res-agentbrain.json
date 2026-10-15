@@ -1,0 +1,1660 @@
+{
+ "report": {
+  "tune": {
+   "n": 61,
+   "pos": 50,
+   "neg": 11,
+   "recall@3": 0.6,
+   "MRR": 0.577,
+   "precision": 0.756,
+   "injectedPerPos": 0.9,
+   "eligiblePos": 32,
+   "eligibleRecall@3": 0.938,
+   "falseInjection": 0,
+   "p50ms": 17.1,
+   "p95ms": 26.2
+  },
+  "test": {
+   "n": 34,
+   "pos": 27,
+   "neg": 7,
+   "recall@3": 0.593,
+   "MRR": 0.593,
+   "precision": 0.727,
+   "injectedPerPos": 0.81,
+   "eligiblePos": 19,
+   "eligibleRecall@3": 0.842,
+   "falseInjection": 0,
+   "p50ms": 17.5,
+   "p95ms": 28.5
+  },
+  "all": {
+   "n": 95,
+   "pos": 77,
+   "neg": 18,
+   "recall@3": 0.597,
+   "MRR": 0.582,
+   "precision": 0.746,
+   "injectedPerPos": 0.87,
+   "eligiblePos": 51,
+   "eligibleRecall@3": 0.902,
+   "falseInjection": 0,
+   "p50ms": 17.2,
+   "p95ms": 26.9
+  }
+ },
+ "results": [
+  {
+   "eligibleGold": [
+    "bc2da617"
+   ],
+   "id": "D01",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "本地编译 data-asset 用哪个 JDK？",
+   "gold": [
+    "bc2da617",
+    "f5d66945"
+   ],
+   "injected": [
+    "bc2da617"
+   ],
+   "ms": 33.533798000000004,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D02",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "how do I run maven tests for one module so the architecture guard actually runs",
+   "gold": [
+    "d8b6903f"
+   ],
+   "injected": [],
+   "ms": 22.076426999999995,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "442c37df",
+    "5ab4957e"
+   ],
+   "id": "D03",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "发布到 dev 指的是什么，需要我授权吗",
+   "gold": [
+    "442c37df",
+    "5ab4957e"
+   ],
+   "injected": [
+    "442c37df"
+   ],
+   "ms": 25.001832000000007,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "a49f7dbe",
+    "bc2da617"
+   ],
+   "id": "D04",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "本地起 data-asset 实例要注意什么",
+   "gold": [
+    "a49f7dbe",
+    "d7b6d2ad",
+    "d52745be",
+    "0b8e0844",
+    "bc2da617"
+   ],
+   "injected": [
+    "0647a455",
+    "a49f7dbe"
+   ],
+   "ms": 20.910088000000002,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "0647a455",
+    "8aad6f9c"
+   ],
+   "id": "D05",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "data-asset 这次要不要补单元测试",
+   "gold": [
+    "0647a455",
+    "8aad6f9c"
+   ],
+   "injected": [
+    "0647a455"
+   ],
+   "ms": 23.76693800000001,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "1503e670"
+   ],
+   "id": "D06",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "data-asset 的 commit message 怎么写",
+   "gold": [
+    "1503e670"
+   ],
+   "injected": [
+    "0647a455",
+    "20b0f368",
+    "1503e670"
+   ],
+   "ms": 18.046493999999967,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "a1722951"
+   ],
+   "id": "D07",
+   "type": "direct",
+   "split": "test",
+   "project": "data-asset",
+   "query": "派生指标 dimN 槽位前后端规则一样吗",
+   "gold": [
+    "8b6bf402",
+    "9888aac0",
+    "a1722951"
+   ],
+   "injected": [
+    "a1722951",
+    "4edcf7e7"
+   ],
+   "ms": 19.137466000000018,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "d0102761"
+   ],
+   "id": "D08",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "indicatorType 的 1 2 3 分别代表什么",
+   "gold": [
+    "d0102761"
+   ],
+   "injected": [
+    "d0102761"
+   ],
+   "ms": 17.117395999999985,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "b3293221",
+    "79ca63d2"
+   ],
+   "id": "D09",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "新的开放接口用什么方式鉴权",
+   "gold": [
+    "b3293221",
+    "79ca63d2"
+   ],
+   "injected": [
+    "b3293221"
+   ],
+   "ms": 16.186799000000008,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "e8d8c189",
+    "60e29b0e"
+   ],
+   "id": "D10",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "MaxCompute 同步时表责任人在字典里找不到怎么处理",
+   "gold": [
+    "e8d8c189",
+    "60e29b0e"
+   ],
+   "injected": [
+    "e8d8c189",
+    "60e29b0e"
+   ],
+   "ms": 19.29521699999998,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "83bf02e8"
+   ],
+   "id": "D11",
+   "type": "direct",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "HttpLogInterceptor logs the whole response body, is that a problem for a big export endpoint?",
+   "gold": [
+    "bffd4ab7",
+    "83bf02e8"
+   ],
+   "injected": [
+    "83bf02e8",
+    "d00c1019"
+   ],
+   "ms": 19.265855000000045,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "5cb5b749"
+   ],
+   "id": "D12",
+   "type": "direct",
+   "split": "test",
+   "project": "ai-data",
+   "query": "ai-data 新分支从哪里拉",
+   "gold": [
+    "5cb5b749"
+   ],
+   "injected": [
+    "5cb5b749"
+   ],
+   "ms": 15.726260000000025,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "7841c93d",
+    "d01b442c"
+   ],
+   "id": "D13",
+   "type": "direct",
+   "split": "test",
+   "project": "ai-data",
+   "query": "在 ai-data 跑 e2e 要带什么环境变量",
+   "gold": [
+    "7841c93d",
+    "d01b442c"
+   ],
+   "injected": [
+    "d01b442c",
+    "0b1d6769",
+    "7180a850"
+   ],
+   "ms": 20.57796399999995,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D14",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "e2e 里的期望数字可以直接写死吗",
+   "gold": [
+    "9b2918ef",
+    "aad244dc"
+   ],
+   "injected": [
+    "d01b442c",
+    "873b78e2",
+    "312398a1"
+   ],
+   "ms": 20.917035,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "e9eeb0e1"
+   ],
+   "id": "D15",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "can I add a prisma migration for the new column myself?",
+   "gold": [
+    "e9eeb0e1"
+   ],
+   "injected": [
+    "e9eeb0e1"
+   ],
+   "ms": 14.993556000000012,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D16",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "Polar 的结果表有 dt 分区和 etl_time 吗",
+   "gold": [
+    "e94466ea",
+    "f24e2daf",
+    "b62c600e"
+   ],
+   "injected": [
+    "7ffa9ffb"
+   ],
+   "ms": 23.858457999999985,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "6302549e"
+   ],
+   "id": "D17",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "Worker 返回的图表 chart.type 能填 line 吗",
+   "gold": [
+    "6302549e"
+   ],
+   "injected": [
+    "6302549e"
+   ],
+   "ms": 30.211975999999993,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "65506fcd",
+    "af98030f"
+   ],
+   "id": "D18",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "storage 测试怎么跑，数据库连接串从哪来",
+   "gold": [
+    "65506fcd",
+    "af98030f"
+   ],
+   "injected": [
+    "65506fcd",
+    "af98030f"
+   ],
+   "ms": 16.24842000000001,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "0de7bba2"
+   ],
+   "id": "D19",
+   "type": "direct",
+   "split": "test",
+   "project": "ai-data",
+   "query": "改完代码页面行为很奇怪，是不是 dev server 的问题",
+   "gold": [
+    "0de7bba2",
+    "ced330f8"
+   ],
+   "injected": [
+    "0de7bba2"
+   ],
+   "ms": 16.020583999999985,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D20",
+   "type": "direct",
+   "split": "test",
+   "project": "ai-data",
+   "query": "长问数报 DeepSeek stream idle timeout after 20000ms",
+   "gold": [
+    "cf8541cb",
+    "daf9929a"
+   ],
+   "injected": [],
+   "ms": 21.488216999999963,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D21",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "本地演练发企业微信通知前要检查什么",
+   "gold": [
+    "3944650d",
+    "9cafef64"
+   ],
+   "injected": [],
+   "ms": 15.57033899999999,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "8aafeb86"
+   ],
+   "id": "D22",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "node-agent 的 HTTP 默认监听在哪个地址",
+   "gold": [
+    "8aafeb86"
+   ],
+   "injected": [
+    "8aafeb86"
+   ],
+   "ms": 21.603414000000043,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "3116b603"
+   ],
+   "id": "D23",
+   "type": "direct",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "test-governance plan 传多个文件的参数格式",
+   "gold": [
+    "3116b603"
+   ],
+   "injected": [
+    "3116b603"
+   ],
+   "ms": 16.238390000000095,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "467580e7",
+    "92cf280a"
+   ],
+   "id": "D24",
+   "type": "direct",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "real-dataasset-lab 要跑一次真实模型诊断，开跑前要准备什么",
+   "gold": [
+    "467580e7",
+    "1c8a952f",
+    "92cf280a"
+   ],
+   "injected": [
+    "467580e7",
+    "92cf280a"
+   ],
+   "ms": 18.938626,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "2de961e5"
+   ],
+   "id": "D25",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "pi-ops 的实现活谁来干，主会话做什么",
+   "gold": [
+    "2de961e5"
+   ],
+   "injected": [
+    "2de961e5"
+   ],
+   "ms": 15.121657000000027,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "d3446315",
+    "96dae28c",
+    "bbe32144",
+    "14fb23f4"
+   ],
+   "id": "D26",
+   "type": "direct",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "how should we sync upstream pstack changes into this repo",
+   "gold": [
+    "d3446315",
+    "96dae28c",
+    "bbe32144",
+    "14fb23f4",
+    "1f2551c5"
+   ],
+   "injected": [
+    "d3446315"
+   ],
+   "ms": 15.511845999999991,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D27",
+   "type": "direct",
+   "split": "test",
+   "project": "pstack-pi",
+   "query": "pstack 里派子代理用 herdr 还是 pi-subagents",
+   "gold": [
+    "94cf1473",
+    "42830c38",
+    "c6f5fc24"
+   ],
+   "injected": [
+    "25946296"
+   ],
+   "ms": 17.500576999999907,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D28",
+   "type": "direct",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "无人值守批量跑 pi -p 一直挂着不动",
+   "gold": [
+    "72d58b35"
+   ],
+   "injected": [
+    "1d5b225e"
+   ],
+   "ms": 15.820003999999926,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "25946296"
+   ],
+   "id": "D29",
+   "type": "direct",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "改完 pstack-pi 结构以后怎么验证能装进别人的 Pi",
+   "gold": [
+    "25946296"
+   ],
+   "injected": [
+    "25946296"
+   ],
+   "ms": 19.210754000000065,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D30",
+   "type": "direct",
+   "split": "tune",
+   "project": "insuranceagent",
+   "query": "跑 mvn 测试前 JAVA_HOME 要设成什么",
+   "gold": [
+    "86f13522",
+    "5496a888"
+   ],
+   "injected": [],
+   "ms": 16.79066899999998,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "3d8eeb42",
+    "89c7d7d2"
+   ],
+   "id": "D31",
+   "type": "direct",
+   "split": "test",
+   "project": "insuranceagent",
+   "query": "object_id 从 bigint 改成 varchar 之后代码里要改哪些地方",
+   "gold": [
+    "cfaa9328",
+    "3d8eeb42",
+    "89c7d7d2"
+   ],
+   "injected": [
+    "3d8eeb42"
+   ],
+   "ms": 15.059483,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "24bf7b77"
+   ],
+   "id": "D32",
+   "type": "direct",
+   "split": "test",
+   "project": "insuranceagent",
+   "query": "企微标签组推送要不要看 sync_wecom",
+   "gold": [
+    "24bf7b77"
+   ],
+   "injected": [
+    "24bf7b77"
+   ],
+   "ms": 17.171697999999992,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "63f99b47",
+    "2611d4bd",
+    "fbd13292"
+   ],
+   "id": "D33",
+   "type": "direct",
+   "split": "test",
+   "project": "insuranceagent",
+   "query": "标签同步 MQ 失败了怎么补偿重试",
+   "gold": [
+    "63f99b47",
+    "2611d4bd",
+    "fbd13292"
+   ],
+   "injected": [
+    "fbd13292"
+   ],
+   "ms": 18.737116000000015,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "61a2e78c"
+   ],
+   "id": "D34",
+   "type": "direct",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "hook 子命令出异常怎么处理才不会卡住宿主",
+   "gold": [
+    "61a2e78c",
+    "d34b1db7",
+    "6dd4bcfa"
+   ],
+   "injected": [
+    "61a2e78c"
+   ],
+   "ms": 15.794911999999954,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "dda86f4d"
+   ],
+   "id": "D35",
+   "type": "direct",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "改了 AGENTS.md 要不要同步 CLAUDE.md",
+   "gold": [
+    "dda86f4d"
+   ],
+   "injected": [
+    "dda86f4d"
+   ],
+   "ms": 14.896657000000005,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "e0632cdd"
+   ],
+   "id": "D36",
+   "type": "direct",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "写 Store 并发锁测试，用 sleep 控制时序可以吗",
+   "gold": [
+    "e0632cdd",
+    "13836c16",
+    "bc69441c"
+   ],
+   "injected": [
+    "e0632cdd"
+   ],
+   "ms": 26.191800000000057,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "8279061f",
+    "58ae591d"
+   ],
+   "id": "D37",
+   "type": "direct",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "cli.test.ts 里写记忆的用例为什么会影响后面的断言",
+   "gold": [
+    "8279061f",
+    "58ae591d"
+   ],
+   "injected": [
+    "8279061f"
+   ],
+   "ms": 14.793858,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "ecc935fa"
+   ],
+   "id": "D38",
+   "type": "direct",
+   "split": "tune",
+   "project": "content-verification-agent",
+   "query": "核验用的 LLM 模型现在是哪个",
+   "gold": [
+    "ecc935fa"
+   ],
+   "injected": [
+    "ecc935fa"
+   ],
+   "ms": 15.947604999999953,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "dd6a4fdc"
+   ],
+   "id": "D39",
+   "type": "direct",
+   "split": "test",
+   "project": "data-asset",
+   "query": "写代码的活该派给哪个 gpt 模型",
+   "gold": [
+    "dd6a4fdc"
+   ],
+   "injected": [],
+   "ms": 19.85704099999998,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "873b78e2",
+    "ddc7579e",
+    "7575ee53",
+    "312398a1"
+   ],
+   "id": "D40",
+   "type": "direct",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "e2e 能不能用 mock 数据或者 page.route 造结果",
+   "gold": [
+    "873b78e2",
+    "ddc7579e",
+    "7575ee53",
+    "312398a1"
+   ],
+   "injected": [
+    "312398a1"
+   ],
+   "ms": 14.91468800000007,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D41",
+   "type": "direct",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "清理临时目录的 rm -rf 被自动审批拒了",
+   "gold": [
+    "551ed4b1"
+   ],
+   "injected": [],
+   "ms": 14.853259999999977,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D42",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "脚本里想给命令加超时，但 macOS 上没有 timeout 命令",
+   "gold": [
+    "44d60254"
+   ],
+   "injected": [],
+   "ms": 28.46203300000002,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "5fe77a7a"
+   ],
+   "id": "D43",
+   "type": "direct",
+   "split": "test",
+   "project": "ai-data",
+   "query": "how to verify the default chart view after a query in e2e",
+   "gold": [
+    "5fe77a7a"
+   ],
+   "injected": [
+    "5fe77a7a"
+   ],
+   "ms": 16.06953999999996,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D44",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "cpa 上 gpt-6.1-sol 的上下文窗口应该配多少",
+   "gold": [
+    "73833a19",
+    "455b0629"
+   ],
+   "injected": [
+    "dd6a4fdc"
+   ],
+   "ms": 15.951448000000028,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "D45",
+   "type": "direct",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "改了 ~/.pi/agent/settings.json 为什么没生效",
+   "gold": [
+    "fb6ea8c4"
+   ],
+   "injected": [],
+   "ms": 16.839054000000033,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "f1e3abe5"
+   ],
+   "id": "D46",
+   "type": "direct",
+   "split": "tune",
+   "project": "insuranceagent",
+   "query": "衍生标签 objectId 为 NULL 的问题当时怎么修的",
+   "gold": [
+    "f1e3abe5"
+   ],
+   "injected": [
+    "f1e3abe5"
+   ],
+   "ms": 21.638779,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "442c37df",
+    "5ab4957e",
+    "1503e670",
+    "22ed121d"
+   ],
+   "id": "R01",
+   "type": "real",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "提交并推送然后合并到dev_jdk17并推送",
+   "gold": [
+    "442c37df",
+    "5ab4957e",
+    "1503e670",
+    "22ed121d"
+   ],
+   "injected": [
+    "442c37df"
+   ],
+   "ms": 21.929716999999982,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "442c37df"
+   ],
+   "id": "R02",
+   "type": "real",
+   "split": "test",
+   "project": "data-asset",
+   "query": "发布到dev现在是发布到dev_jdk17吗",
+   "gold": [
+    "442c37df"
+   ],
+   "injected": [
+    "442c37df"
+   ],
+   "ms": 30.824712999999974,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "135df5c8"
+   ],
+   "id": "R03",
+   "type": "real",
+   "split": "test",
+   "project": "data-asset",
+   "query": "帮我找出当前分支上线需要配置的nacos配置以及受影响的mysql表和job",
+   "gold": [
+    "8db948cf",
+    "135df5c8"
+   ],
+   "injected": [],
+   "ms": 22.008050999999796,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R04",
+   "type": "real",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "把8089进场干掉",
+   "gold": [
+    "d52745be"
+   ],
+   "injected": [],
+   "ms": 16.556570000000193,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "595c6092",
+    "dd03a351",
+    "d0102761"
+   ],
+   "id": "R05",
+   "type": "real",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "帮我生成一个查询 sql，要求查询出原子指标、派生指标的名称、code，描述，计算口径方式，存储位置信息。",
+   "gold": [
+    "595c6092",
+    "dd03a351",
+    "d0102761"
+   ],
+   "injected": [
+    "d0102761",
+    "a1722951",
+    "595c6092"
+   ],
+   "ms": 17.11739200000011,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "b98f7c50"
+   ],
+   "id": "R06",
+   "type": "real",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "标准字段分页查询接口能否增加字段来源类型，是polar 还是maxcompute，详情接口也返回",
+   "gold": [
+    "b98f7c50",
+    "b830a3c1"
+   ],
+   "injected": [
+    "eba50c13"
+   ],
+   "ms": 18.86540100000002,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "eba50c13"
+   ],
+   "id": "R07",
+   "type": "real",
+   "split": "test",
+   "project": "data-asset",
+   "query": "api/v1/business-table/source-options?purpose=SOURCE&sourceType=MAXCOMPUTE 这是什么垃圾接口，为什么不参考polar的时候联动加载呢，先查表，在查字段，这样一级一级",
+   "gold": [
+    "eba50c13"
+   ],
+   "injected": [
+    "eba50c13"
+   ],
+   "ms": 23.344605,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "873b78e2"
+   ],
+   "id": "R08",
+   "type": "real",
+   "split": "tune",
+   "project": null,
+   "query": "我都说了，不走 mock。我们的测试也要是真实上线标准去测。",
+   "gold": [
+    "873b78e2"
+   ],
+   "injected": [
+    "873b78e2"
+   ],
+   "ms": 25.37228200000004,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "dd6a4fdc"
+   ],
+   "id": "R09",
+   "type": "real",
+   "split": "tune",
+   "project": null,
+   "query": "让 codex 发布到 dev_jdk17 吧",
+   "gold": [
+    "dd6a4fdc",
+    "18ba2a31"
+   ],
+   "injected": [],
+   "ms": 22.391254000000117,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R10",
+   "type": "real",
+   "split": "tune",
+   "project": null,
+   "query": "后续 codex 不要使用沙箱模式。直接正式模式。",
+   "gold": [
+    "dc50a573"
+   ],
+   "injected": [],
+   "ms": 26.16833100000008,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R11",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "cpa加了claude-opus-4-6-thinking、claude-sonnet-4-6、gemini-3.8-flash-high模型，帮我配置一下，思考等级按照模型本身的来，上下文也是",
+   "gold": [
+    "c7afa685",
+    "73833a19",
+    "a5c06ccc",
+    "8d31bbf7"
+   ],
+   "injected": [],
+   "ms": 15.556530000000066,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "2de961e5",
+    "450cb4db"
+   ],
+   "id": "R12",
+   "type": "real",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "你作为架构师，指挥herdr中pi-ops右边的pi pane做具体的执行，直到本项目达到我们最初规划的效果",
+   "gold": [
+    "2de961e5",
+    "450cb4db"
+   ],
+   "injected": [
+    "2de961e5"
+   ],
+   "ms": 17.134819000000107,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "77cbf3ea"
+   ],
+   "id": "R13",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "用这个企微群机器人通知，另外再推到测试机器之前能否在本地docker验证一下呢。即使项目起不来，也可以模拟一个类似dataasset的应用",
+   "gold": [
+    "77cbf3ea",
+    "3944650d"
+   ],
+   "injected": [
+    "77cbf3ea"
+   ],
+   "ms": 16.05651899999998,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R14",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "继续，但是你的通知消息发送到了生产环境，这个才是测试环境的群",
+   "gold": [
+    "3944650d"
+   ],
+   "injected": [],
+   "ms": 18.129114000000072,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R15",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "data-asset要合并到dev_jdk17分支。piops",
+   "gold": [
+    "a7b50f37"
+   ],
+   "injected": [],
+   "ms": 15.003940000000057,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R16",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "帮我把cpa的ops 改成1m的。现在报错Error: 400 \"1m 上下文已经全量可用，请启用 1m 上下文后重试\"",
+   "gold": [
+    "5a876cb7",
+    "a5c06ccc"
+   ],
+   "injected": [],
+   "ms": 14.51225999999997,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "dd6a4fdc"
+   ],
+   "id": "R17",
+   "type": "real",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "将子代理设置的gpt 5 sol调整成gpt 6.1 sol medium默认",
+   "gold": [
+    "dd6a4fdc",
+    "73833a19"
+   ],
+   "injected": [
+    "dd6a4fdc"
+   ],
+   "ms": 18.094643000000133,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R18",
+   "type": "real",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "我们移植到 pi 这里的不用 subagent 了，运行任务时看不到运行细节，也不能给每个子代理调整任务，观察状态。使用 herdr 代替怎么样？",
+   "gold": [
+    "94cf1473",
+    "42830c38",
+    "db1d71c3"
+   ],
+   "injected": [],
+   "ms": 16.363304999999855,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "d3446315",
+    "96dae28c",
+    "bbe32144"
+   ],
+   "id": "R19",
+   "type": "real",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "先帮我将 pstack 原版的更新移植过来",
+   "gold": [
+    "d3446315",
+    "96dae28c",
+    "bbe32144"
+   ],
+   "injected": [
+    "d3446315"
+   ],
+   "ms": 16.12854799999991,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "1d5b225e"
+   ],
+   "id": "R20",
+   "type": "real",
+   "split": "test",
+   "project": "pstack-pi",
+   "query": "pstack · 真实 DataAsset 本地端到端 · 5/5 ✓ 流程跑完了 pi 上面还显示这个，应该关闭才对。",
+   "gold": [
+    "1d5b225e"
+   ],
+   "injected": [
+    "1d5b225e"
+   ],
+   "ms": 16.23927300000014,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "dbcc2177",
+    "737cb364"
+   ],
+   "id": "R21",
+   "type": "real",
+   "split": "test",
+   "project": "pstack-pi",
+   "query": "你这样不行，最好能是想cursor一样，能让我看到这个流程，而不是让模型自己决定",
+   "gold": [
+    "dbcc2177",
+    "737cb364"
+   ],
+   "injected": [],
+   "ms": 15.74013500000001,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "9a6c480d",
+    "bbe32144"
+   ],
+   "id": "R22",
+   "type": "real",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "测试完成了吗？当前项目表现达到原版的多少了？之前提出的问题都解决了吗",
+   "gold": [
+    "9a6c480d",
+    "bbe32144"
+   ],
+   "injected": [
+    "9a6c480d"
+   ],
+   "ms": 20.529406999999992,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R23",
+   "type": "real",
+   "split": "tune",
+   "project": "content-verification-agent",
+   "query": "gpt-6-astra在pi的模型配置了多少上下文",
+   "gold": [
+    "73833a19"
+   ],
+   "injected": [],
+   "ms": 16.29191200000014,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R24",
+   "type": "real",
+   "split": "test",
+   "project": "content-verification-agent",
+   "query": "cpa/gpt-6-astra（models.json 自建，名字写成 1.05M） 上下文 1,050,000 最大输出 128,000 改成跟openai一样的上下文",
+   "gold": [
+    "73833a19",
+    "455b0629",
+    "8d31bbf7"
+   ],
+   "injected": [
+    "dd6a4fdc"
+   ],
+   "ms": 20.707672999999886,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "03aac5e5"
+   ],
+   "id": "R25",
+   "type": "real",
+   "split": "test",
+   "project": "ai-data",
+   "query": "改 SemanticQuery 契约时 ConversationHistory.parse 有什么要注意的？",
+   "gold": [
+    "03aac5e5"
+   ],
+   "injected": [
+    "03aac5e5"
+   ],
+   "ms": 16.08547199999998,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R26",
+   "type": "real",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "你试试herdr调用pi",
+   "gold": [
+    "ac3bc3ba",
+    "db1d71c3"
+   ],
+   "injected": [],
+   "ms": 26.865903000000117,
+   "err": null
+  },
+  {
+   "eligibleGold": [
+    "a10580ee"
+   ],
+   "id": "R27",
+   "type": "real",
+   "split": "test",
+   "project": "agentbrain",
+   "query": "claude code和codex无法完整支持把。hook机制似乎是因为有缺陷。只能用pi。你研究一下，如果可以支持就改成适配全部",
+   "gold": [
+    "a10580ee"
+   ],
+   "injected": [
+    "a10580ee"
+   ],
+   "ms": 16.654154999999946,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R28",
+   "type": "real",
+   "split": "tune",
+   "project": null,
+   "query": "本机是连不上测试环境的",
+   "gold": [
+    "2ae91f00",
+    "7da2e690",
+    "7c5b55c5"
+   ],
+   "injected": [],
+   "ms": 18.86722800000007,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R29",
+   "type": "real",
+   "split": "tune",
+   "project": "content-verification-agent",
+   "query": "grok的默认思考等级应该是xhigh才对，",
+   "gold": [
+    "c7afa685"
+   ],
+   "injected": [],
+   "ms": 15.26195000000007,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R30",
+   "type": "real",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "为什么 一直connection error",
+   "gold": [
+    "5c92124c"
+   ],
+   "injected": [],
+   "ms": 19.732132000000092,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "R31",
+   "type": "real",
+   "split": "test",
+   "project": "agentbrain",
+   "query": "给我一个用人话的版本，你现在说的我看不懂",
+   "gold": [
+    "dda5bdf3"
+   ],
+   "injected": [],
+   "ms": 16.984590000000026,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N01",
+   "type": "negative",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "结束了没，为什么都 1 个小时了",
+   "gold": [],
+   "injected": [],
+   "ms": 17.573924000000034,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N02",
+   "type": "negative",
+   "split": "tune",
+   "project": "ai-data",
+   "query": "好了，你试试",
+   "gold": [],
+   "injected": [],
+   "ms": 17.244576000000052,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N03",
+   "type": "negative",
+   "split": "tune",
+   "project": "pi-ops",
+   "query": "你好",
+   "gold": [],
+   "injected": [],
+   "ms": 0.006411999999954787,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N04",
+   "type": "negative",
+   "split": "test",
+   "project": "data-asset",
+   "query": "今天天气怎么样",
+   "gold": [],
+   "injected": [],
+   "ms": 17.807980000000043,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N05",
+   "type": "negative",
+   "split": "test",
+   "project": "ai-data",
+   "query": "帮我写一首关于秋天的诗",
+   "gold": [],
+   "injected": [],
+   "ms": 22.449251000000004,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N06",
+   "type": "negative",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "WrenAI没有网页版吗？他主要提供了什么功能？",
+   "gold": [],
+   "injected": [],
+   "ms": 17.94878700000004,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N07",
+   "type": "negative",
+   "split": "test",
+   "project": "pstack-pi",
+   "query": "那肯定选择a啊",
+   "gold": [],
+   "injected": [],
+   "ms": 20.538534000000027,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N08",
+   "type": "negative",
+   "split": "tune",
+   "project": "content-verification-agent",
+   "query": "目前哦们有几个 agent",
+   "gold": [],
+   "injected": [],
+   "ms": 16.922514999999976,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N09",
+   "type": "negative",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "What's the capital of Australia?",
+   "gold": [],
+   "injected": [],
+   "ms": 17.773983999999928,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N10",
+   "type": "negative",
+   "split": "tune",
+   "project": "insuranceagent",
+   "query": "explain what a monad is in haskell",
+   "gold": [],
+   "injected": [],
+   "ms": 16.979704999999967,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N11",
+   "type": "negative",
+   "split": "test",
+   "project": "pi-ops",
+   "query": "帮我安装 [REDACTED:url]",
+   "gold": [],
+   "injected": [],
+   "ms": 15.338114999999789,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N12",
+   "type": "negative",
+   "split": "tune",
+   "project": "pstack-pi",
+   "query": "下一步做什么",
+   "gold": [],
+   "injected": [],
+   "ms": 15.002917999999909,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N13",
+   "type": "negative",
+   "split": "tune",
+   "project": "agentbrain",
+   "query": "agentbrain 抽取模型用哪个",
+   "gold": [],
+   "injected": [],
+   "ms": 15.249436999999944,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N14",
+   "type": "negative",
+   "split": "test",
+   "project": "ai-data",
+   "query": "react useEffect 的 cleanup 函数怎么写",
+   "gold": [],
+   "injected": [],
+   "ms": 20.45408499999985,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N15",
+   "type": "negative",
+   "split": "tune",
+   "project": "content-verification-agent",
+   "query": "给我一个测试流式的curl",
+   "gold": [],
+   "injected": [],
+   "ms": 17.054489999999987,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N16",
+   "type": "negative",
+   "split": "tune",
+   "project": "data-asset",
+   "query": "帮我把.e2e文件夹设置为gitignore",
+   "gold": [],
+   "injected": [],
+   "ms": 18.15855899999997,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N17",
+   "type": "negative",
+   "split": "tune",
+   "project": "insuranceagent",
+   "query": "这周五下午有空一起吃饭吗",
+   "gold": [],
+   "injected": [],
+   "ms": 16.514228000000003,
+   "err": null
+  },
+  {
+   "eligibleGold": [],
+   "id": "N18",
+   "type": "negative",
+   "split": "test",
+   "project": "agentbrain",
+   "query": "怎么打开网页版？",
+   "gold": [],
+   "injected": [],
+   "ms": 16.250238999999965,
+   "err": null
+  }
+ ]
+}

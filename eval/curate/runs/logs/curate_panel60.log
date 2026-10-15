@@ -1,0 +1,123 @@
+{
+ "at": "2026-10-15T03:58:50.469Z",
+ "panel": [
+  "astra:gpt-6-astra",
+  "grok:grok-latest",
+  "deepseek:deepseek-v4-pro"
+ ],
+ "mode": "panel",
+ "primary": null,
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 1074019,
+ "all": {
+  "n": 60,
+  "discard_useless": "6/12 = 50%",
+  "keep_useful": "35/48 = 73%",
+  "undecided": 0,
+  "arbiter_rate": "56/60 = 93%",
+  "arbiter_decides_fate": "33/60 = 55%",
+  "arbiter_wording_only": "23/60 = 38%",
+  "unanimous": "4/60 = 7%",
+  "panel_admit_split": "16/60 = 27%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "36/60 = 60%",
+    "discard_useless": "6/12 = 50%",
+    "keep_useful": "30/48 = 63%",
+    "invalid": 10
+   },
+   "grok": {
+    "vs_gold": "29/60 = 48%",
+    "discard_useless": "4/12 = 33%",
+    "keep_useful": "25/48 = 52%",
+    "invalid": 20
+   },
+   "deepseek": {
+    "vs_gold": "43/60 = 72%",
+    "discard_useless": "2/12 = 17%",
+    "keep_useful": "41/48 = 85%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "36/60 = 60%",
+   "astra~deepseek": "36/60 = 60%",
+   "grok~deepseek": "29/60 = 48%"
+  }
+ },
+ "s60": {
+  "n": 60,
+  "discard_useless": "6/12 = 50%",
+  "keep_useful": "35/48 = 73%",
+  "undecided": 0,
+  "arbiter_rate": "56/60 = 93%",
+  "arbiter_decides_fate": "33/60 = 55%",
+  "arbiter_wording_only": "23/60 = 38%",
+  "unanimous": "4/60 = 7%",
+  "panel_admit_split": "16/60 = 27%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "36/60 = 60%",
+    "discard_useless": "6/12 = 50%",
+    "keep_useful": "30/48 = 63%",
+    "invalid": 10
+   },
+   "grok": {
+    "vs_gold": "29/60 = 48%",
+    "discard_useless": "4/12 = 33%",
+    "keep_useful": "25/48 = 52%",
+    "invalid": 20
+   },
+   "deepseek": {
+    "vs_gold": "43/60 = 72%",
+    "discard_useless": "2/12 = 17%",
+    "keep_useful": "41/48 = 85%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "36/60 = 60%",
+   "astra~deepseek": "36/60 = 60%",
+   "grok~deepseek": "29/60 = 48%"
+  }
+ },
+ "cost": {
+  "grok/judge": {
+   "calls": 6,
+   "failed": 2,
+   "tokens": 102009,
+   "p50_ms": 320046,
+   "max_ms": 394813,
+   "errors": [
+    "模型接口 HTTP 500: Post \"[REDACTED:url]": EOF"
+   ]
+  },
+  "astra/judge": {
+   "calls": 6,
+   "failed": 1,
+   "tokens": 62969,
+   "p50_ms": 42768,
+   "max_ms": 46287,
+   "errors": [
+    "模型接口 HTTP 500: Post \"[REDACTED:url]": utls: TLS handshake: EOF"
+   ]
+  },
+  "deepseek/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 125248,
+   "p50_ms": 186984,
+   "max_ms": 236610,
+   "errors": []
+  },
+  "sol/arbiter": {
+   "calls": 56,
+   "failed": 0,
+   "tokens": 193197,
+   "p50_ms": 31912,
+   "max_ms": 82729,
+   "errors": []
+  }
+ }
+}

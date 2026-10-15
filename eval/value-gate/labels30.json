@@ -1,0 +1,215 @@
+{
+ "source": "user labels 2026-10-14 (sample30.md)",
+ "items": [
+  {
+   "n": 1,
+   "id": "9888aac0-9e62-4c75-9c65-03f0cc26ccfa",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 2,
+   "id": "25fc47d4-44bc-4a57-b2b0-eb0d90664266",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 3,
+   "id": "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 4,
+   "id": "22b0fb9d-87e8-46d2-8538-d0d033b6bb24",
+   "label": "useless",
+   "admit": false,
+   "note": "should be architecture preference, not current state"
+  },
+  {
+   "n": 5,
+   "id": "db1a5436-cf9a-4470-bff7-ba0c62e80314",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 6,
+   "id": "c09b0151-0b7e-4912-9975-31fc955158a1",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 7,
+   "id": "4238a311-485f-46f0-9cf1-2f9cdedb589c",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 8,
+   "id": "dd03a351-6ce6-4077-95e6-da08b7cf99c4",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 9,
+   "id": "94cf1473-8cb8-4e57-8ba5-ce0a43a8827c",
+   "label": "partly",
+   "admit": true,
+   "note": "exploration"
+  },
+  {
+   "n": 10,
+   "id": "42830c38-60e9-4709-b8c0-3cec697173cf",
+   "label": "useless",
+   "admit": false,
+   "note": "temporary usage"
+  },
+  {
+   "n": 11,
+   "id": "dda5bdf3-09bc-49fe-b380-7866d97d017b",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 12,
+   "id": "e6aa6726-e1ec-436d-b37c-3ae838181434",
+   "label": "useless",
+   "admit": false,
+   "note": "no scenario"
+  },
+  {
+   "n": 13,
+   "id": "77cbf3ea-fdbe-4e83-94bd-b166ee8f077e",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 14,
+   "id": "8d281513-643e-4cc0-a544-e6d7a3ab43bf",
+   "label": "useless",
+   "admit": false,
+   "note": "diary"
+  },
+  {
+   "n": 15,
+   "id": "d7fbd3d6-b544-4584-9725-b72fb4970d75",
+   "label": "partly",
+   "admit": true,
+   "note": "needs scenario"
+  },
+  {
+   "n": 16,
+   "id": "ed9f5e6c-b8f9-4d0c-979d-5deda3de7e58",
+   "label": "useless",
+   "admit": false,
+   "note": "worker prompt"
+  },
+  {
+   "n": 17,
+   "id": "4afbee8f-5c5e-428e-bdc1-4d59b212e9b5",
+   "label": "partly",
+   "admit": true,
+   "note": "generalize: e2e must not fake to go green; prefer real env"
+  },
+  {
+   "n": 18,
+   "id": "2a8382aa-6b32-43d0-9819-2d352a8e083f",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 19,
+   "id": "2352b4ab-b85f-46a0-ae63-bbef45eeac3d",
+   "label": "partly",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 20,
+   "id": "2018b871-1a53-4279-bb47-5a959ee77f76",
+   "label": "partly",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 21,
+   "id": "bc2da617-d5f7-4860-9eae-7a9ae90025b7",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 22,
+   "id": "0f00e247-0f53-4c56-bf41-527e88f1b4d4",
+   "label": "useless",
+   "admit": false,
+   "note": "worker prompt"
+  },
+  {
+   "n": 23,
+   "id": "8279061f-89d6-4e91-946f-367f3625e663",
+   "label": "useless",
+   "admit": false,
+   "note": "worker prompt"
+  },
+  {
+   "n": 24,
+   "id": "aa1c4bf4-446f-4214-9cb6-2a680a5f1ccf",
+   "label": "useless",
+   "admit": false,
+   "note": ""
+  },
+  {
+   "n": 25,
+   "id": "e36fde1b-619b-484f-a016-b65e85b554eb",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 26,
+   "id": "1d093577-e2e7-4676-9cae-d17200b6b736",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 27,
+   "id": "210464bc-2699-4207-998e-e67bfae9298f",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 28,
+   "id": "1f6f6ecb-a2d3-4660-8161-31b37b741ca3",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 29,
+   "id": "dc4cfa4d-bf99-4680-9f32-0db8585daee2",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  },
+  {
+   "n": 30,
+   "id": "7935d750-a72f-4eda-87d1-2d0b006cf43f",
+   "label": "useful",
+   "admit": true,
+   "note": ""
+  }
+ ]
+}
