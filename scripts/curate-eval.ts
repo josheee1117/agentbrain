@@ -29,7 +29,7 @@ const stats: CallStat[] = [];
 const t0 = Date.now();
 let results: Awaited<ReturnType<typeof runPanel>>;
 try {
-  results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 2);
+  results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 2, cfg.mode === "primary" ? cfg.primary : null);
 } catch (e) {
   if (!(e instanceof QuotaExhausted)) throw e;
   writeFileSync(outPath, JSON.stringify({ aborted: e.message, resetAt: e.resetAt, stats }, null, 1));
@@ -86,7 +86,7 @@ const cost = Object.fromEntries(
     return [k, { calls: xs.length, failed: xs.filter((s) => !s.ok).length, tokens: xs.reduce((n, s) => n + s.tokens, 0), p50_ms: q(xs.map((s) => s.ms), 0.5), max_ms: Math.max(...xs.map((s) => s.ms)), errors: [...new Set(xs.map((s) => s.error).filter(Boolean))] }];
   }),
 );
-const summary = { at: new Date().toISOString(), panel: cfg.panel.map((m) => `${m.name}:${m.model}`), arbiter: cfg.arbiter, batch: cfg.batchSize, wall_ms: wall, all: split(null), ...Object.fromEntries([...new Set(rows.map((r) => r.set))].map((s) => [s, split(s)])), cost };
+const summary = { at: new Date().toISOString(), panel: cfg.panel.map((m) => `${m.name}:${m.model}`), mode: cfg.mode, primary: cfg.primary, arbiter: cfg.mode === "primary" ? null : cfg.arbiter, batch: cfg.batchSize, wall_ms: wall, all: split(null), ...Object.fromEntries([...new Set(rows.map((r) => r.set))].map((s) => [s, split(s)])), cost };
 writeFileSync(outPath, JSON.stringify({ summary, rows }, null, 1));
 console.log(JSON.stringify(summary, null, 1));
 store.close();

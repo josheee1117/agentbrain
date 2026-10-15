@@ -126,7 +126,9 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 ## v3 第 2 阶段：审稿团 `ab curate` 与上手向导 `ab setup`
 
 - `ab setup` 一步步问快模型、审稿团（建议 3 家不同厂商）与仲裁、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,panel,keys,hosts,test` 只重做其中几步。
-- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`（2026-10-15 用户选定：三位评审都经 cpa 代理——gpt-6-astra medium、grok-latest xhigh、deepseek-v4-pro max；仲裁 gpt-6.1-sol 单独配置、不投票）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象（不参加投票，只在分歧时定结论）。推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别，写错直接 400 并列出可选值）。每个成员可选 `timeoutMs`（默认 300000）、`concurrency`（默认 1，cpa 代理并发高了会 429）、`extraBody`（并进请求体，例如 DashScope 的 `{"enable_thinking": false}`：开着思考时一批 10 条要好几分钟）。
+- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。`mode` 有两种：
+  - `primary`（默认样例，2026-10-15 用户选定）：只有 `primary` 一位主审定结论，用的是 gpt-6-astra medium。panel 里其他成员（grok-latest xhigh、deepseek-v4-pro max，都经 cpa）先各自给出参考意见，意见附给主审、写进报告，但不投票，也不用仲裁。主审没给出有效结论的条目算未决，不执行。参考成员调用失败不影响主审的结论。
+  - `panel`：各成员投票，一致就执行，有分歧交仲裁（三票都要留、只是写法不同时，仲裁只定写法）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象（不投票，只在分歧时定结论，例如 gpt-6.1-sol）。不写 `mode` 时按 panel 处理。推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别，写错直接 400 并列出可选值）。每个成员可选 `timeoutMs`（默认 300000）、`concurrency`（默认 1，cpa 代理并发高了会 429）、`extraBody`（并进请求体，例如 DashScope 的 `{"enable_thinking": false}`：开着思考时一批 10 条要好几分钟）。
 - `ab curate` 默认 dry-run，只把每条候选的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在审稿团满 3 家都连得上时生效：
   - 一致沉淀 → `curate` 事件把候选转正（A 类同时打 guidance 标记）；
   - 改写 → 新条目（origin=curate，仍未确认），原候选归档并指向新条目；

@@ -12,7 +12,7 @@ import { sanitize } from "./sanitize.ts";
 import type { Store } from "./store.ts";
 import { isWorkerTranscript } from "./transcript.ts";
 import type { Action, CallStat, CandidateInput, CurateResult, Judge, PanelMember, ReviewConfig } from "./review.ts";
-import { judgeBatch, limit, memberChatConfig, planAction } from "./review.ts";
+import { judgeBatch, judgeBatchPrimary, limit, memberChatConfig, planAction } from "./review.ts";
 
 export const CONTEXT_MAX_CHARS = 1500;
 export const NEIGHBORS = 5;
@@ -79,7 +79,11 @@ export interface RunReport {
   applied: { op: string; id: string; events: string[]; created?: string }[];
 }
 
-export async function runPanel(inputs: CandidateInput[], panel: Judge[], arbiter: Judge, batchSize: number, stats: CallStat[], concurrency = 2): Promise<CurateResult[]> {
+/** primary 给了主审 name 时按 primary 模式（其余成员只给参考意见、arbiter 不用），否则按投票 + 仲裁。 */
+export async function runPanel(inputs: CandidateInput[], panel: Judge[], arbiter: Judge, batchSize: number, stats: CallStat[], concurrency = 2, primary: string | null = null): Promise<CurateResult[]> {
+  const main = primary ? panel.find((j) => j.name === primary) : undefined;
+  if (primary && !main) throw new Error(`主审 ${primary} 连不上`);
+  const advisors = panel.filter((j) => j !== main);
   const batches: CandidateInput[][] = [];
   for (let i = 0; i < inputs.length; i += batchSize) batches.push(inputs.slice(i, i + batchSize));
   const out: CurateResult[] = [];
@@ -88,7 +92,7 @@ export async function runPanel(inputs: CandidateInput[], panel: Judge[], arbiter
     Array.from({ length: Math.min(concurrency, batches.length) }, async () => {
       while (next < batches.length) {
         const b = batches[next++];
-        out.push(...(await judgeBatch(b, panel, arbiter, stats)));
+        out.push(...(await (main ? judgeBatchPrimary(b, main, advisors, stats) : judgeBatch(b, panel, arbiter, stats))));
       }
     }),
   );

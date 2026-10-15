@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { Store } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
 import type { Chat } from "./llm.ts";
-import { retryPolicy, judgeBatch, normalize, planAction, renderCandidates, unanimous, validateReviewConfig, type CandidateInput, type CallStat, type Judgement } from "./review.ts";
+import { retryPolicy, judgeBatch, judgeBatchPrimary, normalize, planAction, renderCandidates, unanimous, validateReviewConfig, type CandidateInput, type CallStat, type Judgement } from "./review.ts";
 import { applyActions, connectPanel, planAll, runPanel, undoRun } from "./curate.ts";
 
 retryPolicy.backoffMs = [0, 0];
@@ -274,4 +274,38 @@ test("上游 503 过载：退避重试后成功", async () => {
   const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: busy }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: ok }, stats);
   assert.equal(r.decision.route, "unanimous");
   assert.equal(n, 3);
+});
+
+test("primary 模式：配置校验；参考意见先跑并附给主审；结论只看主审，参考成员失败不挡执行", async () => {
+  const m = (name: string) => ({ name, baseUrl: "http://x", model: "m", keyService: `k-${name}` });
+  assert.match((validateReviewConfig({ mode: "primary", panel: [m("a"), m("b")], primary: "z" }) as any).error, /primary/);
+  assert.match((validateReviewConfig({ mode: "vote", panel: [m("a")], arbiter: "a" }) as any).error, /mode/);
+  const cfg = validateReviewConfig({ mode: "primary", panel: [m("a"), m("b"), m("c")], primary: "a" });
+  assert.ok(!("error" in cfg) && cfg.mode === "primary" && cfg.primary === "a");
+  let seen = "";
+  let sys = "";
+  const primary: Chat = async (msgs) => {
+    sys = msgs[0].content!;
+    seen = msgs[1].content!;
+    return { message: { role: "assistant", content: JSON.stringify({ verdicts: [{ id: "c1", verdict: "discard", class: "none", reason: "流水账" }] }) }, tokens: 1 };
+  };
+  const adv = reply([{ id: "c1", verdict: "rewrite", class: "A", scenario: "当汇报时", text: "说人话", reason: "偏好" }]);
+  const dead: Chat = async () => {
+    throw new Error("boom");
+  };
+  const stats: CallStat[] = [];
+  const [r] = await judgeBatchPrimary([cand("a")], { name: "a", chat: primary }, [{ name: "b", chat: adv }, { name: "c", chat: dead }], stats);
+  assert.match(seen, /参考意见（不投票）/);
+  assert.match(seen, /b：rewrite（A）.*说人话/);
+  assert.match(seen, /c：（没给出有效意见）/);
+  assert.match(sys, /不要因为多数意见就跟随/);
+  assert.equal(r.decision.route, "primary");
+  assert.equal(r.decision.final?.verdict, "discard");
+  assert.deepEqual(r.votes.map((v) => [v.name, !!v.advisory]), [["a", false], ["b", true], ["c", true]]);
+  const s = new Store(":memory:", ":memory:");
+  const id = s.remember(null, "s", false, { kind: "rule", text: "x", confirmed: false, candidate: true, source: src });
+  const plan = planAction(s.project().props.get(id)!, { ...r, id }, s.project().props);
+  assert.equal(plan.op, "discard", "参考成员调用失败不挡主审的结论");
+  const [u] = await judgeBatchPrimary([cand("a")], { name: "a", chat: dead }, [{ name: "b", chat: adv }], []);
+  assert.equal(u.decision.route, "undecided");
 });

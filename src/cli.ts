@@ -995,13 +995,14 @@ async function cmdCurate(argv: string[]): Promise<void> {
     if (!cands.length) return console.log("候选区是空的，没有要审的。");
     const { panel, arbiter, missing } = connectPanel(cfg);
     if (!arbiter || panel.length === 0) die(`审稿团连不上：${missing.join("；") || "仲裁不可用"}`);
-    const full = missing.length === 0 && panel.length >= 3;
+    // panel 模式要 3 家都在；primary 模式要主审和配置里的参考成员都在（缺参考意见也不写库，避免悄悄退化）
+    const full = missing.length === 0 && (cfg.mode === "primary" ? true : panel.length >= 3);
     const apply = values.apply && full;
     const stats: CallStat[] = [];
     const inputs = cands.map((p) => candidateInput(store, p, props, names));
     let results: Awaited<ReturnType<typeof runPanel>>;
     try {
-      results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats);
+      results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 2, cfg.mode === "primary" ? cfg.primary : null);
     } catch (e) {
       if (e instanceof QuotaExhausted) die(`审稿团停下了，什么都没写：${e.message}`);
       throw e;
@@ -1013,7 +1014,7 @@ async function cmdCurate(argv: string[]): Promise<void> {
       at: new Date().toISOString(),
       dry_run: !apply,
       panel: cfg.panel.map((m) => ({ name: m.name, model: m.model })),
-      arbiter: cfg.arbiter,
+      arbiter: cfg.mode === "primary" ? `primary:${cfg.primary}` : cfg.arbiter,
       results: results.map((r, i) => ({ ...r, action: actions[i], text: props.get(r.id)!.text })),
       stats,
       applied: apply ? applyActions(store, run, actions, props) : [],
@@ -1026,7 +1027,7 @@ async function cmdCurate(argv: string[]): Promise<void> {
       [
         `${apply ? "已执行" : "dry-run（没写库）"}：${cands.length} 条候选`,
         `  沉淀 ${count("promote")}，改写 ${count("rewrite")}，并入 ${count("merge")}，丢弃 ${count("discard")}，跳过 ${count("skip")}`,
-        `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
+        cfg.mode === "primary" ? `  主审 ${cfg.primary} 定结论 ${routes.filter((r) => r === "primary").length}，未决 ${routes.filter((r) => r === "undecided").length}（参考意见：${cfg.panel.filter((m) => m.name !== cfg.primary).map((m) => m.name).join("、")}）` : `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
         `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}`,
         missing.length ? `  审稿团缺人（只出报告，不写库）：${missing.join("；")}` : "",
         values.apply && !full ? "  --apply 被忽略：审稿团不满 3 家" : "",

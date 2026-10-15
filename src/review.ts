@@ -24,6 +24,13 @@ export interface PanelMember {
 }
 
 export interface ReviewConfig {
+  /**
+   * panel：panel 里各成员投票，一致直接执行，分歧交仲裁。
+   * primary：只有 primary 一位主审定结论；panel 里其他成员只给参考意见（先跑，意见附给主审、记进报告，不投票），不用仲裁。
+   */
+  mode: "panel" | "primary";
+  /** primary 模式下的主审（panel 成员的 name）。 */
+  primary: string | null;
   panel: PanelMember[];
   /** 仲裁人的 name：panel 里某个成员，或 review.json 里单独写的仲裁模型（arbiter 写成对象）。 */
   arbiter: string;
@@ -59,6 +66,15 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     names.add(r.name);
     panel.push(r);
   }
+  const mode = o.mode === undefined ? "panel" : o.mode;
+  if (mode !== "panel" && mode !== "primary") return { error: `${path} 的 mode 只能是 panel 或 primary` };
+  const int = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
+  if (mode === "primary") {
+    const pm = panel.find((m) => m.name === o.primary);
+    if (!pm) return { error: `${path} 的 mode=primary 时 primary 必须是 panel 里某个成员的 name` };
+    // primary 模式不用仲裁：arbiter 字段即使写了也忽略，这里指向主审只为类型完整
+    return { mode, primary: pm.name, panel, arbiter: pm.name, arbiterMember: pm, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+  }
   let arbiterMember: PanelMember | undefined;
   if (typeof o.arbiter === "string") arbiterMember = panel.find((m) => m.name === o.arbiter);
   else if (o.arbiter && typeof o.arbiter === "object") {
@@ -68,8 +84,7 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     arbiterMember = r;
   }
   if (!arbiterMember) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name，或一个完整的模型配置对象` };
-  const int = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
-  return { panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+  return { mode, primary: null, panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
 }
 
 function validateMember(m: any, path: string): PanelMember | { error: string } {
@@ -257,9 +272,9 @@ export function normalize(v: any, c: CandidateInput, neighborIds: Map<string, st
 
 // ---------- 计票 ----------
 
-/** arbiter_wording：三票都同意留下、只是写法/去向不同，仲裁只定写法（不能改成丢弃）。arbiter：去留有分歧，仲裁定去留。 */
+/** primary：主审一人定结论（primary 模式）。arbiter_wording：三票都同意留下、只是写法/去向不同，仲裁只定写法（不能改成丢弃）。arbiter：去留有分歧，仲裁定去留。 */
 export type Decision =
-  | { route: "unanimous" | "arbiter" | "arbiter_wording"; final: Judgement }
+  | { route: "unanimous" | "arbiter" | "arbiter_wording" | "primary"; final: Judgement }
   | { route: "undecided"; final: null; why: string };
 
 /** 三票（或更多）全部有效且结论相同（改写/合并时正文也要相同）才直接执行；否则交仲裁。 */
@@ -326,7 +341,7 @@ export interface CallStat {
 export interface CurateResult {
   id: string;
   /** invalid：这一票为什么无效（call_failed / missing / no_scenario / merge_bad_target …）。 */
-  votes: { name: string; j: Judgement | null; invalid?: string }[];
+  votes: { name: string; j: Judgement | null; invalid?: string; advisory?: boolean }[];
   decision: Decision;
 }
 
@@ -430,7 +445,7 @@ export function planAction(p: Proposition, res: CurateResult, liveProps: Map<str
   if (p.confirmed_by === "user") return { op: "skip", id: p.id, why: "用户确认过的条目不动，进复核清单" };
   if (p.state !== "candidate") return { op: "skip", id: p.id, why: `不是候选（${p.state}）` };
   const d = res.decision;
-  const failed = res.votes.filter((v) => v.invalid === "call_failed").map((v) => v.name);
+  const failed = res.votes.filter((v) => v.invalid === "call_failed" && !v.advisory).map((v) => v.name);
   if (failed.length) return { op: "skip", id: p.id, why: `审稿团有人没判（${failed.join("、")} 调用失败），不执行` };
   if (!d.final) return { op: "skip", id: p.id, why: d.route === "undecided" ? d.why : "无结论" };
   const f = d.final;
@@ -441,4 +456,51 @@ export function planAction(p: Proposition, res: CurateResult, liveProps: Map<str
   if (!target || target.state !== "active") return { op: "skip", id: p.id, why: "并入目标不存在或不在正式库" };
   // 不改目标正文：候选并入目标（归档、可恢复）；合并后的原则文字进报告，目标是用户确认的则进复核清单
   return { op: "merge", id: p.id, into: target.id, text: f.text!, review: target.confirmed_by === "user" };
+}
+
+// ---------- primary 模式：一位主审 + 参考意见 ----------
+
+export const PRIMARY_NOTE = `每条候选后面附了其他审稿人的参考意见（他们不投票）。可以借鉴他们指出的事实和理由，但结论由你按标准独立判断，不要因为多数意见就跟随。`;
+
+export const PRIMARY_SYSTEM = `${JUDGE_SYSTEM}\n\n${PRIMARY_NOTE}`;
+
+export function renderAdvice(c: CandidateInput, cid: string, advice: { name: string; j: Judgement | null }[], neighborBack: Map<string, string>): string {
+  const lines = advice.map(({ name, j }) => {
+    if (!j) return `  ${name}：（没给出有效意见）`;
+    const into = j.into ? `　并入：${neighborBack.get(j.into) ?? "近邻"}` : "";
+    return `  ${name}：${j.verdict}（${j.class}）${into}${j.scenario ? `　场景：${j.scenario}` : ""}${j.text ? `　正文：${j.text}` : ""}　理由：${j.reason}`;
+  });
+  void c;
+  return `<advice for="${cid}">\n${lines.join("\n")}\n</advice>`;
+}
+
+/** primary 模式判一批：参考意见先跑（并行、互不可见），再把意见附给主审；主审的结论就是最终结论，不仲裁。主审没给出有效结论的条目为未决。 */
+export async function judgeBatchPrimary(batch: CandidateInput[], primary: Judge, advisors: Judge[], stats: CallStat[]): Promise<CurateResult[]> {
+  const r = renderCandidates(batch);
+  const raw = await Promise.all(
+    advisors.map((m) => timed(m.name, "judge", () => m.chat([{ role: "system", content: JUDGE_SYSTEM }, { role: "user", content: r.prompt }], { json: true }), stats)),
+  );
+  const inv = raw.map(() => new Map<string, string>());
+  const adv = raw.map((t, i) => parseJudgements(t, r.ids, r.neighborIds, batch, inv[i]));
+  const cidOf = new Map([...r.ids].map(([cid, id]) => [id, cid]));
+  const advice = batch.map((c) => {
+    const cid = cidOf.get(c.id)!;
+    const back = new Map([...r.neighborIds].filter(([k]) => k.startsWith(`${cid}:`)).map(([k, v]) => [v, k.slice(cid.length + 1)]));
+    return renderAdvice(c, cid, advisors.map((m, i) => ({ name: m.name, j: adv[i].get(c.id) ?? null })), back);
+  });
+  const prompt = `${r.prompt}\n\n其他审稿人的参考意见（不投票）：\n${advice.join("\n")}`;
+  const pinv = new Map<string, string>();
+  const ptxt = await timed(primary.name, "judge", () => primary.chat([{ role: "system", content: PRIMARY_SYSTEM }, { role: "user", content: prompt }], { json: true }), stats);
+  const pj = parseJudgements(ptxt, r.ids, r.neighborIds, batch, pinv);
+  return batch.map((c) => {
+    const pv = pj.get(c.id) ?? null;
+    const votes: CurateResult["votes"] = [
+      pv ? { name: primary.name, j: pv } : { name: primary.name, j: null, invalid: pinv.get(c.id) },
+      ...advisors.map((m, i) => {
+        const j = adv[i].get(c.id) ?? null;
+        return j ? { name: m.name, j, advisory: true } : { name: m.name, j, invalid: inv[i].get(c.id), advisory: true };
+      }),
+    ];
+    return { id: c.id, votes, decision: pv ? { route: "primary", final: pv } : { route: "undecided", final: null, why: ptxt === null ? "主审调用失败" : "主审输出无效" } };
+  });
 }
