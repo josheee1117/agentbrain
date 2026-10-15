@@ -94,7 +94,7 @@ export function cliCommand(spec: CliSpec, system: string, user: string, dir: str
   return { cmd, args, input: user };
 }
 
-const LIMIT = /usage limit|rate.?limit|limit reached|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
+const LIMIT = /usage[ _]limit|rate.?limit|limit[ _]reached|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
 
 /** 额度/限流类失败 → http_429（交给 timed 的退避与 QuotaExhausted）；其余为一般失败。 */
 export function cliFailure(host: CliHost, text: string): WorkFailure {
