@@ -573,6 +573,88 @@ Proposal 被 accepted 只表示它可以进入当前 proposition read model，�
 
 首发是否需要 shadow publication、canary 或独立 reviewer 由 Sediment/L2 Gates 决定；但“写入慢、发布稳、注入快”和“一个读取面的授权不自动授权其他读取面”是 LOCKED 不变量。
 
+### 8.6 话题结束时一步式沉淀（**CANDIDATE**，2026-10-15，未授权实现）
+
+> 状态：设计候选。按约定，用户说"开始实现"之前不写代码。依据：用户 2026-10-15 提出"一个主题的对话完了再抽，子代理读这部分上下文和背景去抽"（"可以"），以及 pstack 复核后的简化方向（抽取和判断合成一个后台子模型一次完成，候选区只当审计记录和撤销手段）。一步式和两步式的对比还没跑完（`docs/eval/07`，27/38 个窗口），结论可能影响本节第 6 点。
+
+**1. 现在的做法和问题**
+
+现在 `ab work` 从处理进度（checkpoint）往后按轮次切窗口，每块最多 48000 字（`WINDOW_MAX_CHARS`），附前 4 轮当背景（`CONTEXT_OVERLAP_TURNS`）。会话结束、或 transcript 30 分钟没动（`SETTLE_IDLE_MS`）时，最后不满 48000 字的那块才处理。问题：
+
+- 窗口按字数切，不按话题切。一个话题经常被切成两半，抽取器看不到前因后果。
+- 前文只有 4 轮，用户在话题开头讲的理由经常落在窗口外。
+- `docs/eval/07` 的中期结果显示，现在的短板是**抽取漏掉有用内容**，不是判断不严（只审原候选 Haiku 15/16、astra 13/16；重新抽取后一步式 7/16、两步式 5/16）。给抽取器完整的话题是补这个短板最直接的办法。
+
+**2. 什么时候算"一个话题结束了"**（三个触发，哪个先到用哪个）
+
+| 触发 | 为什么算话题边界 |
+|---|---|
+| 静置约 20 分钟 | 用户 20 分钟没说话，通常这件事告一段落 |
+| 上下文压缩 | 压缩后前面的内容会从主会话里消失，是天然的话题边界 |
+| 会话结束 | 会话里的内容不会再变 |
+
+**3. 三个宿主今天能拿到的事件**（2026-10-15 查官方文档和本机安装版本的类型定义）
+
+| | 会话结束 | 上下文压缩 | 每轮结束 | 静置 |
+|---|---|---|---|---|
+| Claude Code（本机 2.1.295） | `SessionEnd`，`reason` 为 `clear` / `resume` / `logout` / `prompt_input_exit` / `other`；所有 SessionEnd hook 共用约 1.5 秒预算 | `PreCompact` / `PostCompact`，matcher 为 `manual` / `auto` | `Stop` | 没有可配时长的静置事件。`Notification` 的 `idle_prompt` 是"等你输入"的提醒，不是 20 分钟计时 |
+| Codex（本机 0.162.1） | `SessionEnd`，`reason` 目前只有 `other`；默认 1 秒、最多 3 秒，总是同步执行。**会话闲置 30 分钟且没有任何客户端打开时也会触发** | `PreCompact` / `PostCompact`，字段 `trigger` 为 `manual` / `auto`；压缩后还会跑 `SessionStart`（`source: "compact"`） | `Stop` | 只有上面那条"闲置 30 分钟后 SessionEnd" |
+| Pi（本机 pi-coding-agent 1.2.0） | 扩展事件 `session_shutdown`，`reason` 为 `quit` / `reload` / `new` / `resume` / `fork` | `session_before_compact` / `session_compact`，`reason` 为 `manual` / `threshold` / `overflow` | `agent_end` / `agent_settled` | 没有 |
+
+来源：Claude Code <https://code.claude.com/docs/en/hooks>；Codex <https://developers.openai.com/codex/hooks>；Pi 为本机 `@earendil-works/pi-coding-agent/dist/core/extensions/types.d.ts`。实现前要在三个宿主里各实测一次事件真的会来、transcript 在压缩后仍保留压缩前的原文（这是从会话文件补读话题的前提）。
+
+**4. 静置怎么判断**（宿主都没有现成的 20 分钟事件）
+
+- **候选 B（建议先做）：下一轮再判断。** 用户发下一句话时，`UserPromptSubmit` / `before_agent_start` 已经在跑 `ab capture --hook`。这时如果距上一轮（`last_touch`）已超过 20 分钟，就把"处理进度到上一轮结束"这段当作一个已结束的话题，拉起分离的 `ab work --session` 去处理，不阻塞本轮。好处：不加新 hook、不加新进程种类、不需要 launchd（用户要求 `com.agentbrain.work` 保持不加载）。代价：用户不回来时，要等会话结束（或 Codex 的闲置 30 分钟 SessionEnd）才处理。
+- **候选 A（以后再说）：每轮结束定一个闹钟。** `Stop` / `agent_settled` 时拉起一个分离的 `ab work --settle <宿主>:<会话> --after 20m`，每个会话只留一个，新一轮把截止时间往后推；醒来时确认 transcript 20 分钟没动才触发。会多一种常驻几十分钟的进程，还要处理机器睡眠、重复闹钟。
+- `SETTLE_IDLE_MS` 从 30 分钟改成 20 分钟（代码常量，不加配置键，§2.2）。
+
+**5. 话题窗口怎么切**
+
+- 话题窗口 = 从处理进度到触发点（静置：上一轮最后一条；压缩：压缩前最后一条；结束：会话最后一条）。
+- 另附话题开始前的若干轮当背景，放在 `<context_only>` 里（只供理解，不能当依据，现有提示词已有这条规则）。建议从 4 轮放宽到"最多 8 轮且不超过 6000 字"，代码常量。
+- 话题太长（超过约 120000 字，常量）时仍按轮次边界拆开，每段都附它前面的背景，记 `part: k/n`。拆开是兜底，不是常态。
+
+**6. 谁来跑：后台宿主子模型，一次完成抽取和判断**
+
+- 提示词和输出校验已有：`src/onepass.ts`（PR #54）。模型读话题窗口 + 背景 +《好记忆的标准》+ 附近已有记忆，一次给出 0～5 条结论，每条是"新记"或"并入已有某条"。
+- 用哪个模型：哪个宿主的会话就用哪个宿主的命令行子模型和它自己的额度——Claude Code 用 `claude -p` Haiku 5.5 max；Codex 用 `codex exec`，模型取 `~/.codex/config.toml` 的 `review_model`（没有就 gpt-6-astra）、推理 max；Pi 用 `pi -p`，模型取 reviewer 子代理配置（本机 openai-codex/gpt-6-astra）、thinking max。和 `ab setup` 的宿主审稿人默认一致（PR #54 `hostReviewerDefault`）。
+- 防自激沿用 `AGENTBRAIN_REVIEWER=1`：子模型的会话不登记、不召回、不再触发抽取。
+- 额度用完：窗口留在队列里，记下恢复时间（PR #54 已能认出 Claude 的 "resets Oct 17 at 1am" 格式），到时再跑；不悄悄改用别的宿主的额度。
+- **前提**：`docs/eval/07` 补跑完，一步式仍然不比两步式差。如果补跑后结论反转，本节改成"话题窗口 + 两步式"，其余各点不变。
+
+**7. 写进库的东西和记录**
+
+- 每条结论写一条 `remember`，`origin: "extract"`，未确认；按简化方向直接进正式库（不再等审稿团）；每次运行写一份报告当审计记录（写了哪些事件），可整次撤销，单条也能用 `ab stage <id>`（移回候选区）或 `ab archive` 撤回。是否直接进正式库还是先进候选区，**待用户定**（见第 10 点）。
+- 每条记下：来源会话和消息定位点范围（`source.anchor` 起止：Claude 消息 uuid、Codex 行序号、Pi 条目 id）、`window_id`、触发方式（`idle` / `compact` / `session_end`）、`prompt_version`（`ONE_PASS_SYSTEM` 全文的短哈希，提示词一改就变）、模型（`宿主:模型@推理强度`）。
+- "并入已有某条"：不改目标正文。目标是用户确认过的，只给它追加一条 `evidence`（来源指针），合并后的写法进本次报告供用户看；目标未确认的，同样只追加证据，改写交给用户或下次审查。这一点继承 §5.5 / LOCKED"不悄悄改用户确认的条目"。
+- 引文逐字核对、写 L1 前二次脱敏照旧（§8.1）。
+
+**8. 和现有 hook、队列的关系**
+
+- 现有 `UserPromptSubmit`（`ab recall --hook` + `ab capture --hook`）和 `SessionEnd`（`ab capture --hook`，结束时拉起 `ab work --session`）不变，候选 B 只在 `capture` 里多一个"距上一轮超过 20 分钟"的判断。
+- 新增：Claude Code / Codex 各加一个 `PreCompact` hook 跑 `ab capture --hook --host <宿主>`（`hook_event_name` 为 `PreCompact` 时，把当前最后一条记为话题边界并拉起 `ab work --session`，自己立刻返回，不挡压缩）；Pi 扩展加 `session_before_compact` 处理，同样只登记、拉起、立即返回。`ab setup` 的 `mergeHooks` 相应多写这一条（写前备份、给 diff、确认后写，现有流程）。
+- 队列：`capture_windows`（`window_id` 主键、状态、重试次数、下次时间）照用。话题窗口就是一行窗口记录，只是边界来自触发点，不来自 48000 字。单实例租约（`work_lease`）照用。
+
+**9. 不重复、不漏**
+
+- `window_id = sha256(宿主|会话|起点|终点)`，同一段只处理一次；处理进度和写 L1 在同一事务里推进（现有）。
+- 压缩和会话结束先后到达：第二个触发的起点是已推进的处理进度，只处理剩下的部分，不会重抽。
+- 两个触发同时拉起 `ab work`：租约保证只有一个在跑，另一个直接退出，留给下一次。
+- 会话结束后又 resume：现有规则 `ended_at < last_touch` 视为未结束。
+- 候选去重键 `sha256(window_id|kind|正文)` 照用；提示词换了版本，旧窗口不自动重跑，要重跑用 `ab work --session <key> --redo`。
+
+**10. 待用户定**
+
+1. 静置门槛 20 分钟（用户提的数）还是保留 30 分钟。
+2. 静置判断先做候选 B（下一轮判断）还是 A（闹钟进程）。建议 B。
+3. 一步式结果直接进正式库（未确认、可撤销）还是先进候选区。按 pstack 简化方向是前者。
+4. 是否等 `docs/eval/07` 补跑完再开工。建议等。
+
+**11. 怎么验收**（实现前先做评测，写进 `docs/eval/`）
+
+用 90 条标注里能找回窗口的 42 条：按本节规则重新切成话题窗口，和现在的 48000 字窗口各跑一遍一步式，看"有用"留下几条（这次的短板）、"没用"挡住几条、每个话题的花费和耗时。话题窗口要在"有用留下"上明显更好才值得改。
+
 ---
 
 ## 9. 生命周期、冲突与纠错
@@ -889,6 +971,56 @@ Eligibility 至少包含：
 - candidate size、预算和默认 profile。
 
 v1.2 的 Tier0/Tier1/Tier2 是候选实验矩阵，不是 v2 最终实现合同。
+
+### 11.5 两个读路径小改动（**CANDIDATE**，2026-10-15，未授权实现）
+
+依据：场景目录评测（`docs/eval/10`）结论是"不如一次 `ab search`"，PR #56 搁置；用户同意改走两个更直接的办法。
+
+**(i) brief 里提醒 agent 在哪几类问题上先 `ab search`**
+
+现在 brief 只说"搜索用 ab search，看一条用 ab get"，没说什么时候该搜。改成点出几类问题。
+
+改前（`src/brief.ts` 当前那一行，主会话版本）：
+
+```text
+干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。搜索用 ab search，看一条用 ab get。
+```
+
+改后：
+
+```text
+干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。
+遇到这几类情况先 ab search <关键词> 再动手：用户提到"上次/之前/我们定过"；要改不熟悉的模块或配置；报错看不出原因；要做设计取舍。看一条的来龙去脉用 ab get。
+```
+
+- 多约 70 字，仍在 `BRIEF_MAX_CHARS`（2000）以内；超出时按现有规则先截后面的条目，不截这行。
+- 子代理版本同样加这一行（子代理也能 `ab search`）。
+- 怎么验收：拿 `docs/eval/10` 的开工背景题目，比较加这行前后 agent 实际调用 `ab search` 的次数和答对率。
+
+**(ii) `ab search` 结果显示全文，不只第一行**
+
+现在每条只打印正文第一行（`src/cli.ts` 的 `h.text.split("\n")[0]`），"为什么"和"场景"要再 `ab get` 一次才看得到，agent 常常不去看。
+
+改前（2026-10-15 用当前代码在临时库里实跑的输出）：
+
+```text
+$ ab search e2e
+[0270ece3] 全局 坑: 改了前端 UI 后要先重启 dev server 再跑 e2e，否则测的是旧代码
+```
+
+改后（示意）：
+
+```text
+$ ab search e2e
+[0270ece3] 全局 坑: 改了前端 UI 后要先重启 dev server 再跑 e2e，否则测的是旧代码
+  为什么: 上次 e2e 全绿但页面没变，查了半小时才发现 dev server 没热更新到构建产物
+  场景: 当改完前端代码要跑 e2e 时
+```
+
+- 正文全部打印；"为什么"最多 200 字，超出截断加"…"；有场景（`value.scenario` 或 `trigger`）才打"场景"行。
+- 条数上限不变（混合检索默认 8 条）。8 条全展开约 1500～2500 字，比现在多 2～3 倍，仍在一次工具输出可接受的范围。
+- 不加开关（§2.2 复杂度纪律）；要看来源和近邻仍用 `ab get`。
+- 怎么验收：同 (i) 的题目，比较 agent 读完搜索结果后还要不要再 `ab get`、答对率有没有变。
 
 ---
 
@@ -1420,6 +1552,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-10-15 新增两个 CANDIDATE 设计（未授权实现，用户说"开始实现"后才写代码）：§8.6 话题结束时一步式沉淀——静置约 20 分钟、上下文压缩、会话结束三个触发，整段话题加前文交给宿主自己的子模型一次完成抽取和判断（`src/onepass.ts`），记下来源定位点范围、触发方式、`prompt_version` 和模型；三个宿主今天能用的事件已按官方文档和本机版本核对（Claude Code `PreCompact`/`SessionEnd`、Codex `PreCompact`/`SessionEnd`（闲置 30 分钟也触发）、Pi `session_before_compact`/`session_shutdown`），都没有现成的 20 分钟静置事件，建议在下一轮的 capture hook 里判断。§11.5 两个读路径小改动——brief 点出几类先 `ab search` 的情况；`ab search` 结果显示正文全文、为什么、场景，附改前改后示例。依据：用户 2026-10-15"一个主题的对话完了再抽""可以"、pstack 简化方向、场景目录评测（`docs/eval/10`）不如一次 `ab search`。一步式与两步式对比（`docs/eval/07`）还没跑完，§8.6 第 6 点以它为前提。
 - 2026-10-15 评测记录归档：把截至今天的所有评测（检索门槛 v1、每轮召回准确率与资格策略、防记错一次性授权、预检与引用核验、价值标准抽取门、审稿评审团 v1～v6/主审/单审/Haiku、一步式与两步式重放（未完成）、图 1 跳、场景层模拟、场景目录开工背景评测）整理到 `docs/eval/`：一篇索引加每项一篇，写明问题、数据（怎么构造、种子、划分、谁标注）、方法、复现命令、结果、结论和据此做的决定、保留意见。数据和脚本在 `eval/<名称>/`，均已脱敏；库快照、完整记忆导出和转录不进仓库，只留在本地。场景目录（PR #56）评测结论是不如一次 `ab search`，PR 搁置。
 - 2026-10-15 agent 的 `ab remember` 也走候选区（v3）：用户发现 Claude Code 主模型仍按全局说明在干活中直接 `ab remember`，绕过了"快模型抽取 → 后台审稿"的流程（#53 只改了自动抽取）。现在不带 `--confirmed` 的 `ab remember` 写进候选区（`candidate`），等审稿；`--confirmed`（用户明确要记）照旧直接生效；新增 `--direct` 只给人工迁移数据用（写入事件带 `direct: true`，`ab audit agent-remember` 不会把它当成 agent 自记移进候选区）；`AB_STAGING=off` 同样回到旧行为。brief 提示改为"干活时不用记，后台会自动抽取并审稿；只有用户明确要你记时才用 `ab remember --confirmed`"。新增 `stage` 事件（stage/unstage，可撤销，用户确认过的条目投影时忽略）、`ab stage <id> [--undo]` 和 `ab audit agent-remember --since <时间> [--apply]`，用来把候选区上线后 agent 直接写进正式库、未经用户确认的条目移回候选区。
 - 2026-10-13 Pensieve 导入的关系判定可补判：首次真实导入时有 2 批判定调用出错，而重导时导入条都是"未变"，原先不会再判，出错的就永远漏判。现在未变的导入条只要还没有关系判定结果（related 为空）就重新进判定；判定出错把原因（前 5 条）打印出来。没有足够相近邻居的条目只做向量近邻查询，不调模型。
