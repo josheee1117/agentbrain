@@ -1,10 +1,10 @@
 {
   "panel": [
-    {"name": "sol", "baseUrl": "http://127.0.0.1:8317/v1", "model": "gpt-6.1-sol", "keyService": "codex-cpa-local-api-key", "concurrency": 1},
-    {"name": "ark", "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3", "model": "deepseek-v4-pro", "keyService": "agentbrain-extract", "concurrency": 1},
-    {"name": "qwen", "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen3.8-max-0902", "keyService": "agentbrain-embedding", "concurrency": 1, "extraBody": {"enable_thinking": false}}
+    {"name": "astra", "baseUrl": "http://127.0.0.1:8317/v1", "model": "gpt-6-astra", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "medium"}},
+    {"name": "grok", "baseUrl": "http://127.0.0.1:8317/v1", "model": "grok-latest", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "xhigh"}},
+    {"name": "deepseek", "baseUrl": "http://127.0.0.1:8317/v1", "model": "deepseek-v4-pro", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "max"}}
   ],
-  "arbiter": "sol",
+  "arbiter": {"name": "sol", "baseUrl": "http://127.0.0.1:8317/v1", "model": "gpt-6.1-sol", "keyService": "codex-cpa-local-api-key", "concurrency": 1},
   "batchSize": 10,
   "maxBatches": 3
 }
