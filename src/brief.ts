@@ -120,8 +120,8 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
 
   const tails = [
     worker
-      ? "你是被派活的子代理：不写记忆，新坑写进汇报，由主会话决定是否记下。搜索用 ab search，看一条用 ab get。"
-      : "记住用 ab remember，搜索用 ab search，看一条用 ab get。",
+      ? "你是被派活的子代理：不写记忆，后台会从会话里自动抽取。搜索用 ab search，看一条用 ab get。"
+      : "干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。搜索用 ab search，看一条用 ab get。",
   ];
   const auto = pending.filter((p) => p.origin === "extract").length;
   if (pending.length && !worker)
