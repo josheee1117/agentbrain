@@ -309,3 +309,23 @@ test("primary 模式：配置校验；参考意见先跑并附给主审；结论
   const [u] = await judgeBatchPrimary([cand("a")], { name: "a", chat: dead }, [{ name: "b", chat: adv }], []);
   assert.equal(u.decision.route, "undecided");
 });
+
+test("primary 模式没有参考成员（主审单独判）：配置合法；不附空的参考意见块，提示词同普通审稿人", async () => {
+  const m = (name: string) => ({ name, baseUrl: "http://x", model: "m", keyService: `k-${name}` });
+  const cfg = validateReviewConfig({ mode: "primary", panel: [m("a")], primary: "a" });
+  assert.ok(!("error" in cfg) && cfg.mode === "primary" && cfg.panel.length === 1);
+  let seen = "";
+  let sys = "";
+  const primary: Chat = async (msgs) => {
+    sys = msgs[0].content!;
+    seen = msgs[1].content!;
+    return { message: { role: "assistant", content: JSON.stringify({ verdicts: [{ id: "c1", verdict: "discard", class: "none", reason: "流水账" }] }) }, tokens: 1 };
+  };
+  const stats: CallStat[] = [];
+  const [r] = await judgeBatchPrimary([cand("a")], { name: "a", chat: primary }, [], stats);
+  assert.doesNotMatch(seen, /参考意见|<advice/);
+  assert.doesNotMatch(sys, /参考意见/);
+  assert.equal(r.decision.route, "primary");
+  assert.deepEqual(r.votes.map((v) => v.name), ["a"]);
+  assert.equal(stats.length, 1);
+});

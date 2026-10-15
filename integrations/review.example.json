@@ -2,9 +2,16 @@
   "mode": "primary",
   "primary": "astra",
   "panel": [
-    {"name": "astra", "baseUrl": "http://127.0.0.1:8317/v1", "model": "gpt-6-astra", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "medium"}},
-    {"name": "grok", "baseUrl": "http://127.0.0.1:8317/v1", "model": "grok-latest", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "xhigh"}},
-    {"name": "deepseek", "baseUrl": "http://127.0.0.1:8317/v1", "model": "deepseek-v4-pro", "keyService": "codex-cpa-local-api-key", "concurrency": 1, "extraBody": {"reasoning_effort": "max"}}
+    {
+      "name": "astra",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "model": "gpt-6-astra",
+      "keyService": "codex-cpa-local-api-key",
+      "concurrency": 1,
+      "extraBody": {
+        "reasoning_effort": "medium"
+      }
+    }
   ],
   "batchSize": 10,
   "maxBatches": 3

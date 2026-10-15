@@ -157,8 +157,8 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       u.say(`已写 ${extractPath}`);
     }
     if (want("panel")) {
-      u.say("\n【2/5】审稿团：先填各家模型，再选评审方式（primary：一位主审 + 参考意见；panel：投票 + 仲裁）");
-      const n = Number(await u.ask("几家", String(review.panel?.length || 3))) || 3;
+      u.say("\n【2/5】审稿团：先填各家模型，再选评审方式（primary：一位主审，可另加几家只给参考意见；panel：投票 + 仲裁）。默认 1 家主审单独判");
+      const n = Number(await u.ask("几家", String(review.panel?.length || 1))) || 1;
       const panel: PanelMember[] = [];
       for (let i = 0; i < n; i++) {
         const old = review.panel?.[i] ?? {};

@@ -475,7 +475,7 @@ export function renderAdvice(c: CandidateInput, cid: string, advice: { name: str
   return `<advice for="${cid}">\n${lines.join("\n")}\n</advice>`;
 }
 
-/** primary 模式判一批：参考意见先跑（并行、互不可见），再把意见附给主审；主审的结论就是最终结论，不仲裁。主审没给出有效结论的条目为未决。 */
+/** primary 模式判一批（advisors 可以为空 = 主审单独判）：参考意见先跑（并行、互不可见），再把意见附给主审；主审的结论就是最终结论，不仲裁。主审没给出有效结论的条目为未决。 */
 export async function judgeBatchPrimary(batch: CandidateInput[], primary: Judge, advisors: Judge[], stats: CallStat[]): Promise<CurateResult[]> {
   const r = renderCandidates(batch);
   const raw = await Promise.all(
@@ -489,9 +489,11 @@ export async function judgeBatchPrimary(batch: CandidateInput[], primary: Judge,
     const back = new Map([...r.neighborIds].filter(([k]) => k.startsWith(`${cid}:`)).map(([k, v]) => [v, k.slice(cid.length + 1)]));
     return renderAdvice(c, cid, advisors.map((m, i) => ({ name: m.name, j: adv[i].get(c.id) ?? null })), back);
   });
-  const prompt = `${r.prompt}\n\n其他审稿人的参考意见（不投票）：\n${advice.join("\n")}`;
+  // 没有参考成员（主审单独判）时：不附空的 advice 块，也不提"参考意见"，提示词与普通审稿人一致
+  const solo = advisors.length === 0;
+  const prompt = solo ? r.prompt : `${r.prompt}\n\n其他审稿人的参考意见（不投票）：\n${advice.join("\n")}`;
   const pinv = new Map<string, string>();
-  const ptxt = await timed(primary.name, "judge", () => primary.chat([{ role: "system", content: PRIMARY_SYSTEM }, { role: "user", content: prompt }], { json: true }), stats);
+  const ptxt = await timed(primary.name, "judge", () => primary.chat([{ role: "system", content: solo ? JUDGE_SYSTEM : PRIMARY_SYSTEM }, { role: "user", content: prompt }], { json: true }), stats);
   const pj = parseJudgements(ptxt, r.ids, r.neighborIds, batch, pinv);
   return batch.map((c) => {
     const pv = pj.get(c.id) ?? null;
