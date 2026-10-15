@@ -1,0 +1,155 @@
+{
+ "at": "2026-10-15T01:58:50.513Z",
+ "panel": [
+  "astra:gpt-6-astra",
+  "grok:grok-latest",
+  "deepseek:deepseek-v4-pro"
+ ],
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 1457074,
+ "all": {
+  "n": 60,
+  "discard_useless": "14/22 = 64%",
+  "keep_useful": "25/38 = 66%",
+  "undecided": 7,
+  "arbiter_rate": "43/60 = 72%",
+  "arbiter_decides_fate": "24/60 = 40%",
+  "arbiter_wording_only": "19/60 = 32%",
+  "unanimous": "10/60 = 17%",
+  "panel_admit_split": "27/60 = 45%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "46/60 = 77%",
+    "discard_useless": "16/22 = 73%",
+    "keep_useful": "30/38 = 79%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "34/60 = 57%",
+    "discard_useless": "12/22 = 55%",
+    "keep_useful": "22/38 = 58%",
+    "invalid": 0
+   },
+   "deepseek": {
+    "vs_gold": "38/60 = 63%",
+    "discard_useless": "7/22 = 32%",
+    "keep_useful": "31/38 = 82%",
+    "invalid": 1
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "40/60 = 67%",
+   "astra~deepseek": "42/60 = 70%",
+   "grok~deepseek": "43/60 = 72%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "12/15 = 80%",
+  "keep_useful": "12/15 = 80%",
+  "undecided": 0,
+  "arbiter_rate": "22/30 = 73%",
+  "arbiter_decides_fate": "13/30 = 43%",
+  "arbiter_wording_only": "9/30 = 30%",
+  "unanimous": "8/30 = 27%",
+  "panel_admit_split": "13/30 = 43%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "26/30 = 87%",
+    "discard_useless": "13/15 = 87%",
+    "keep_useful": "13/15 = 87%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "17/30 = 57%",
+    "discard_useless": "10/15 = 67%",
+    "keep_useful": "7/15 = 47%",
+    "invalid": 0
+   },
+   "deepseek": {
+    "vs_gold": "18/30 = 60%",
+    "discard_useless": "6/15 = 40%",
+    "keep_useful": "12/15 = 80%",
+    "invalid": 1
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "21/30 = 70%",
+   "astra~deepseek": "22/30 = 73%",
+   "grok~deepseek": "20/30 = 67%"
+  }
+ },
+ "fresh": {
+  "n": 30,
+  "discard_useless": "2/7 = 29%",
+  "keep_useful": "13/23 = 57%",
+  "undecided": 7,
+  "arbiter_rate": "21/30 = 70%",
+  "arbiter_decides_fate": "11/30 = 37%",
+  "arbiter_wording_only": "10/30 = 33%",
+  "unanimous": "2/30 = 7%",
+  "panel_admit_split": "14/30 = 47%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "20/30 = 67%",
+    "discard_useless": "3/7 = 43%",
+    "keep_useful": "17/23 = 74%",
+    "invalid": 0
+   },
+   "grok": {
+    "vs_gold": "17/30 = 57%",
+    "discard_useless": "2/7 = 29%",
+    "keep_useful": "15/23 = 65%",
+    "invalid": 0
+   },
+   "deepseek": {
+    "vs_gold": "20/30 = 67%",
+    "discard_useless": "1/7 = 14%",
+    "keep_useful": "19/23 = 83%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {
+   "astra~grok": "19/30 = 63%",
+   "astra~deepseek": "20/30 = 67%",
+   "grok~deepseek": "23/30 = 77%"
+  }
+ },
+ "cost": {
+  "astra/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 74261,
+   "p50_ms": 37424,
+   "max_ms": 65498,
+   "errors": []
+  },
+  "deepseek/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 135511,
+   "p50_ms": 165944,
+   "max_ms": 227177,
+   "errors": []
+  },
+  "grok/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 167241,
+   "p50_ms": 425702,
+   "max_ms": 525163,
+   "errors": []
+  },
+  "sol/arbiter": {
+   "calls": 50,
+   "failed": 7,
+   "tokens": 147260,
+   "p50_ms": 21639,
+   "max_ms": 65395,
+   "errors": [
+    "模型接口 HTTP 503: auth_unavailable: no auth available (providers=codex, model=gpt-6.1-sol; last upstream error: server_is_overloaded: Our servers are currently overloaded. Please try again later.)"
+   ]
+  }
+ }
+}

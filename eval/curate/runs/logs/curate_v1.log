@@ -1,0 +1,147 @@
+{
+ "at": "2026-10-14T09:19:42.970Z",
+ "panel": [
+  "sol:gpt-6.1-sol",
+  "ark:deepseek-v4-pro",
+  "qwen:qwen3.8-max-0902"
+ ],
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 720231,
+ "all": {
+  "n": 60,
+  "discard_useless": "0/22 = 0%",
+  "keep_useful": "0/38 = 0%",
+  "undecided": 60,
+  "arbiter_rate": "0/60 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "21/60 = 35%",
+    "discard_useless": "10/22 = 45%",
+    "keep_useful": "11/38 = 29%",
+    "invalid": 30
+   },
+   "ark": {
+    "vs_gold": "39/60 = 65%",
+    "discard_useless": "4/22 = 18%",
+    "keep_useful": "35/38 = 92%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "0/60 = 0%",
+    "discard_useless": "0/22 = 0%",
+    "keep_useful": "0/38 = 0%",
+    "invalid": 60
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "19/60 = 32%",
+   "sol~qwen": "0/60 = 0%",
+   "ark~qwen": "0/60 = 0%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "0/15 = 0%",
+  "keep_useful": "0/15 = 0%",
+  "undecided": 30,
+  "arbiter_rate": "0/30 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "21/30 = 70%",
+    "discard_useless": "10/15 = 67%",
+    "keep_useful": "11/15 = 73%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "16/30 = 53%",
+    "discard_useless": "3/15 = 20%",
+    "keep_useful": "13/15 = 87%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/15 = 0%",
+    "keep_useful": "0/15 = 0%",
+    "invalid": 30
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "19/30 = 63%",
+   "sol~qwen": "0/30 = 0%",
+   "ark~qwen": "0/30 = 0%"
+  }
+ },
+ "fresh": {
+  "n": 30,
+  "discard_useless": "0/7 = 0%",
+  "keep_useful": "0/23 = 0%",
+  "undecided": 30,
+  "arbiter_rate": "0/30 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/7 = 0%",
+    "keep_useful": "0/23 = 0%",
+    "invalid": 30
+   },
+   "ark": {
+    "vs_gold": "23/30 = 77%",
+    "discard_useless": "1/7 = 14%",
+    "keep_useful": "22/23 = 96%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/7 = 0%",
+    "keep_useful": "0/23 = 0%",
+    "invalid": 30
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "0/30 = 0%",
+   "sol~qwen": "0/30 = 0%",
+   "ark~qwen": "0/30 = 0%"
+  }
+ },
+ "cost": {
+  "sol/judge": {
+   "calls": 6,
+   "failed": 3,
+   "tokens": 36746,
+   "p50_ms": 50360,
+   "max_ms": 53393,
+   "errors": [
+    "模型接口限流 429"
+   ]
+  },
+  "ark/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 126880,
+   "p50_ms": 159498,
+   "max_ms": 336138,
+   "errors": []
+  },
+  "qwen/judge": {
+   "calls": 6,
+   "failed": 6,
+   "tokens": 0,
+   "p50_ms": 360018,
+   "max_ms": 360032,
+   "errors": [
+    "模型请求失败: The operation was aborted due to timeout"
+   ]
+  },
+  "sol/arbiter": {
+   "calls": 60,
+   "failed": 60,
+   "tokens": 0,
+   "p50_ms": 70,
+   "max_ms": 116,
+   "errors": [
+    "模型接口限流 429"
+   ]
+  }
+ }
+}

@@ -1,0 +1,147 @@
+{
+ "at": "2026-10-14T09:41:22.728Z",
+ "panel": [
+  "sol:gpt-6.1-sol",
+  "ark:deepseek-v4-pro",
+  "qwen:qwen3.8-max-0902"
+ ],
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 405286,
+ "all": {
+  "n": 60,
+  "discard_useless": "0/22 = 0%",
+  "keep_useful": "0/38 = 0%",
+  "undecided": 60,
+  "arbiter_rate": "0/60 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "0/60 = 0%",
+    "discard_useless": "0/22 = 0%",
+    "keep_useful": "0/38 = 0%",
+    "invalid": 60
+   },
+   "ark": {
+    "vs_gold": "0/60 = 0%",
+    "discard_useless": "0/22 = 0%",
+    "keep_useful": "0/38 = 0%",
+    "invalid": 60
+   },
+   "qwen": {
+    "vs_gold": "30/60 = 50%",
+    "discard_useless": "13/22 = 59%",
+    "keep_useful": "17/38 = 45%",
+    "invalid": 13
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "0/60 = 0%",
+   "sol~qwen": "0/60 = 0%",
+   "ark~qwen": "0/60 = 0%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "0/15 = 0%",
+  "keep_useful": "0/15 = 0%",
+  "undecided": 30,
+  "arbiter_rate": "0/30 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/15 = 0%",
+    "keep_useful": "0/15 = 0%",
+    "invalid": 30
+   },
+   "ark": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/15 = 0%",
+    "keep_useful": "0/15 = 0%",
+    "invalid": 30
+   },
+   "qwen": {
+    "vs_gold": "14/30 = 47%",
+    "discard_useless": "8/15 = 53%",
+    "keep_useful": "6/15 = 40%",
+    "invalid": 7
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "0/30 = 0%",
+   "sol~qwen": "0/30 = 0%",
+   "ark~qwen": "0/30 = 0%"
+  }
+ },
+ "fresh": {
+  "n": 30,
+  "discard_useless": "0/7 = 0%",
+  "keep_useful": "0/23 = 0%",
+  "undecided": 30,
+  "arbiter_rate": "0/30 = 0%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/7 = 0%",
+    "keep_useful": "0/23 = 0%",
+    "invalid": 30
+   },
+   "ark": {
+    "vs_gold": "0/30 = 0%",
+    "discard_useless": "0/7 = 0%",
+    "keep_useful": "0/23 = 0%",
+    "invalid": 30
+   },
+   "qwen": {
+    "vs_gold": "16/30 = 53%",
+    "discard_useless": "5/7 = 71%",
+    "keep_useful": "11/23 = 48%",
+    "invalid": 6
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "0/30 = 0%",
+   "sol~qwen": "0/30 = 0%",
+   "ark~qwen": "0/30 = 0%"
+  }
+ },
+ "cost": {
+  "qwen/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 61018,
+   "p50_ms": 20895,
+   "max_ms": 35222,
+   "errors": []
+  },
+  "sol/judge": {
+   "calls": 6,
+   "failed": 6,
+   "tokens": 0,
+   "p50_ms": 12,
+   "max_ms": 17,
+   "errors": [
+    "模型接口限流 429"
+   ]
+  },
+  "ark/judge": {
+   "calls": 6,
+   "failed": 6,
+   "tokens": 0,
+   "p50_ms": 265,
+   "max_ms": 3490,
+   "errors": [
+    "模型接口限流 429"
+   ]
+  },
+  "sol/arbiter": {
+   "calls": 60,
+   "failed": 60,
+   "tokens": 0,
+   "p50_ms": 12,
+   "max_ms": 51,
+   "errors": [
+    "模型接口限流 429"
+   ]
+  }
+ }
+}

@@ -1,0 +1,591 @@
+{
+ "summary": {
+  "n": 31,
+  "brief": 0.065,
+  "briefChars": 1674.667,
+  "pickHit": 0.516,
+  "pickNone": 5,
+  "open": 0.548,
+  "openChars": 3213.516,
+  "byProject": {
+   "data-asset": {
+    "n": 12,
+    "brief": 0.083,
+    "pickHit": 0.583,
+    "open": 0.583
+   },
+   "ai-data": {
+    "n": 12,
+    "brief": 0.083,
+    "pickHit": 0.333,
+    "open": 0.417
+   },
+   "insuranceagent": {
+    "n": 7,
+    "brief": 0,
+    "pickHit": 0.714,
+    "open": 0.714
+   }
+  }
+ },
+ "rows": [
+  {
+   "qid": "data-asset-01",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只有场景标题和无关规则，未提及 tableOwner 置空告警、ADR04 版本及替代关系等任何关键点。"
+   },
+   "pick": "0d2703",
+   "hit": true,
+   "openChars": 2413,
+   "open": {
+    "score": 1,
+    "reason": "条目 e8d8c189 明确写出未匹配时置空告警、不中断同步、靠全量 reconcile 恢复，并说明 2026-10-08 ADR04 替代 2026-09-24 版『保留源值』，且已推 dev_jdk17。"
+   }
+  },
+  {
+   "qid": "data-asset-02",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只出现了场景标题「数仓表报表引用与 MaxCompute 缓存」，未给出报表引用需带 relationDesc/reportId/reportName 及禁用未删报表也要返回等具体约定。"
+   },
+   "pick": "c62a61",
+   "hit": true,
+   "openChars": 2073,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 [1b998052] 明确写出「查看引用」接口报表引用必须含 relationDesc=\"报表\"、reportId、reportName，且禁用但未删除的报表也需返回，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-04",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1915,
+   "brief": {
+    "score": 1,
+    "reason": "上下文条目 a32ab472 明确写出 field_code 唯一索引、已删行占编码、按领域前缀最大序号+1 生成、手工补数据勿撞编码等全部关键点。"
+   },
+   "pick": "573530",
+   "hit": true,
+   "openChars": 1559,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 [a32ab472]/[0de1cece] 明确写出 field_code 唯一索引、已删行仍占编码、平台按领域前缀最大序号+1 生成编码、手工补数据别和已删行撞这三个关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-05",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文仅列出场景标题和“用 ab search 查”等提示，未出现 DerivedDimensionSlots、querySql.js 哨兵占 dimN、slotDiffersFromSortOrder 等任何关键点。"
+   },
+   "pick": "7e5424",
+   "hit": false,
+   "openChars": 5585,
+   "open": {
+    "score": 0,
+    "reason": "上下文只提到「空维度」哨兵存在两种存法，未涉及 DerivedDimensionSlots、querySql.js 的 dimN 排序差异或 slotDiffersFromSortOrder 检测不到该冲突等关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-07",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文没有任何关于开放接口鉴权凭据、独立凭据、401 fail-closed 或 QmOpenApi 行为的内容。"
+   },
+   "pick": "df7a4d",
+   "hit": false,
+   "openChars": 5146,
+   "open": {
+    "score": 0,
+    "reason": "上下文未提及开放接口鉴权凭据、独立凭据或 QmOpenApi / 401 fail-closed 等任何关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-08",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全没有提到 Matt Pocock skill、issue tracker、GitHub 仓库地址、pensieve 格式或 .pensieve/short-term/decisions/ 等任何关键点。"
+   },
+   "pick": "10433c",
+   "hit": false,
+   "openChars": 3978,
+   "open": {
+    "score": 0,
+    "reason": "上下文完全没有提及 Matt Pocock skill、GitHub tracker 地址或 .pensieve/short-term/decisions/ 格式，三个关键点均无覆盖。"
+   }
+  },
+  {
+   "qid": "data-asset-10",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "note",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只有场景标题和通用规则，未提及修饰词删除清理关联表、sqlExample/extraCondition 只存不执行、outdated flag 等任何关键点。"
+   },
+   "pick": "7e5424",
+   "hit": true,
+   "openChars": 5585,
+   "open": {
+    "score": 1,
+    "reason": "条目 [ec65b1ac] 明确写出去除修饰词需清理关联表、已改用 batchInsert、sqlExample/extraCondition 只存储不执行需上线前重评安全边界、版本联动用轻量 outdated flag 不自动级联且保存 INDICATOR 修饰词时须置回 0，全部关键点齐备。"
+   }
+  },
+  {
+   "qid": "data-asset-11",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全没有提及 indicatorType 字段或其编码差异、kind 字段等关键点。"
+   },
+   "pick": "7e5424",
+   "hit": true,
+   "openChars": 5585,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 [d0102761] 明确列出三套 indicatorType 编码及对外导出改用字符串 kind、直接透传数字会把原子当派生的要求，关键点全覆盖。"
+   }
+  },
+  {
+   "qid": "data-asset-13",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文未提供任何关于异步任务失败标记/补偿状态事务边界安排的规则或说明，仅有其他项目坑与场景标题。"
+   },
+   "pick": "df7a4d",
+   "hit": false,
+   "openChars": 5146,
+   "open": {
+    "score": 0,
+    "reason": "上下文列出的规则全是反射拷贝、normalize、fail-fast 校验、响应包装、分页、Feign 等，完全未提及异步任务失败标记/补偿状态的事务边界、REQUIRES_NEW 或短事务拆分等关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-14",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出场景标题『指标口径与语义目录导出』，没有任何关于计算方式字段如何生成和呈现的具体内容。"
+   },
+   "pick": "7e5424",
+   "hit": true,
+   "openChars": 5585,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目[dd03a351]明确写出：导出指标口径时'计算方式'要拼成人类可读的完整口径文本（含计算方式/聚合函数、计算参数、时间周期、维度、依赖指标条件、修饰词）并合并到单个字段，不要用多个原始字段列表达，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-16",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只在场景目录里出现“指标口径与语义目录导出”这个标题，没有任何关于 selectActive/del_flag=0 建 Map、status==1 过滤下移到 Java 侧、删掉 selectOnline 的具体内容。"
+   },
+   "pick": "7e5424",
+   "hit": true,
+   "openChars": 5585,
+   "open": {
+    "score": 1,
+    "reason": "场景 [7e5424] 条目 [e3de2a84] 明确写出映射改用全部未删除派生（selectActive，del_flag=0）建 Map、status==1 过滤下移到 Java 侧、删掉 selectOnline、变量值过滤从全量 Map 取名称，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "data-asset-17",
+   "project": "data-asset",
+   "split": "tune",
+   "kind": "note",
+   "briefChars": 1915,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出规则与场景标题，完全未提及企微 OAuth、CRM 权威、绑定关系或 Feign 接口等关键信息。"
+   },
+   "pick": "none",
+   "hit": false,
+   "openChars": 0,
+   "open": {
+    "score": 0,
+    "reason": "上下文只列出规则与场景标题，完全未提及企微 OAuth、CRM 权威、绑定关系或 Feign 接口等关键信息。"
+   }
+  },
+  {
+   "qid": "ai-data-01",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了场景标题和“用 ab search 查”的提示，未出现只读快照接口、AssetSnapshot 表、pgvector/text-embedding-v4 1024 维及不复制表结构/不接 RagFlow/MCP 等关键点。"
+   },
+   "pick": "8a57ce",
+   "hit": false,
+   "openChars": 1019,
+   "open": {
+    "score": 0,
+    "reason": "上下文只提到 pgvector 部署镜像和修饰词样例缺失等无关规则，完全没有 AssetSnapshot 表、只读快照定时拉取、text-embedding-v4 1024 维以及不接 RagFlow/MCP 等关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-02",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出了场景标题「派生指标归一化与阻断规则（10 条）」，没有任何关于阻断层级、DUPLICATE_CODE、combosOf 或 DERIVED_BLOCKED 的具体内容。"
+   },
+   "pick": "d5320c",
+   "hit": true,
+   "openChars": 3358,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 [580993ad] 明确写出阻断只在派生一层（DUPLICATE_CODE，message 写明周期/维度字段重复及 code）、周期与字段只告警、其余派生不受影响、不进 combosOf、locate 返回 DERIVED_BLOCKED，关键点全覆盖。"
+   }
+  },
+  {
+   "qid": "ai-data-04",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全未提及 SSO_FLOW、统一登录、旧通道或网关地址等关键点，只有无关的规则条目。"
+   },
+   "pick": "none",
+   "hit": false,
+   "openChars": 0,
+   "open": {
+    "score": 0,
+    "reason": "上下文完全未提及 SSO_FLOW、统一登录、旧通道或网关地址等关键点，只有无关的规则条目。"
+   }
+  },
+  {
+   "qid": "ai-data-05",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了「本地 dev server 与 .next 缓存」的场景标题，未给出停掉子进程、释放端口等任何关键点内容。"
+   },
+   "pick": "df0a30",
+   "hit": false,
+   "openChars": 1914,
+   "open": {
+    "score": 0,
+    "reason": "上下文只讲 .next 缓存、重启 dev server、WATCHPACK 等问题，完全没有提到任务收尾必须停掉自起的 dev server/worker 子进程并确认端口释放。"
+   }
+  },
+  {
+   "qid": "ai-data-07",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只出现「Polar 只读与结果表查询口径」场景标题，未给出 polar.mbkj_ads、TRINO_SCHEMA、SEMANTIC_TARGETS、每日整表覆盖及 mbkj_ads_test 等任何关键点。"
+   },
+   "pick": "09150f",
+   "hit": true,
+   "openChars": 5575,
+   "open": {
+    "score": 1,
+    "reason": "条目[4efd9fd6]明确写出 askdata 改读 polar.mbkj_ads、Trino 只读只放行 SELECT、TRINO_SCHEMA=mbkj_ads、SEMANTIC_TARGETS polar→polar.mbkj_ads、每天整表覆盖只留最新一天、本机 e2e 仍用 mbkj_ads_test，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-08",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只有场景标题「派生指标归一化与阻断规则」及 ab search 提示，未写出 composite 结果表未定、返回 DATA_SOURCE_NOT_CONFIGURED、搜索不得标可查等关键点。"
+   },
+   "pick": "d5320c",
+   "hit": false,
+   "openChars": 3358,
+   "open": {
+    "score": 0,
+    "reason": "上下文只涉及派生指标的槽位、重复编码与阻断规则，未提及结果表结构未定、查询返回 DATA_SOURCE_NOT_CONFIGURED 或搜索结果不得标为可查。"
+   }
+  },
+  {
+   "qid": "ai-data-10",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出场景标题『ai-data e2e 运行与验收规则』，未给出 QUERY_EXECUTOR=trino 的任何具体行为差异（dt 口径、返回行顺序、文案变化）。"
+   },
+   "pick": "808388",
+   "hit": false,
+   "openChars": 7655,
+   "open": {
+    "score": 0,
+    "reason": "上下文完全没有提到 QUERY_EXECUTOR/trino、SEMANTIC_TODAY、dt 计算、返回行顺序或登录页与澄清提示文案差异等关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-11",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1954,
+   "brief": {
+    "score": 1,
+    "reason": "上下文明确写出「ai-data 开发以 dev 分支为准：新分支一律从 origin/dev 拉，不从 main 拉」，覆盖全部关键点。"
+   },
+   "pick": "none",
+   "hit": false,
+   "openChars": 0,
+   "open": {
+    "score": 1,
+    "reason": "上下文明确写出「ai-data 开发以 dev 分支为准：新分支一律从 origin/dev 拉，不从 main 拉」，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-13",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只给出相关场景标题和“用 ab search 查”的提示，未写出测试指标目录来自生产快照、导入前清空表、同步间隔极长及强制同步覆盖等关键点。"
+   },
+   "pick": "8e7f8f",
+   "hit": false,
+   "openChars": 1817,
+   "open": {
+    "score": 0,
+    "reason": "上下文只提到目录快照与发布顺序等相关话题，未给出测试指标目录来自生产快照、导入前清空三张表、同步间隔极长/保护阈值、管理员强制同步会覆盖等任何关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-14",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了场景标题（如查询编译与目录读取一致性），没有任何关于 QueryService.catalog 重载方式、整体替换或只含在线上线条目的具体内容。"
+   },
+   "pick": "8e7f8f",
+   "hit": false,
+   "openChars": 1817,
+   "open": {
+    "score": 0,
+    "reason": "上下文只提到 QueryService 在模块加载时 new 导致构建失败，完全没有重载时整体替换、只含在线上线条目等关键点。"
+   }
+  },
+  {
+   "qid": "ai-data-16",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出一个场景标题「本地 dev server 与 .next 缓存（5 条）」，没有写出 Watchpack/EMFILE、WATCHPACK_POLLING=true pnpm dev 或 e2e 属环境故障等任何关键点。"
+   },
+   "pick": "df0a30",
+   "hit": true,
+   "openChars": 1914,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 d7c3b93c 明确写出 Watchpack 报 EMFILE 反复重启、用 WATCHPACK_POLLING=true pnpm dev 绕过、且失败非产品缺陷，与标准答案关键点完全一致。"
+   }
+  },
+  {
+   "qid": "ai-data-17",
+   "project": "ai-data",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1954,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列出了「汇报、分支与 ADR 工作流规范」场景标题，未给出需更新 docs/adr/ 下 ADR 与 README 当前状态等任何关键点细节。"
+   },
+   "pick": "612462",
+   "hit": true,
+   "openChars": 2284,
+   "open": {
+    "score": 1,
+    "reason": "条目[3b1da41c]明确写出提交时需更新 docs/adr/ 相关 ADR 与 README 当前状态，且 ADR 为一个决定一个文件、含背景/决定/现状/下一步，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "insuranceagent-01",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只出现场景标题「标签同步架构与 pending_sync 补偿」，未写出本地事务表 tag_pending_sync、同事务写入、成功删除、定时 Job 补偿等任何关键点。"
+   },
+   "pick": "b7a308",
+   "hit": true,
+   "openChars": 2104,
+   "open": {
+    "score": 1,
+    "reason": "上下文[63f99b47]明确写出在 upsertOneGroup 同一事务内写 tag_pending_sync、syncOne 成功后删除、定时 Job 扫描残留记录补偿重试三个关键点。"
+   }
+  },
+  {
+   "qid": "insuranceagent-02",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文仅有“object_id 改造”场景标题，未写出按 ID 值判断、TagGroupService.toObjectId 及全量同步/数据就绪/DTS 三条共用路径等关键点。"
+   },
+   "pick": "50cc98",
+   "hit": true,
+   "openChars": 4641,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目 89c7d7d2 明确写出按 ID 值统一判断、逻辑集中在 TagGroupService.toObjectId，且全量同步/数据就绪/DTS 三条路径共用，关键点全覆盖。"
+   }
+  },
+  {
+   "qid": "insuranceagent-04",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "pitfall",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文完全未提到 JAVA_HOME、JDK 11 或编译环境准备相关内容。"
+   },
+   "pick": "none",
+   "hit": false,
+   "openChars": 0,
+   "open": {
+    "score": 0,
+    "reason": "上下文完全未提到 JAVA_HOME、JDK 11 或编译环境准备相关内容。"
+   }
+  },
+  {
+   "qid": "insuranceagent-05",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了场景目录标题并提示用 ab scene/ab search 查看，未给出 listByScene 的 sceneKey 约定。"
+   },
+   "pick": "50cc98",
+   "hit": true,
+   "openChars": 4641,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目[36dd48e4]明确写出 listByScene 在 object=cust 和 wework 时须使用不同 sceneKey，且注明这是因对象类型而异的业务硬约束。"
+   }
+  },
+  {
+   "qid": "insuranceagent-07",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "decision",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只在场景目录里出现『object_id 改造』的标题，未给出 bigint 改 varchar(64)、utf8mb4_bin、external_userid 字符串标识等任何关键点。"
+   },
+   "pick": "50cc98",
+   "hit": true,
+   "openChars": 4641,
+   "open": {
+    "score": 1,
+    "reason": "条目[3d8eeb42]明确写出企微 external_userid 为字符串标识、无稳定数字 ID 可替代，object_id 由 bigint 改为 varchar(64) utf8mb4_bin，并说明加 object_key 会导致查询逻辑分裂，覆盖全部关键点。"
+   }
+  },
+  {
+   "qid": "insuranceagent-08",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "note",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只列了标签同步等场景标题，完全没有文件 URL、FtpProvider、@SignedFileUrl、managed-url-auths 等关键点。"
+   },
+   "pick": "none",
+   "hit": false,
+   "openChars": 0,
+   "open": {
+    "score": 0,
+    "reason": "上下文只列了标签同步等场景标题，完全没有文件 URL、FtpProvider、@SignedFileUrl、managed-url-auths 等关键点。"
+   }
+  },
+  {
+   "qid": "insuranceagent-10",
+   "project": "insuranceagent",
+   "split": "tune",
+   "kind": "rule",
+   "briefChars": 1155,
+   "brief": {
+    "score": 0,
+    "reason": "上下文只有场景标题，未给出标签组推送与客户标签推送在 sync_wecom 过滤规则上的具体区别。"
+   },
+   "pick": "50cc98",
+   "hit": true,
+   "openChars": 4641,
+   "open": {
+    "score": 1,
+    "reason": "上下文条目[24bf7b77]明确写出标签组推送不检查 sync_wecom=1、推全部标签，客户标签推送仍只推 sync_wecom=1，覆盖全部关键点。"
+   }
+  }
+ ]
+}

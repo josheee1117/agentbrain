@@ -1,0 +1,417 @@
+[
+ {
+  "window_id": "34975417c59bb932fca01ebef067b59b06116bdfb5524e5338f688d4034a1888",
+  "project": "data-asset",
+  "chars": 22922,
+  "turns": 73,
+  "worker": true,
+  "neighbors": 4,
+  "refs": [
+   {
+    "id": "9888aac0-9e62-4c75-9c65-03f0cc26ccfa",
+    "set": "s30",
+    "n": 1,
+    "label": "有用"
+   }
+  ],
+  "sibling_count": 5,
+  "A": {
+   "extract_ms": 33064,
+   "extract_tokens": 18410,
+   "extract_raw_n": 1,
+   "valid_n": 1,
+   "dropped": {},
+   "judge_ms": 85553,
+   "judge_usd": 0.01014453,
+   "total_ms": 119186,
+   "n_cands": 1
+  },
+  "B": {
+   "ms": 203325,
+   "usd": 0.02607273,
+   "tokens": 69718,
+   "parse_ok": true,
+   "invalid": {},
+   "items": [
+    {
+     "action": "new",
+     "into": null,
+     "kind": "pitfall",
+     "class": "B",
+     "text": "核对派生指标的 dimN 槽位时，把前端复制查询 SQL（querySql.js）、开发脚本（developmentScript.js）和后端 DerivedDimensionSlots 三处对空维度哨兵是否占用 dimN 的处理逐条对照，不假设三处等价；发现分歧时先给出证据，请用户定以哪边为准。",
+     "scenario": "当修改派生指标维度到 dimN 槽位的计算，或比对复制 SQL 与开发脚本写入的维度对应关系时。",
+     "why": "语义目录导出的只读审查发现：后端 DerivedDimensionSlots 按语义目录导出契约（2026-10-10-ai-data-metric-sync-contract.md 第145–147行）先剔除空维度哨兵再占槽，开发脚本（deriveds/utils/developmentScript.js:27）也是这样写入的；而前端复制 SQL 的 querySql.js 第7行排序时没有剔除哨兵，第34行按数组位置生成 dimN。例如维度为[空维度(sortOrder=1)、门店(sortOrder=2)]、名称为门店_GMV 时，复制 SQL 输出 dim1=空维度、dim2=门店，后端输出门店占 slot=1；只有空维度时，复制 SQL 仍生成 dim1，后端没有槽位。派活的验收标准要求后端与 querySql.js 逐条等价，所以这一分歧被列为阻断项。依据为静态对照推演，未运行验证。",
+     "guidance": false,
+     "reason": "两处前后端实现对哨兵占槽的处理不一致，要逐条对照才能发现，且错位时不报错，以后改派生维度相关代码或核对复制 SQL 时会反复撞上。"
+    }
+   ],
+   "n_cands": 0
+  },
+  "matchA": {
+   "9888aac0-9e62-4c75-9c65-03f0cc26ccfa": "A1",
+   "078d7208-a5cb-4ad8-a849-02d95ec7e0a7": null,
+   "14b5df2b-fef0-48a8-90f0-1ee0bb13776d": null,
+   "fee075dd-02ec-41ab-b7bf-a8c2c3a00eda": null,
+   "b0e28087-c872-4868-96f4-2c772e1ff4ed": null
+  },
+  "matchB": {
+   "9888aac0-9e62-4c75-9c65-03f0cc26ccfa": null,
+   "078d7208-a5cb-4ad8-a849-02d95ec7e0a7": null,
+   "14b5df2b-fef0-48a8-90f0-1ee0bb13776d": null,
+   "fee075dd-02ec-41ab-b7bf-a8c2c3a00eda": null,
+   "b0e28087-c872-4868-96f4-2c772e1ff4ed": null
+  },
+  "match_usd": 0.0008971,
+  "outsA": [
+   {
+    "key": "A1",
+    "text": "对齐或评审派生维度槽位时要同时对照两处：后端 DerivedDimensionSlots 与开发脚本写数（developmentScript.js）一样先剔除空维度哨兵，前端复制 SQL（querySql.js）则保留哨兵占 dimN，所以含空维度的派生两边不等价，以后端为准、前端不改并记入契约；只看其中一处会把空维度+真实维度的情形误判为等价，而该并存情形 ai-data 本就阻断，只有纯空维度的派生归一成总计、结果不受影响。",
+    "how": "merge"
+   }
+  ],
+  "outsB": [
+   {
+    "key": "B1",
+    "text": "核对派生指标的 dimN 槽位时，把前端复制查询 SQL（querySql.js）、开发脚本（developmentScript.js）和后端 DerivedDimensionSlots 三处对空维度哨兵是否占用 dimN 的处理逐条对照，不假设三处等价；发现分歧时先给出证据，请用户定以哪边为准。",
+    "how": "new"
+   }
+  ]
+ },
+ {
+  "window_id": "e6629b1b5444fdad470fb0aa14db9e2cc70c8575c2f98997018941b074f76733",
+  "project": "pi-ops",
+  "chars": 47699,
+  "turns": 190,
+  "worker": true,
+  "neighbors": 5,
+  "refs": [
+   {
+    "id": "25fc47d4-44bc-4a57-b2b0-eb0d90664266",
+    "set": "s30",
+    "n": 2,
+    "label": "没用"
+   }
+  ],
+  "sibling_count": 3,
+  "A": {
+   "extract_ms": 75038,
+   "extract_tokens": 33102,
+   "extract_raw_n": 4,
+   "valid_n": 4,
+   "dropped": {},
+   "judge_ms": 190217,
+   "judge_usd": 0.01815013,
+   "total_ms": 265578,
+   "n_cands": 4
+  },
+  "B": {
+   "ms": 335827,
+   "usd": 0.04228799999999999,
+   "tokens": 111497,
+   "parse_ok": true,
+   "invalid": {},
+   "items": [
+    {
+     "action": "new",
+     "into": null,
+     "kind": "pitfall",
+     "class": "C",
+     "text": "为长任务挑选模型或网关通道时，不要只凭一句 OK 的小请求判定可用：要用接近真实任务体量的请求探测，并在派活前临近再测一次。",
+     "scenario": "当要为一个长时间运行的任务（例如派给子代理的执行者）挑选模型或网关通道、并想用探测确认它能用时。",
+     "why": "本次 cpa/gpt-5.6-sol 的小请求探测返回 ok 为 true、out 为 OK；之后把它派为执行者，启动瞬间就被 503 挡住；换成同体量的请求再测，返回“当前分组 default 下对于模型 gpt-5.6-sol 无可用渠道”。小请求通过只说明那一刻、那种负载能通，不能证明长任务能拿到渠道。",
+     "guidance": false,
+     "reason": "默认做法是先发一句小请求探活，在同一网关上会误判可用，白白浪费一轮派活。"
+    },
+    {
+     "action": "new",
+     "into": null,
+     "kind": "rule",
+     "class": "B",
+     "text": "给 apps/pi-runtime 换模型配置时，用环境变量 PI_CODING_AGENT_DIR 指向一个含 models.json 的目录，不要改全局 ~/.pi/agent，也不要改生产源码。",
+     "scenario": "当 apps/pi-runtime 要接入临时或实验室专用的模型配置、而默认会读全局 ~/.pi/agent 时。",
+     "why": "pi SDK 的 CreateModelRuntimeOptions 有 modelsPath?: string | null，但 pi-runtime 生产代码没有传它，默认读全局目录。本次为了实验室隔离，用 PI_CODING_AGENT_DIR 指到实验室的 pi-agent 目录，彩排走通了 SDK 真实路径（REHEARSAL_PASS，拿到真实回复）；这个入口是翻了好几轮 SDK 源码才找到的。",
+     "guidance": false,
+     "reason": "不知道这个入口的人会去改全局配置或翻 SDK 内部，这次为此耗了不少轮工具调用。"
+    },
+    {
+     "action": "new",
+     "into": null,
+     "kind": "pitfall",
+     "class": "C",
+     "text": "DataAsset 的业务报错（business.error）走 JFR 录制流，受 pi-ops.jfr.enabled 与 business-error-enabled 两个开关控制；关掉后业务报错会被静默丢弃，不告警也不计数。排查“业务报错没到中央”时，先核对这两个开关。",
+     "scenario": "当 DataAsset 的业务异常在中央看不到 business.error 事件，或要为压测、降噪而关掉 JFR 相关开关时。",
+     "why": "业务报错事件类默认 @Enabled(false)，BusinessErrorRecorder 里有 if (!event.isEnabled()) return;，开关关掉时事件不被启用，直接返回，既不告警也不计数，从外面看就像“没有业务报错”。这次能采到事件，只是因为这两个开关没被关。",
+     "guidance": false,
+     "reason": "这是静默失效点，报错看不出原因，下一个排查的人很可能先去怀疑录制流或中央，绕很大一圈。"
+    }
+   ],
+   "n_cands": 0
+  },
+  "matchA": {
+   "25fc47d4-44bc-4a57-b2b0-eb0d90664266": "A2",
+   "5b13a6cd-ab3b-4f1c-b6cc-93e5e6fc6198": "A1",
+   "9f0958ce-9567-467d-9474-f6e0322fda46": null
+  },
+  "matchB": {
+   "25fc47d4-44bc-4a57-b2b0-eb0d90664266": null,
+   "5b13a6cd-ab3b-4f1c-b6cc-93e5e6fc6198": "B1",
+   "9f0958ce-9567-467d-9474-f6e0322fda46": null
+  },
+  "match_usd": 0.00109669,
+  "outsA": [
+   {
+    "key": "A1",
+    "text": "探测模型可用性必须用接近真实任务的负载和上下文规模；极小 probe 会假阳性，小 probe 通过不等于长任务里真能用，探测结论只能说明当下。",
+    "how": "keep"
+   },
+   {
+    "key": "A2",
+    "text": "hono serve() 未传 hostname 的进程（pi-ops 的 agent、node-agent、pi-runtime）默认会绑所有地址（实测为 IPv6 通配 ::），单机隔离时必须经 NODE_OPTIONS preload 强制回环；新增回环端口要同步加入 preload 白名单，并用 lsof 实测绑定地址，不能只靠容器网络。",
+    "how": "merge"
+   },
+   {
+    "key": "A3",
+    "text": "跑单次真实模型诊断前，必须先把内存/磁盘压力等其他事件源的阈值和迟滞压到不会触发，并在发故障请求前硬校验 Event 与 Incident 计数为 0，非零就停下报告、不发故障请求。",
+    "how": "merge"
+   }
+  ],
+  "outsB": [
+   {
+    "key": "B1",
+    "text": "为长任务挑选模型或网关通道时，不要只凭一句 OK 的小请求判定可用：要用接近真实任务体量的请求探测，并在派活前临近再测一次。",
+    "how": "new"
+   },
+   {
+    "key": "B2",
+    "text": "给 apps/pi-runtime 换模型配置时，用环境变量 PI_CODING_AGENT_DIR 指向一个含 models.json 的目录，不要改全局 ~/.pi/agent，也不要改生产源码。",
+    "how": "new"
+   },
+   {
+    "key": "B3",
+    "text": "DataAsset 的业务报错（business.error）走 JFR 录制流，受 pi-ops.jfr.enabled 与 business-error-enabled 两个开关控制；关掉后业务报错会被静默丢弃，不告警也不计数。排查“业务报错没到中央”时，先核对这两个开关。",
+    "how": "new"
+   }
+  ]
+ },
+ {
+  "window_id": "b01f50444989b1fc6511d6253432f85a3824f4d7ca31a575313c5362224608ec",
+  "project": "ai-data",
+  "chars": 16100,
+  "turns": 75,
+  "worker": true,
+  "neighbors": 0,
+  "refs": [
+   {
+    "id": "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f",
+    "set": "s30",
+    "n": 3,
+    "label": "没用"
+   }
+  ],
+  "sibling_count": 2,
+  "A": {
+   "extract_ms": 34120,
+   "extract_tokens": 17297,
+   "extract_raw_n": 0,
+   "valid_n": 0,
+   "dropped": {},
+   "total_ms": 34120,
+   "n_cands": 0
+  },
+  "B": {
+   "ms": 288442,
+   "usd": 0.0346123,
+   "tokens": 86764,
+   "parse_ok": true,
+   "invalid": {},
+   "items": [
+    {
+     "action": "new",
+     "into": null,
+     "kind": "rule",
+     "class": "A",
+     "text": "验收 ai-data 的 e2e 时，同一版本要连续跑两轮都全绿，Playwright 重试数必须为 0（不加 retries，也不靠只重跑最后一次变绿）；每轮前重建 e2e 专用应用库，汇报里写明两轮耗时和重试数。",
+     "scenario": "当要用 ai-data 的 e2e 全绿证明一次改动可以交付、并向用户汇报验收结果时",
+     "why": "本次把 e2e 改为真实链路后，最终版本按这一口径验收：同一代码连续两轮全绿，耗时 211.15 秒、220.08 秒，重试为 0，两轮之间重建了专用应用库。口径来自派活提示，原文未逐字出现在记录中。",
+     "guidance": true,
+     "reason": "这是 e2e 验收的通用方法，不是本次文件限制；换个 ai-data e2e 任务仍会用到，不写下来下一个 agent 不知道要两轮、重试为 0。"
+    }
+   ],
+   "n_cands": 0
+  },
+  "matchA": {
+   "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f": null,
+   "0df19d7c-92d3-45a5-94c5-b1bfd6061731": null
+  },
+  "matchB": {
+   "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f": null,
+   "0df19d7c-92d3-45a5-94c5-b1bfd6061731": null
+  },
+  "match_usd": 0.00041956000000000003,
+  "outsA": [],
+  "outsB": [
+   {
+    "key": "B1",
+    "text": "验收 ai-data 的 e2e 时，同一版本要连续跑两轮都全绿，Playwright 重试数必须为 0（不加 retries，也不靠只重跑最后一次变绿）；每轮前重建 e2e 专用应用库，汇报里写明两轮耗时和重试数。",
+    "how": "new"
+   }
+  ]
+ },
+ {
+  "window_id": "f4fcc38e9482867dfdc4c346c318e197108595061e414dff981aaaab827fe1c4",
+  "project": "data-asset",
+  "chars": 25503,
+  "turns": 40,
+  "worker": false,
+  "neighbors": 11,
+  "refs": [
+   {
+    "id": "dd03a351-6ce6-4077-95e6-da08b7cf99c4",
+    "set": "s30",
+    "n": 8,
+    "label": "有用"
+   }
+  ],
+  "sibling_count": 2,
+  "A": {
+   "extract_ms": 25007,
+   "extract_tokens": 17985,
+   "extract_raw_n": 3,
+   "valid_n": 3,
+   "dropped": {},
+   "judge_ms": 262381,
+   "judge_usd": 0.02967983,
+   "total_ms": 287811,
+   "n_cands": 3
+  },
+  "B": {
+   "ms": 169252,
+   "usd": 0.022703169999999998,
+   "tokens": 62104,
+   "parse_ok": true,
+   "invalid": {},
+   "items": [
+    {
+     "action": "new",
+     "into": null,
+     "kind": "rule",
+     "class": "A",
+     "text": "列名用中文；数据库字段名和数字编码（如 1/2/3 类型编码、来源类型枚举）翻译成完整的中文说法；指标怎么算要拼成一段读得懂的话，按计算方式、计算参数、依赖指标、修饰词分段（参照页面的口径面板），不要把内部字段原样摆出来。",
+     "scenario": "当查询结果、导出表或指标说明要给用户直接阅读（而不是给程序继续处理）时",
+     "why": "会话里用户先要求“返回字段用中文标识”；前几版要么漏了计算方式，要么只给 agg_func 原值和字段拼接，用户看后说“什么勾八，我要的是能够理解的计算方式，这个指标怎么来的。类似 口径”，并给出页面口径面板的分段样式（计算方式、计算参数、依赖指标、修饰词）；最后要求“计算方式需要给我生成一个最终版本到一个字段”。",
+     "guidance": true,
+     "reason": "用户要的是“能够理解”的输出，这是给人看的结果的常驻期望；下次照此产出，能免掉多轮返工。"
+    }
+   ],
+   "n_cands": 0
+  },
+  "matchA": {
+   "dd03a351-6ce6-4077-95e6-da08b7cf99c4": "A1",
+   "595c6092-daee-4b5b-a9f2-f5b87ec13910": null
+  },
+  "matchB": {
+   "dd03a351-6ce6-4077-95e6-da08b7cf99c4": "B1",
+   "595c6092-daee-4b5b-a9f2-f5b87ec13910": null
+  },
+  "match_usd": 0.00087336,
+  "outsA": [
+   {
+    "key": "A1",
+    "text": "给用户看的输出里涉及数据库原始字段时，要翻译成人能读懂的完整说法；由多部分组成的信息（如指标口径）要合成一段可读文本，不要把内部字段原样摆出来。",
+    "how": "rewrite"
+   },
+   {
+    "key": "A2",
+    "text": "交付给用户查看的查询 SQL，列名用中文别名标注，让结果集直接可读。",
+    "how": "keep"
+   }
+  ],
+  "outsB": [
+   {
+    "key": "B1",
+    "text": "列名用中文；数据库字段名和数字编码（如 1/2/3 类型编码、来源类型枚举）翻译成完整的中文说法；指标怎么算要拼成一段读得懂的话，按计算方式、计算参数、依赖指标、修饰词分段（参照页面的口径面板），不要把内部字段原样摆出来。",
+    "how": "new"
+   }
+  ]
+ },
+ {
+  "window_id": "57779ed19fbf8d3a02aace659077b9063139f2d9317b7a29b1b83a6c527d51bb",
+  "project": "pi-ops",
+  "chars": 20910,
+  "turns": 82,
+  "worker": false,
+  "neighbors": 5,
+  "refs": [
+   {
+    "id": "c09b0151-0b7e-4912-9975-31fc955158a1",
+    "set": "s30",
+    "n": 6,
+    "label": "没用"
+   }
+  ],
+  "sibling_count": 6,
+  "A": {
+   "extract_ms": 86090,
+   "extract_tokens": 21464,
+   "extract_raw_n": 2,
+   "valid_n": 2,
+   "dropped": {},
+   "judge_ms": 386712,
+   "judge_usd": 0.014997300000000002,
+   "total_ms": 473256,
+   "n_cands": 2
+  },
+  "B": {
+   "ms": 198960,
+   "usd": 0.024040100000000002,
+   "tokens": 63240,
+   "parse_ok": true,
+   "invalid": {},
+   "items": [
+    {
+     "action": "merge",
+     "into": "896636f4-0b7f-4740-b72a-1faa39e68cf0",
+     "kind": "rule",
+     "class": "A",
+     "text": "担任架构师、指挥执行 agent 推进项目时，具体调查与实现交给执行 agent，自己负责拆分范围、按最初规划的效果验收复核每个阶段的交付；阶段通过后直接派下一阶段，一直推进到规划效果达成，只在需要用户亲自操作或遇到外部阻塞时停下，并说明停在哪一步、缺什么。",
+     "scenario": "当用户要求你当架构师或总控、指挥执行 agent 把项目推进到最初规划的效果时",
+     "why": "用户原话：“你作为架构师，指挥herdr中pi-ops右边的pi pane做具体的执行，直到本项目达到我们最初规划的效果”。会话里主 agent 按阶段派活、逐阶段验收并打回返工，阶段通过就派下一阶段，只在计划标为 OWNER 的步骤、SSH 不可达、本机 Docker 未启动时才停下。执行通道按用户当次指定（herdr 右侧 pi pane），与已确认的“派活改回 codex 插件”规则不同，所以本条不限定通道。",
+     "guidance": true,
+     "reason": "m4 只写了角色，缺用户明确要求的“直到达到规划效果”这一推进标准；补上后，多阶段任务里 agent 不会每阶段停下请示。"
+    }
+   ],
+   "n_cands": 0
+  },
+  "matchA": {
+   "c09b0151-0b7e-4912-9975-31fc955158a1": null,
+   "f612dff9-c266-4241-b8c3-b4224d9fc9f8": null,
+   "ac3bc3ba-3956-4732-87c2-21661ac0d5e4": null,
+   "2de961e5-70d2-459a-bf12-040314964445": null,
+   "b3ece30d-c675-42f6-9ea6-168b4f16fa20": null,
+   "277d025c-f3bf-458e-8a3f-d232ec3b9789": null
+  },
+  "matchB": {
+   "c09b0151-0b7e-4912-9975-31fc955158a1": null,
+   "f612dff9-c266-4241-b8c3-b4224d9fc9f8": null,
+   "ac3bc3ba-3956-4732-87c2-21661ac0d5e4": null,
+   "2de961e5-70d2-459a-bf12-040314964445": "B1",
+   "b3ece30d-c675-42f6-9ea6-168b4f16fa20": null,
+   "277d025c-f3bf-458e-8a3f-d232ec3b9789": null
+  },
+  "match_usd": 0.00125122,
+  "outsA": [
+   {
+    "key": "A2",
+    "text": "按规划里的里程碑连续推进，直到目标效果在真实环境里验证跑通；不要在每个单点动作（如推分支、开 PR）完成后停下来请示，只有遇到需要用户拍板的分歧或规划之外的操作时才停下来问。",
+    "how": "rewrite"
+   }
+  ],
+  "outsB": [
+   {
+    "key": "B1",
+    "text": "担任架构师、指挥执行 agent 推进项目时，具体调查与实现交给执行 agent，自己负责拆分范围、按最初规划的效果验收复核每个阶段的交付；阶段通过后直接派下一阶段，一直推进到规划效果达成，只在需要用户亲自操作或遇到外部阻塞时停下，并说明停在哪一步、缺什么。",
+    "how": "merge"
+   }
+  ]
+ }
+]

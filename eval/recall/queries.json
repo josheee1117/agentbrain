@@ -1,0 +1,985 @@
+[
+{
+"id": "D01",
+"type": "direct",
+"project": "data-asset",
+"query": "本地编译 data-asset 用哪个 JDK？",
+"gold": [
+"bc2da617",
+"f5d66945"
+],
+"split": "tune"
+},
+{
+"id": "D02",
+"type": "direct",
+"project": "data-asset",
+"query": "how do I run maven tests for one module so the architecture guard actually runs",
+"gold": [
+"d8b6903f"
+],
+"split": "tune"
+},
+{
+"id": "D03",
+"type": "direct",
+"project": "data-asset",
+"query": "发布到 dev 指的是什么，需要我授权吗",
+"gold": [
+"442c37df",
+"5ab4957e"
+],
+"split": "tune"
+},
+{
+"id": "D04",
+"type": "direct",
+"project": "data-asset",
+"query": "本地起 data-asset 实例要注意什么",
+"gold": [
+"a49f7dbe",
+"d7b6d2ad",
+"d52745be",
+"0b8e0844",
+"bc2da617"
+],
+"split": "tune"
+},
+{
+"id": "D05",
+"type": "direct",
+"project": "data-asset",
+"query": "data-asset 这次要不要补单元测试",
+"gold": [
+"0647a455",
+"8aad6f9c"
+],
+"split": "tune"
+},
+{
+"id": "D06",
+"type": "direct",
+"project": "data-asset",
+"query": "data-asset 的 commit message 怎么写",
+"gold": [
+"1503e670"
+],
+"split": "tune"
+},
+{
+"id": "D07",
+"type": "direct",
+"project": "data-asset",
+"query": "派生指标 dimN 槽位前后端规则一样吗",
+"gold": [
+"8b6bf402",
+"9888aac0",
+"a1722951"
+],
+"split": "test"
+},
+{
+"id": "D08",
+"type": "direct",
+"project": "data-asset",
+"query": "indicatorType 的 1 2 3 分别代表什么",
+"gold": [
+"d0102761"
+],
+"split": "tune"
+},
+{
+"id": "D09",
+"type": "direct",
+"project": "data-asset",
+"query": "新的开放接口用什么方式鉴权",
+"gold": [
+"b3293221",
+"79ca63d2"
+],
+"split": "tune"
+},
+{
+"id": "D10",
+"type": "direct",
+"project": "data-asset",
+"query": "MaxCompute 同步时表责任人在字典里找不到怎么处理",
+"gold": [
+"e8d8c189",
+"60e29b0e"
+],
+"split": "tune"
+},
+{
+"id": "D11",
+"type": "direct",
+"project": "data-asset",
+"query": "HttpLogInterceptor logs the whole response body, is that a problem for a big export endpoint?",
+"gold": [
+"bffd4ab7",
+"83bf02e8"
+],
+"split": "tune"
+},
+{
+"id": "D12",
+"type": "direct",
+"project": "ai-data",
+"query": "ai-data 新分支从哪里拉",
+"gold": [
+"5cb5b749"
+],
+"split": "test"
+},
+{
+"id": "D13",
+"type": "direct",
+"project": "ai-data",
+"query": "在 ai-data 跑 e2e 要带什么环境变量",
+"gold": [
+"7841c93d",
+"d01b442c"
+],
+"split": "test"
+},
+{
+"id": "D14",
+"type": "direct",
+"project": "ai-data",
+"query": "e2e 里的期望数字可以直接写死吗",
+"gold": [
+"9b2918ef",
+"aad244dc"
+],
+"split": "tune"
+},
+{
+"id": "D15",
+"type": "direct",
+"project": "ai-data",
+"query": "can I add a prisma migration for the new column myself?",
+"gold": [
+"e9eeb0e1"
+],
+"split": "tune"
+},
+{
+"id": "D16",
+"type": "direct",
+"project": "ai-data",
+"query": "Polar 的结果表有 dt 分区和 etl_time 吗",
+"gold": [
+"e94466ea",
+"f24e2daf",
+"b62c600e"
+],
+"split": "tune"
+},
+{
+"id": "D17",
+"type": "direct",
+"project": "ai-data",
+"query": "Worker 返回的图表 chart.type 能填 line 吗",
+"gold": [
+"6302549e"
+],
+"split": "tune"
+},
+{
+"id": "D18",
+"type": "direct",
+"project": "ai-data",
+"query": "storage 测试怎么跑，数据库连接串从哪来",
+"gold": [
+"65506fcd",
+"af98030f"
+],
+"split": "tune"
+},
+{
+"id": "D19",
+"type": "direct",
+"project": "ai-data",
+"query": "改完代码页面行为很奇怪，是不是 dev server 的问题",
+"gold": [
+"0de7bba2",
+"ced330f8"
+],
+"split": "test"
+},
+{
+"id": "D20",
+"type": "direct",
+"project": "ai-data",
+"query": "长问数报 DeepSeek stream idle timeout after 20000ms",
+"gold": [
+"cf8541cb",
+"daf9929a"
+],
+"split": "test"
+},
+{
+"id": "D21",
+"type": "direct",
+"project": "pi-ops",
+"query": "本地演练发企业微信通知前要检查什么",
+"gold": [
+"3944650d",
+"9cafef64"
+],
+"split": "test"
+},
+{
+"id": "D22",
+"type": "direct",
+"project": "pi-ops",
+"query": "node-agent 的 HTTP 默认监听在哪个地址",
+"gold": [
+"8aafeb86"
+],
+"split": "test"
+},
+{
+"id": "D23",
+"type": "direct",
+"project": "pi-ops",
+"query": "test-governance plan 传多个文件的参数格式",
+"gold": [
+"3116b603"
+],
+"split": "tune"
+},
+{
+"id": "D24",
+"type": "direct",
+"project": "pi-ops",
+"query": "real-dataasset-lab 要跑一次真实模型诊断，开跑前要准备什么",
+"gold": [
+"467580e7",
+"1c8a952f",
+"92cf280a"
+],
+"split": "tune"
+},
+{
+"id": "D25",
+"type": "direct",
+"project": "pi-ops",
+"query": "pi-ops 的实现活谁来干，主会话做什么",
+"gold": [
+"2de961e5"
+],
+"split": "test"
+},
+{
+"id": "D26",
+"type": "direct",
+"project": "pstack-pi",
+"query": "how should we sync upstream pstack changes into this repo",
+"gold": [
+"d3446315",
+"96dae28c",
+"bbe32144",
+"14fb23f4",
+"1f2551c5"
+],
+"split": "tune"
+},
+{
+"id": "D27",
+"type": "direct",
+"project": "pstack-pi",
+"query": "pstack 里派子代理用 herdr 还是 pi-subagents",
+"gold": [
+"94cf1473",
+"42830c38",
+"c6f5fc24"
+],
+"split": "test"
+},
+{
+"id": "D28",
+"type": "direct",
+"project": "pstack-pi",
+"query": "无人值守批量跑 pi -p 一直挂着不动",
+"gold": [
+"72d58b35"
+],
+"split": "tune"
+},
+{
+"id": "D29",
+"type": "direct",
+"project": "pstack-pi",
+"query": "改完 pstack-pi 结构以后怎么验证能装进别人的 Pi",
+"gold": [
+"25946296"
+],
+"split": "tune"
+},
+{
+"id": "D30",
+"type": "direct",
+"project": "insuranceagent",
+"query": "跑 mvn 测试前 JAVA_HOME 要设成什么",
+"gold": [
+"86f13522",
+"5496a888"
+],
+"split": "tune"
+},
+{
+"id": "D31",
+"type": "direct",
+"project": "insuranceagent",
+"query": "object_id 从 bigint 改成 varchar 之后代码里要改哪些地方",
+"gold": [
+"cfaa9328",
+"3d8eeb42",
+"89c7d7d2"
+],
+"split": "test"
+},
+{
+"id": "D32",
+"type": "direct",
+"project": "insuranceagent",
+"query": "企微标签组推送要不要看 sync_wecom",
+"gold": [
+"24bf7b77"
+],
+"split": "test"
+},
+{
+"id": "D33",
+"type": "direct",
+"project": "insuranceagent",
+"query": "标签同步 MQ 失败了怎么补偿重试",
+"gold": [
+"63f99b47",
+"2611d4bd",
+"fbd13292"
+],
+"split": "test"
+},
+{
+"id": "D34",
+"type": "direct",
+"project": "agentbrain",
+"query": "hook 子命令出异常怎么处理才不会卡住宿主",
+"gold": [
+"61a2e78c",
+"d34b1db7",
+"6dd4bcfa"
+],
+"split": "tune"
+},
+{
+"id": "D35",
+"type": "direct",
+"project": "agentbrain",
+"query": "改了 AGENTS.md 要不要同步 CLAUDE.md",
+"gold": [
+"dda86f4d"
+],
+"split": "tune"
+},
+{
+"id": "D36",
+"type": "direct",
+"project": "agentbrain",
+"query": "写 Store 并发锁测试，用 sleep 控制时序可以吗",
+"gold": [
+"e0632cdd",
+"13836c16",
+"bc69441c"
+],
+"split": "tune"
+},
+{
+"id": "D37",
+"type": "direct",
+"project": "agentbrain",
+"query": "cli.test.ts 里写记忆的用例为什么会影响后面的断言",
+"gold": [
+"8279061f",
+"58ae591d"
+],
+"split": "tune"
+},
+{
+"id": "D38",
+"type": "direct",
+"project": "content-verification-agent",
+"query": "核验用的 LLM 模型现在是哪个",
+"gold": [
+"ecc935fa"
+],
+"split": "tune"
+},
+{
+"id": "D39",
+"type": "direct",
+"project": "data-asset",
+"query": "写代码的活该派给哪个 gpt 模型",
+"gold": [
+"dd6a4fdc"
+],
+"split": "test"
+},
+{
+"id": "D40",
+"type": "direct",
+"project": "ai-data",
+"query": "e2e 能不能用 mock 数据或者 page.route 造结果",
+"gold": [
+"873b78e2",
+"ddc7579e",
+"7575ee53",
+"312398a1"
+],
+"split": "tune"
+},
+{
+"id": "D41",
+"type": "direct",
+"project": "pi-ops",
+"query": "清理临时目录的 rm -rf 被自动审批拒了",
+"gold": [
+"551ed4b1"
+],
+"split": "tune"
+},
+{
+"id": "D42",
+"type": "direct",
+"project": "pi-ops",
+"query": "脚本里想给命令加超时，但 macOS 上没有 timeout 命令",
+"gold": [
+"44d60254"
+],
+"split": "test"
+},
+{
+"id": "D43",
+"type": "direct",
+"project": "ai-data",
+"query": "how to verify the default chart view after a query in e2e",
+"gold": [
+"5fe77a7a"
+],
+"split": "test"
+},
+{
+"id": "D44",
+"type": "direct",
+"project": "pi-ops",
+"query": "cpa 上 gpt-6.1-sol 的上下文窗口应该配多少",
+"gold": [
+"73833a19",
+"455b0629"
+],
+"split": "test"
+},
+{
+"id": "D45",
+"type": "direct",
+"project": "pi-ops",
+"query": "改了 ~/.pi/agent/settings.json 为什么没生效",
+"gold": [
+"fb6ea8c4"
+],
+"split": "test"
+},
+{
+"id": "D46",
+"type": "direct",
+"project": "insuranceagent",
+"query": "衍生标签 objectId 为 NULL 的问题当时怎么修的",
+"gold": [
+"f1e3abe5"
+],
+"split": "tune"
+},
+{
+"id": "R01",
+"type": "real",
+"project": "data-asset",
+"query": "提交并推送然后合并到dev_jdk17并推送",
+"gold": [
+"442c37df",
+"5ab4957e",
+"1503e670",
+"22ed121d"
+],
+"split": "tune"
+},
+{
+"id": "R02",
+"type": "real",
+"project": "data-asset",
+"query": "发布到dev现在是发布到dev_jdk17吗",
+"gold": [
+"442c37df"
+],
+"split": "test"
+},
+{
+"id": "R03",
+"type": "real",
+"project": "data-asset",
+"query": "帮我找出当前分支上线需要配置的nacos配置以及受影响的mysql表和job",
+"gold": [
+"8db948cf",
+"135df5c8"
+],
+"split": "test"
+},
+{
+"id": "R04",
+"type": "real",
+"project": "data-asset",
+"query": "把8089进场干掉",
+"gold": [
+"d52745be"
+],
+"split": "tune"
+},
+{
+"id": "R05",
+"type": "real",
+"project": "data-asset",
+"query": "帮我生成一个查询 sql，要求查询出原子指标、派生指标的名称、code，描述，计算口径方式，存储位置信息。",
+"gold": [
+"595c6092",
+"dd03a351",
+"d0102761"
+],
+"split": "tune"
+},
+{
+"id": "R06",
+"type": "real",
+"project": "data-asset",
+"query": "标准字段分页查询接口能否增加字段来源类型，是polar 还是maxcompute，详情接口也返回",
+"gold": [
+"b98f7c50",
+"b830a3c1"
+],
+"split": "tune"
+},
+{
+"id": "R07",
+"type": "real",
+"project": "data-asset",
+"query": "api/v1/business-table/source-options?purpose=SOURCE&sourceType=MAXCOMPUTE 这是什么垃圾接口，为什么不参考polar的时候联动加载呢，先查表，在查字段，这样一级一级",
+"gold": [
+"eba50c13"
+],
+"split": "test"
+},
+{
+"id": "R08",
+"type": "real",
+"project": null,
+"query": "我都说了，不走 mock。我们的测试也要是真实上线标准去测。",
+"gold": [
+"873b78e2"
+],
+"split": "tune"
+},
+{
+"id": "R09",
+"type": "real",
+"project": null,
+"query": "让 codex 发布到 dev_jdk17 吧",
+"gold": [
+"dd6a4fdc",
+"18ba2a31"
+],
+"split": "tune"
+},
+{
+"id": "R10",
+"type": "real",
+"project": null,
+"query": "后续 codex 不要使用沙箱模式。直接正式模式。",
+"gold": [
+"dc50a573"
+],
+"split": "tune"
+},
+{
+"id": "R11",
+"type": "real",
+"project": "pi-ops",
+"query": "cpa加了claude-opus-4-6-thinking、claude-sonnet-4-6、gemini-3.8-flash-high模型，帮我配置一下，思考等级按照模型本身的来，上下文也是",
+"gold": [
+"c7afa685",
+"73833a19",
+"a5c06ccc",
+"8d31bbf7"
+],
+"split": "tune"
+},
+{
+"id": "R12",
+"type": "real",
+"project": "pi-ops",
+"query": "你作为架构师，指挥herdr中pi-ops右边的pi pane做具体的执行，直到本项目达到我们最初规划的效果",
+"gold": [
+"2de961e5",
+"450cb4db"
+],
+"split": "test"
+},
+{
+"id": "R13",
+"type": "real",
+"project": "pi-ops",
+"query": "用这个企微群机器人通知，另外再推到测试机器之前能否在本地docker验证一下呢。即使项目起不来，也可以模拟一个类似dataasset的应用",
+"gold": [
+"77cbf3ea",
+"3944650d"
+],
+"split": "tune"
+},
+{
+"id": "R14",
+"type": "real",
+"project": "pi-ops",
+"query": "继续，但是你的通知消息发送到了生产环境，这个才是测试环境的群",
+"gold": [
+"3944650d"
+],
+"split": "tune"
+},
+{
+"id": "R15",
+"type": "real",
+"project": "pi-ops",
+"query": "data-asset要合并到dev_jdk17分支。piops",
+"gold": [
+"a7b50f37"
+],
+"split": "tune"
+},
+{
+"id": "R16",
+"type": "real",
+"project": "pi-ops",
+"query": "帮我把cpa的ops 改成1m的。现在报错Error: 400 \"1m 上下文已经全量可用，请启用 1m 上下文后重试\"",
+"gold": [
+"5a876cb7",
+"a5c06ccc"
+],
+"split": "tune"
+},
+{
+"id": "R17",
+"type": "real",
+"project": "pi-ops",
+"query": "将子代理设置的gpt 5 sol调整成gpt 6.1 sol medium默认",
+"gold": [
+"dd6a4fdc",
+"73833a19"
+],
+"split": "tune"
+},
+{
+"id": "R18",
+"type": "real",
+"project": "pstack-pi",
+"query": "我们移植到 pi 这里的不用 subagent 了，运行任务时看不到运行细节，也不能给每个子代理调整任务，观察状态。使用 herdr 代替怎么样？",
+"gold": [
+"94cf1473",
+"42830c38",
+"db1d71c3"
+],
+"split": "tune"
+},
+{
+"id": "R19",
+"type": "real",
+"project": "pstack-pi",
+"query": "先帮我将 pstack 原版的更新移植过来",
+"gold": [
+"d3446315",
+"96dae28c",
+"bbe32144"
+],
+"split": "tune"
+},
+{
+"id": "R20",
+"type": "real",
+"project": "pstack-pi",
+"query": "pstack · 真实 DataAsset 本地端到端 · 5/5 ✓ 流程跑完了 pi 上面还显示这个，应该关闭才对。",
+"gold": [
+"1d5b225e"
+],
+"split": "test"
+},
+{
+"id": "R21",
+"type": "real",
+"project": "pstack-pi",
+"query": "你这样不行，最好能是想cursor一样，能让我看到这个流程，而不是让模型自己决定",
+"gold": [
+"dbcc2177",
+"737cb364"
+],
+"split": "test"
+},
+{
+"id": "R22",
+"type": "real",
+"project": "pstack-pi",
+"query": "测试完成了吗？当前项目表现达到原版的多少了？之前提出的问题都解决了吗",
+"gold": [
+"9a6c480d",
+"bbe32144"
+],
+"split": "tune"
+},
+{
+"id": "R23",
+"type": "real",
+"project": "content-verification-agent",
+"query": "gpt-6-astra在pi的模型配置了多少上下文",
+"gold": [
+"73833a19"
+],
+"split": "tune"
+},
+{
+"id": "R24",
+"type": "real",
+"project": "content-verification-agent",
+"query": "cpa/gpt-6-astra（models.json 自建，名字写成 1.05M） 上下文 1,050,000 最大输出 128,000 改成跟openai一样的上下文",
+"gold": [
+"73833a19",
+"455b0629",
+"8d31bbf7"
+],
+"split": "test"
+},
+{
+"id": "R25",
+"type": "real",
+"project": "ai-data",
+"query": "改 SemanticQuery 契约时 ConversationHistory.parse 有什么要注意的？",
+"gold": [
+"03aac5e5"
+],
+"split": "test"
+},
+{
+"id": "R26",
+"type": "real",
+"project": "ai-data",
+"query": "你试试herdr调用pi",
+"gold": [
+"ac3bc3ba",
+"db1d71c3"
+],
+"split": "tune"
+},
+{
+"id": "R27",
+"type": "real",
+"project": "agentbrain",
+"query": "claude code和codex无法完整支持把。hook机制似乎是因为有缺陷。只能用pi。你研究一下，如果可以支持就改成适配全部",
+"gold": [
+"a10580ee"
+],
+"split": "test"
+},
+{
+"id": "R28",
+"type": "real",
+"project": null,
+"query": "本机是连不上测试环境的",
+"gold": [
+"2ae91f00",
+"7da2e690",
+"7c5b55c5"
+],
+"split": "tune"
+},
+{
+"id": "R29",
+"type": "real",
+"project": "content-verification-agent",
+"query": "grok的默认思考等级应该是xhigh才对，",
+"gold": [
+"c7afa685"
+],
+"split": "tune"
+},
+{
+"id": "R30",
+"type": "real",
+"project": "pstack-pi",
+"query": "为什么 一直connection error",
+"gold": [
+"5c92124c"
+],
+"split": "tune"
+},
+{
+"id": "R31",
+"type": "real",
+"project": "agentbrain",
+"query": "给我一个用人话的版本，你现在说的我看不懂",
+"gold": [
+"dda5bdf3"
+],
+"split": "test"
+},
+{
+"id": "N01",
+"type": "negative",
+"project": "data-asset",
+"query": "结束了没，为什么都 1 个小时了",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N02",
+"type": "negative",
+"project": "ai-data",
+"query": "好了，你试试",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N03",
+"type": "negative",
+"project": "pi-ops",
+"query": "你好",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N04",
+"type": "negative",
+"project": "data-asset",
+"query": "今天天气怎么样",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N05",
+"type": "negative",
+"project": "ai-data",
+"query": "帮我写一首关于秋天的诗",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N06",
+"type": "negative",
+"project": "pi-ops",
+"query": "WrenAI没有网页版吗？他主要提供了什么功能？",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N07",
+"type": "negative",
+"project": "pstack-pi",
+"query": "那肯定选择a啊",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N08",
+"type": "negative",
+"project": "content-verification-agent",
+"query": "目前哦们有几个 agent",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N09",
+"type": "negative",
+"project": "agentbrain",
+"query": "What's the capital of Australia?",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N10",
+"type": "negative",
+"project": "insuranceagent",
+"query": "explain what a monad is in haskell",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N11",
+"type": "negative",
+"project": "pi-ops",
+"query": "帮我安装 [REDACTED:url]",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N12",
+"type": "negative",
+"project": "pstack-pi",
+"query": "下一步做什么",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N13",
+"type": "negative",
+"project": "agentbrain",
+"query": "agentbrain 抽取模型用哪个",
+"gold": [],
+"note": "memory missing: no agentbrain entry records the Ark deepseek-v4.1-flash extraction choice",
+"split": "tune"
+},
+{
+"id": "N14",
+"type": "negative",
+"project": "ai-data",
+"query": "react useEffect 的 cleanup 函数怎么写",
+"gold": [],
+"split": "test"
+},
+{
+"id": "N15",
+"type": "negative",
+"project": "content-verification-agent",
+"query": "给我一个测试流式的curl",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N16",
+"type": "negative",
+"project": "data-asset",
+"query": "帮我把.e2e文件夹设置为gitignore",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N17",
+"type": "negative",
+"project": "insuranceagent",
+"query": "这周五下午有空一起吃饭吗",
+"gold": [],
+"split": "tune"
+},
+{
+"id": "N18",
+"type": "negative",
+"project": "agentbrain",
+"query": "怎么打开网页版？",
+"gold": [],
+"split": "test"
+}
+]

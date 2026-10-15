@@ -1,0 +1,81 @@
+{
+ "at": "2026-10-15T04:05:11.696Z",
+ "panel": [
+  "astra:gpt-6-astra"
+ ],
+ "mode": "primary",
+ "primary": "astra",
+ "arbiter": null,
+ "batch": 10,
+ "wall_ms": 369700,
+ "all": {
+  "n": 90,
+  "discard_useless": "17/27 = 63%",
+  "keep_useful": "57/63 = 90%",
+  "undecided": 0,
+  "arbiter_rate": "0/90 = 0%",
+  "arbiter_decides_fate": "0/90 = 0%",
+  "arbiter_wording_only": "0/90 = 0%",
+  "unanimous": "0/90 = 0%",
+  "panel_admit_split": "0/90 = 0%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "74/90 = 82%",
+    "discard_useless": "17/27 = 63%",
+    "keep_useful": "57/63 = 90%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {}
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "9/15 = 60%",
+  "keep_useful": "14/15 = 93%",
+  "undecided": 0,
+  "arbiter_rate": "0/30 = 0%",
+  "arbiter_decides_fate": "0/30 = 0%",
+  "arbiter_wording_only": "0/30 = 0%",
+  "unanimous": "0/30 = 0%",
+  "panel_admit_split": "0/30 = 0%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "23/30 = 77%",
+    "discard_useless": "9/15 = 60%",
+    "keep_useful": "14/15 = 93%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {}
+ },
+ "s60": {
+  "n": 60,
+  "discard_useless": "8/12 = 67%",
+  "keep_useful": "43/48 = 90%",
+  "undecided": 0,
+  "arbiter_rate": "0/60 = 0%",
+  "arbiter_decides_fate": "0/60 = 0%",
+  "arbiter_wording_only": "0/60 = 0%",
+  "unanimous": "0/60 = 0%",
+  "panel_admit_split": "0/60 = 0%",
+  "per_model": {
+   "astra": {
+    "vs_gold": "51/60 = 85%",
+    "discard_useless": "8/12 = 67%",
+    "keep_useful": "43/48 = 90%",
+    "invalid": 0
+   }
+  },
+  "pairwise_admit_agreement": {}
+ },
+ "cost": {
+  "astra/judge": {
+   "calls": 9,
+   "failed": 0,
+   "tokens": 118379,
+   "p50_ms": 81662,
+   "max_ms": 90696,
+   "errors": []
+  }
+ }
+}

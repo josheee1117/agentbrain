@@ -1,0 +1,143 @@
+START 2026-10-14T20:41:00+08:00
+{
+ "at": "2026-10-14T13:00:09.675Z",
+ "panel": [
+  "sol:gpt-6.1-sol",
+  "ark:deepseek-v4-pro",
+  "qwen:qwen3.8-max-0902"
+ ],
+ "arbiter": "sol",
+ "batch": 10,
+ "wall_ms": 1147864,
+ "all": {
+  "n": 60,
+  "discard_useless": "20/22 = 91%",
+  "keep_useful": "13/38 = 34%",
+  "undecided": 0,
+  "arbiter_rate": "49/60 = 82%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "35/60 = 58%",
+    "discard_useless": "18/22 = 82%",
+    "keep_useful": "17/38 = 45%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "40/60 = 67%",
+    "discard_useless": "9/22 = 41%",
+    "keep_useful": "31/38 = 82%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "34/60 = 57%",
+    "discard_useless": "13/22 = 59%",
+    "keep_useful": "21/38 = 55%",
+    "invalid": 9
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "35/60 = 58%",
+   "sol~qwen": "35/60 = 58%",
+   "ark~qwen": "37/60 = 62%"
+  }
+ },
+ "s30": {
+  "n": 30,
+  "discard_useless": "14/15 = 93%",
+  "keep_useful": "9/15 = 60%",
+  "undecided": 0,
+  "arbiter_rate": "24/30 = 80%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "25/30 = 83%",
+    "discard_useless": "14/15 = 93%",
+    "keep_useful": "11/15 = 73%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "19/30 = 63%",
+    "discard_useless": "6/15 = 40%",
+    "keep_useful": "13/15 = 87%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "14/30 = 47%",
+    "discard_useless": "6/15 = 40%",
+    "keep_useful": "8/15 = 53%",
+    "invalid": 7
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "20/30 = 67%",
+   "sol~qwen": "18/30 = 60%",
+   "ark~qwen": "20/30 = 67%"
+  }
+ },
+ "fresh": {
+  "n": 30,
+  "discard_useless": "6/7 = 86%",
+  "keep_useful": "4/23 = 17%",
+  "undecided": 0,
+  "arbiter_rate": "25/30 = 83%",
+  "per_model": {
+   "sol": {
+    "vs_gold": "10/30 = 33%",
+    "discard_useless": "4/7 = 57%",
+    "keep_useful": "6/23 = 26%",
+    "invalid": 0
+   },
+   "ark": {
+    "vs_gold": "21/30 = 70%",
+    "discard_useless": "3/7 = 43%",
+    "keep_useful": "18/23 = 78%",
+    "invalid": 0
+   },
+   "qwen": {
+    "vs_gold": "20/30 = 67%",
+    "discard_useless": "7/7 = 100%",
+    "keep_useful": "13/23 = 57%",
+    "invalid": 2
+   }
+  },
+  "pairwise_admit_agreement": {
+   "sol~ark": "15/30 = 50%",
+   "sol~qwen": "17/30 = 57%",
+   "ark~qwen": "17/30 = 57%"
+  }
+ },
+ "cost": {
+  "qwen/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 62967,
+   "p50_ms": 18324,
+   "max_ms": 20828,
+   "errors": []
+  },
+  "sol/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 71561,
+   "p50_ms": 47157,
+   "max_ms": 50682,
+   "errors": []
+  },
+  "ark/judge": {
+   "calls": 6,
+   "failed": 0,
+   "tokens": 142688,
+   "p50_ms": 130034,
+   "max_ms": 184809,
+   "errors": []
+  },
+  "sol/arbiter": {
+   "calls": 49,
+   "failed": 0,
+   "tokens": 140871,
+   "p50_ms": 36001,
+   "max_ms": 77002,
+   "errors": []
+  }
+ }
+}
+END 2026-10-14T21:00:09+08:00 exit=0

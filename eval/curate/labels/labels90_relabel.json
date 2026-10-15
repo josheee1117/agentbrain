@@ -1,0 +1,778 @@
+[
+ {
+  "set": "s30",
+  "n": 1,
+  "id": "9888aac0-9e62-4c75-9c65-03f0cc26ccfa",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 2,
+  "id": "25fc47d4-44bc-4a57-b2b0-eb0d90664266",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "观察到的 lab 端口白名单坑，不是转述的干活方法"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 3,
+  "id": "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "某个提示词协议的代码细节，不是干活方法"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 4,
+  "id": "22b0fb9d-87e8-46d2-8538-d0d033b6bb24",
+  "admit": false,
+  "label": "没用",
+  "comment": "should be architecture preference, not current state"
+ },
+ {
+  "set": "s30",
+  "n": 5,
+  "id": "db1a5436-cf9a-4470-bff7-ba0c62e80314",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 6,
+  "id": "c09b0151-0b7e-4912-9975-31fc955158a1",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 7,
+  "id": "4238a311-485f-46f0-9cf1-2f9cdedb589c",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 8,
+  "id": "dd03a351-6ce6-4077-95e6-da08b7cf99c4",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 9,
+  "id": "94cf1473-8cb8-4e57-8ba5-ce0a43a8827c",
+  "admit": true,
+  "label": "部分有用",
+  "comment": "exploration"
+ },
+ {
+  "set": "s30",
+  "n": 10,
+  "id": "42830c38-60e9-4709-b8c0-3cec697173cf",
+  "admit": false,
+  "label": "没用",
+  "comment": "temporary usage"
+ },
+ {
+  "set": "s30",
+  "n": 11,
+  "id": "dda5bdf3-09bc-49fe-b380-7866d97d017b",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 12,
+  "id": "e6aa6726-e1ec-436d-b37c-3ae838181434",
+  "admit": false,
+  "label": "没用",
+  "comment": "no scenario"
+ },
+ {
+  "set": "s30",
+  "n": 13,
+  "id": "77cbf3ea-fdbe-4e83-94bd-b166ee8f077e",
+  "admit": true,
+  "label": "有用",
+  "comment": null,
+  "worker_review": {
+   "decision": "relabel",
+   "why": "通用干活方法：推测试机前先在本地跑通整条链路；模拟应用不能代替真实验收"
+  },
+  "original_label": "没用",
+  "relabel_note": "relabelled per user rule 2026-10-15"
+ },
+ {
+  "set": "s30",
+  "n": 14,
+  "id": "8d281513-643e-4cc0-a544-e6d7a3ab43bf",
+  "admit": false,
+  "label": "没用",
+  "comment": "diary"
+ },
+ {
+  "set": "s30",
+  "n": 15,
+  "id": "d7fbd3d6-b544-4584-9725-b72fb4970d75",
+  "admit": true,
+  "label": "部分有用",
+  "comment": "needs scenario"
+ },
+ {
+  "set": "s30",
+  "n": 16,
+  "id": "ed9f5e6c-b8f9-4d0c-979d-5deda3de7e58",
+  "admit": false,
+  "label": "没用",
+  "comment": "worker prompt",
+  "worker_review": {
+   "decision": "keep",
+   "why": "一次性任务限制：这个 worktree 里别 checkout/commit、别碰 .idea、别改迁移"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 17,
+  "id": "4afbee8f-5c5e-428e-bdc1-4d59b212e9b5",
+  "admit": true,
+  "label": "部分有用",
+  "comment": "generalize: e2e must not fake to go green; prefer real env"
+ },
+ {
+  "set": "s30",
+  "n": 18,
+  "id": "2a8382aa-6b32-43d0-9819-2d352a8e083f",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 19,
+  "id": "2352b4ab-b85f-46a0-ae63-bbef45eeac3d",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 20,
+  "id": "2018b871-1a53-4279-bb47-5a959ee77f76",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 21,
+  "id": "bc2da617-d5f7-4860-9eae-7a9ae90025b7",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 22,
+  "id": "0f00e247-0f53-4c56-bf41-527e88f1b4d4",
+  "admit": false,
+  "label": "没用",
+  "comment": "worker prompt",
+  "worker_review": {
+   "decision": "keep",
+   "why": "某个文件里的具体实现修法（错误对象要序列化），不是干活方法"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 23,
+  "id": "8279061f-89d6-4e91-946f-367f3625e663",
+  "admit": false,
+  "label": "没用",
+  "comment": "worker prompt",
+  "worker_review": {
+   "decision": "keep",
+   "why": "某个测试文件里的具体写法（独立 AB_HOME、放文件最后），不是干活方法"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 24,
+  "id": "aa1c4bf4-446f-4214-9cb6-2a680a5f1ccf",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "e2e 按钮文案细节，不是干活方法"
+  }
+ },
+ {
+  "set": "s30",
+  "n": 25,
+  "id": "e36fde1b-619b-484f-a016-b65e85b554eb",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 26,
+  "id": "1d093577-e2e7-4676-9cae-d17200b6b736",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 27,
+  "id": "210464bc-2699-4207-998e-e67bfae9298f",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 28,
+  "id": "1f6f6ecb-a2d3-4660-8161-31b37b741ca3",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 29,
+  "id": "dc4cfa4d-bf99-4680-9f32-0db8585daee2",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s30",
+  "n": 30,
+  "id": "7935d750-a72f-4eda-87d1-2d0b006cf43f",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 1,
+  "id": "312398a1-6e95-41ff-8478-f22e81e7d1c8",
+  "admit": true,
+  "label": "部分有用",
+  "comment": "这个其实意思是说 e2e"
+ },
+ {
+  "set": "s60",
+  "n": 2,
+  "id": "546f3d9d-3397-40c8-aa2a-affafb5e4cbb",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 3,
+  "id": "0c252de2-da38-4d38-be83-bc47d7dd4c11",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 4,
+  "id": "46740d83-fb28-43da-8286-a034698b04e5",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 5,
+  "id": "4fc34485-e169-4c2b-9cca-af7502d650d7",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 6,
+  "id": "42e426c3-f37d-4815-9d42-920be7a388a7",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 7,
+  "id": "889d9d59-d2a1-4719-a6a7-caecef1a70dd",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 8,
+  "id": "65506fcd-ab21-4a19-97ae-c3f7bd01338a",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 9,
+  "id": "09d5d1b5-ea4a-43e4-958b-526fa8cf4fb5",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 10,
+  "id": "a49f7dbe-ba96-4551-a074-25c0f3ba8c6c",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 11,
+  "id": "450cb4db-a5d4-4dda-8fb5-141712a2c691",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 12,
+  "id": "a829db17-054a-4f6f-8f8d-33eb7891d701",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 13,
+  "id": "fbd13292-e398-4e98-b662-581d20c6f66b",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 14,
+  "id": "d34b1db7-6e80-4b4f-9a6b-51140f81975d",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 15,
+  "id": "ecc935fa-4662-43f2-88ee-ff89f9ee008b",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 16,
+  "id": "d7b6d2ad-c531-4dc9-8a33-5a2844e0505a",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 17,
+  "id": "d3446315-2438-4605-9c81-7a04561deecd",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 18,
+  "id": "80099904-56ba-4bbd-be37-7d46a9c79602",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 19,
+  "id": "467580e7-6dc1-440a-a5f7-c2684b4ceea3",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 20,
+  "id": "f1e3abe5-3737-4eba-ac21-e5a749b91083",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 21,
+  "id": "1b0e4b35-0240-432f-ad08-00541019466e",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 22,
+  "id": "0fe0de72-0a70-46c0-ba0d-fb7ea252b898",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 23,
+  "id": "53a840c5-feb3-4b78-84f0-0abcec703a72",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 24,
+  "id": "3ab6af13-f65c-4492-98f1-989738ad60f3",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 25,
+  "id": "2701c155-cf07-498b-b3d4-9a80078a6b79",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 26,
+  "id": "6302549e-bdd2-4393-a45a-54fc43cc22c6",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 27,
+  "id": "69a9b0f9-6835-4314-95ff-59be2d287378",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 28,
+  "id": "5dde7b1a-f734-464c-bb12-628559ef43af",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "e2e 点击定位细节和 main 分支现状，不是干活方法"
+  }
+ },
+ {
+  "set": "s60",
+  "n": 29,
+  "id": "86f13522-8c76-4132-849e-6dc5c06035e5",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 30,
+  "id": "ee4d17c7-cdb1-4861-b6dd-5000ac845343",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 31,
+  "id": "98fab38d-fb62-4282-9f0d-43dbe1cb596e",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 32,
+  "id": "4beb747e-a1df-4f03-8ed6-723559df13fb",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 33,
+  "id": "f2ca6d1d-eda9-43d4-90f1-8a36d4181911",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 34,
+  "id": "8f058977-77ad-4185-8810-548f561e228b",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 35,
+  "id": "61a2e78c-063e-46da-89d4-4e21655c9fa0",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 36,
+  "id": "f466f9e0-7a5c-4ffa-bcb8-40a0023e4bb7",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 37,
+  "id": "3640a3b6-9fe6-4b1c-870c-9b696c1aeef9",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 38,
+  "id": "25946296-4f7e-4619-8c19-87047a81383b",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 39,
+  "id": "ea98638a-3a6a-4771-97f0-8f8610f9a75b",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 40,
+  "id": "5cb51d77-18e0-4322-81bc-4c2d4ae8a16e",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 41,
+  "id": "e0632cdd-5621-4b62-a25e-33a0c5089bd8",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 42,
+  "id": "4b58efb7-9b58-4c96-899d-ee3e11b9649c",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 43,
+  "id": "28004e7d-78df-4491-b6d5-71a1c44bc691",
+  "admit": false,
+  "label": "没用",
+  "comment": "我没关系，写就写了，只是agent",
+  "worker_review": {
+   "decision": "keep",
+   "why": "凭据保管套话；用户备注明确说无所谓"
+  }
+ },
+ {
+  "set": "s60",
+  "n": 44,
+  "id": "bf88f699-7839-4bba-a56c-f80350c40c28",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "lab 基线检查的具体坑，不是转述的干活方法"
+  }
+ },
+ {
+  "set": "s60",
+  "n": 45,
+  "id": "71cefbfd-e755-4824-b250-13d0eb6880f9",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 46,
+  "id": "ece7cf9c-f76c-43bf-a089-a46d2e53dbd6",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 47,
+  "id": "216d6a20-facf-42c4-b3fb-8d83cc2073f5",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 48,
+  "id": "44d60254-47e7-4839-ac79-83e375bb88dc",
+  "admit": false,
+  "label": "没用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 49,
+  "id": "bb5a7e3f-5ac2-4901-8b93-494e6028fbaa",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 50,
+  "id": "78c6ac10-dc33-462c-8a10-1283cfc6faf9",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 51,
+  "id": "83df4d8f-0046-4bfa-a30e-52ed54adf862",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 52,
+  "id": "7345c5a1-eb2c-481f-9649-fa19cf47bdc5",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "通用技术常识（macOS realpath）"
+  }
+ },
+ {
+  "set": "s60",
+  "n": 53,
+  "id": "92cf280a-d65b-4495-9ea2-239839d74687",
+  "admit": false,
+  "label": "没用",
+  "comment": null,
+  "worker_review": {
+   "decision": "keep",
+   "why": "凭据保管套话（同 #43 备注）"
+  }
+ },
+ {
+  "set": "s60",
+  "n": 54,
+  "id": "bec87117-5197-48e4-91c3-6c1b130f9f35",
+  "admit": true,
+  "label": "有用",
+  "comment": null,
+  "worker_review": {
+   "decision": "relabel",
+   "why": "通用干活方法：为测试补接缝时选最小改动，不为测试新增抽象/重构"
+  },
+  "original_label": "没用",
+  "relabel_note": "relabelled per user rule 2026-10-15"
+ },
+ {
+  "set": "s60",
+  "n": 55,
+  "id": "fa54f784-4ec4-4726-8db0-b54db282c4a3",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 56,
+  "id": "73f07dcd-5c4c-40d2-a3c5-6fcdddf8d559",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 57,
+  "id": "7c5b55c5-4dc3-4ec8-b47f-cd271cfe0fb0",
+  "admit": true,
+  "label": "部分有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 58,
+  "id": "0eac35cb-69a2-4b31-8a0c-35cde6eea632",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 59,
+  "id": "d0102761-a8f5-456b-b0d8-bf6651e88062",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ },
+ {
+  "set": "s60",
+  "n": 60,
+  "id": "c4367007-fd86-45d1-9622-bf32552f42fb",
+  "admit": true,
+  "label": "有用",
+  "comment": null
+ }
+]

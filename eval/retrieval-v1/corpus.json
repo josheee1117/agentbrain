@@ -1,0 +1,320 @@
+[
+  {
+    "id": "c01",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "`Store` 把 L2 投影缓存在进程内，只在本进程写入时失效。多进程共用 store 时，另一进程读到的是旧投影，但 index.db 共享，所以会出现搜得到、`memory_get` 取不到（2026-10-09 实测）。另外没设 busy 等待，并发写会直接 SQLITE_BUSY。切片 1.5 已修（按 L1 水位失效 + busy_timeout）。"
+  },
+  {
+    "id": "c02",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "宿主的会话 id 环境变量会被嵌套启动的下一层继承（从 Claude 里启动的 Pi 同时看得到 `CLAUDE_CODE_SESSION_ID` 和 `PI_SESSION_ID`），判定宿主要看最近的父进程，不能只看变量（2026-10-09 实测）。"
+  },
+  {
+    "id": "c03",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "pi-subagents 派出的子代理默认不读 `~/.pi/agent/AGENTS.md`，只读仓库里的规则文件；要让子代理做什么，写进派活说明。"
+  },
+  {
+    "id": "c04",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "Claude Desktop 的进程 comm 是带空格的完整路径（`.../Application Support/Claude/...`），按空白切 `ps` 输出会切坏。`ps` 把 comm/args 放最后一列整行取（2026-10-10 修）。"
+  },
+  {
+    "id": "c05",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "Codex 的 `shell_environment_policy inherit = \"core\"` 会过滤自定义环境变量，`AB_HOME` 传不进 Codex 的 shell，测试时写进了真实 store。隔离测 Codex 要另想办法（如临时改 HOME 或在 prompt 里显式 `AB_HOME=... ab ...`）（2026-10-10 实测）。"
+  },
+  {
+    "id": "c06",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "Codex 读到了全局规则但没照做（E2E 里要求的\"回答末尾写暗号\"被忽略），Pi 照做了。brief 送到不等于遵守。"
+  },
+  {
+    "id": "c07",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "pi（grok）跑长任务会断线（`unexpected EOF`）或停在半路不汇报；派活拆小，回来先核对文件实际改到哪一步再续。"
+  },
+  {
+    "id": "c08",
+    "project": "agentbrain",
+    "kind": "pitfall",
+    "text": "`brief` 两段各占一半预算时要先扣掉固定的头尾行，否则正好填满就触发末尾硬截断、丢掉结尾提示（2026-10-10 修）。"
+  },
+  {
+    "id": "c09",
+    "project": "ai-data",
+    "kind": "pitfall",
+    "text": "部署用的 `postgres:17-bookworm` 不带 pgvector，上向量列要换 `pgvector/pgvector:pg17` 或装扩展。"
+  },
+  {
+    "id": "c10",
+    "project": "data-asset",
+    "kind": "pitfall",
+    "text": "2026-10-09 insuranceagent 标签 `objectId` 改为 String（支持企微 external_userid）。data-asset 的 `dto/feign/tag/*` 和 `UpmsTagFeignClient` 仍是 Long：数字 ID 靠 Jackson 自动转换照常工作，收到 `wm...` 这类企微 ID 会反序列化失败。要接企微标签或查询不带 object 时，先把这些字段改成 String。（已在 `feature-20261009-weworktag` 改完）"
+  },
+  {
+    "id": "c11",
+    "project": "data-asset",
+    "kind": "pitfall",
+    "text": "发布流程 `.agents/playbooks/commit-and-release.md` 目前只在 maxcompute 分支上。Codex 沙箱把 `.git` 设为只读，提交和推送会改走独立的 git 目录，完成后本地分支 ref 不会前进，需要手动对齐。"
+  },
+  {
+    "id": "c12",
+    "project": "insuranceagent",
+    "kind": "pitfall",
+    "text": "2026-10-08 工作区的 AGENTS.md 曾被个人规则整份覆盖，导致团队规则丢失；2026-10-09 已恢复，个人规则移到 CLAUDE.local.md。个人规则不要写进 AGENTS.md。"
+  },
+  {
+    "id": "c13",
+    "project": "test-infra",
+    "kind": "pitfall",
+    "text": "仓库里有 `.vault_pass`（Ansible Vault 密码），任何内容都不得复制进 pm。"
+  },
+  {
+    "id": "c14",
+    "project": "pm",
+    "kind": "rule",
+    "text": "Eliminate special cases by redesigning data flow. Prefer changing data shape or flow so edge cases become the default path."
+  },
+  {
+    "id": "c15",
+    "project": "pm",
+    "kind": "rule",
+    "text": "Prefer pragmatic solutions over theoretical completeness. Solve the real problem now with the simplest reliable design."
+  },
+  {
+    "id": "c16",
+    "project": "pm",
+    "kind": "rule",
+    "text": "Preserve user-visible behavior as a hard rule. Any unexpected user-visible behavior change is treated as a bug."
+  },
+  {
+    "id": "c17",
+    "project": "pm",
+    "kind": "rule",
+    "text": "Reduce complexity before adding branches. When logic grows hard to read, simplify structure first and branch later only if necessary."
+  },
+  {
+    "id": "c18",
+    "project": "pm",
+    "kind": "rule",
+    "text": "提交 Pipeline. 提交前自动从会话上下文 + diff 中提取洞察并沉淀，然后执行原子化提交。全程不询问用户确认。"
+  },
+  {
+    "id": "c19",
+    "project": "pm",
+    "kind": "rule",
+    "text": "重构 Pipeline. 这个 pipeline 只处理真实重构。目标不是把代码换个写法，而是在不改变用户可见行为的前提下，消除错误的数据边界、特殊情况和旧代码残留。"
+  },
+  {
+    "id": "c20",
+    "project": "pm",
+    "kind": "rule",
+    "text": "代码审查 Pipeline. 这个 pipeline 只负责任务编排。审查标准与深层依据统一放在 Knowledge 中，避免在本文件重复展开。"
+  },
+  {
+    "id": "c21",
+    "project": null,
+    "kind": "rule",
+    "text": "我（主会话 Opus）负责：理解需求、读代码、定方案和接口、拆任务、验收结果、做最终判断。"
+  },
+  {
+    "id": "c22",
+    "project": null,
+    "kind": "rule",
+    "text": "具体编码实现交给 Codex 或 pi，在右侧终端面板里跑，用户实时看过程：\n  1. 用 Write 把任务写进 `/tmp/w-<slug>/prompt`：目标、涉及文件、接口约束、验收标准；末尾要求列出改了哪些文件、跑了哪些验证。每个任务用新目录。\n  2. `run_in_terminal`（title 写任务名）：`~/code_me/pm/tools/dispatch <pi|codex|codex-ro> <仓库绝对路径> /tmp/w-<slug>/prompt [模型]`。`codex` 可写，`codex-ro` 只读沙箱，`pi` 默认 `cpa/grok-latest`，模型按 pm 的 AGENTS.md「模型路由」选。\n  3. 用后台 Bash 等 `/tmp/w-<slug>/done` 出现（内容是退出码），读 `out.log`（codex 的最终回答在 `last.txt`），在目标仓库看 `git diff` 验收；标签末尾有\"想接着聊\"的命令供用户插话，验收完用 `stop_terminal_tab {close: true}` 关掉标签。\n  不要派 opus/sonnet 子 agent 写实现代码。"
+  },
+  {
+    "id": "c23",
+    "project": null,
+    "kind": "rule",
+    "text": "Code review 也这样派，用 `codex-ro`，prompt 开头写明\"只读 review，不要修改任何文件\"，并给出 review 范围：\n  - 对象：具体的 diff 范围（如 `git diff`、`git diff <base>...HEAD`）或文件列表\n  - 重点：本次改动要满足的需求和接口约束，以及需要重点检查的风险（正确性、边界情况、并发、安全等）\n  - 输出：按严重程度排列的问题清单，每条注明文件:行号和理由\n  我根据 review 结果决定是否再让 Codex 修。"
+  },
+  {
+    "id": "c24",
+    "project": null,
+    "kind": "rule",
+    "text": "不使用 Codex 的 stop review gate，review 一律按上面的方式显式发起。"
+  },
+  {
+    "id": "c25",
+    "project": null,
+    "kind": "rule",
+    "text": "本条规则优先于 pstack 的默认路由：poteto-mode / architect / tdd 等仍可用于规划和设计，但实现与 review 阶段按上面的方式派出去。"
+  },
+  {
+    "id": "c26",
+    "project": null,
+    "kind": "rule",
+    "text": "例外：一行改动、纯配置调整、问答类请求由我直接完成，不必转交。"
+  },
+  {
+    "id": "c27",
+    "project": null,
+    "kind": "rule",
+    "text": "`codex:codex-rescue`、`pi-worker` 子代理仍可用，但过程看不到，只在不需要旁观时用。"
+  },
+  {
+    "id": "c28",
+    "project": null,
+    "kind": "rule",
+    "text": "先理解我本次的目标、范围和已有决定。若需求有根本性逻辑错误，或将明显偏离原目标，先指出具体冲突、依据和建议方案；需要我选择的争议步骤等我明确决定后再执行，独立且已授权的工作继续推进。"
+  },
+  {
+    "id": "c29",
+    "project": null,
+    "kind": "rule",
+    "text": "我了解取舍后仍坚持原需求时，按我的决定执行，并说明必要的限制。普通实现取舍由你自行判断，不把每种不同意见都变成审批。"
+  },
+  {
+    "id": "c30",
+    "project": null,
+    "kind": "rule",
+    "text": "已有授权持续有效，不重复确认同一动作；发现新的范围或权限需求时再说明。常规实现、测试和文档整理不自动包含 commit、push、部署或对外发送消息。"
+  },
+  {
+    "id": "c31",
+    "project": null,
+    "kind": "rule",
+    "text": "**需求把关：** 当前需求有逻辑或根本性错误，或与已确认原需求明显偏离时：先指出问题，给出更优方案和理由，停下等拍板。用户明确坚持后再按他的方案做。"
+  },
+  {
+    "id": "c32",
+    "project": null,
+    "kind": "rule",
+    "text": "上下文工程 > 指令工程：给目标而非步骤"
+  },
+  {
+    "id": "c33",
+    "project": null,
+    "kind": "rule",
+    "text": "需要用户决策时列出选项，避免开放式问题"
+  },
+  {
+    "id": "c34",
+    "project": null,
+    "kind": "rule",
+    "text": "命中项目里已有的 pipeline / 工作流时按它执行，不绕过"
+  },
+  {
+    "id": "c35",
+    "project": null,
+    "kind": "rule",
+    "text": "精准修改：只动与当前需求直接相关的行——不顺手重构/重排没坏的代码、不改邻近注释与格式、匹配既有风格；每行 diff 都能追溯到需求，无关 dead code 只提示不删（仅限改动范围外的；范围内的冗余按「舍得删」处理）"
+  },
+  {
+    "id": "c36",
+    "project": null,
+    "kind": "rule",
+    "text": "主代理默认自己做。仅当独立审查、跨模块调查、改设计文档，或真并行能明显提高质量时才派发子代理。"
+  },
+  {
+    "id": "c37",
+    "project": null,
+    "kind": "rule",
+    "text": "几行修改、单文件查询、直接问答不派发。不为制造并行而派发。"
+  },
+  {
+    "id": "c38",
+    "project": null,
+    "kind": "rule",
+    "text": "派发描述必须自包含目标、边界和验收标准。完成后主会话审查结果并补验证，不合格则打回。"
+  },
+  {
+    "id": "c39",
+    "project": null,
+    "kind": "rule",
+    "text": "**默认：除本文件明确要求外，什么额外的都不做。** 想清楚要什么 → 动手 → 让它真跑一遍 / 真用过来验证 → 小事到此为止。"
+  },
+  {
+    "id": "c40",
+    "project": null,
+    "kind": "rule",
+    "text": "**投入与真实风险成比例。** 反对过度工程化、过度拓宽安全边界、过度测试和过度设计；依据实际场景、真实证据、风险发生概率与损失定投入——千分之一的概率，不值得百分百的资源；想象中极少出现、且可轻易重做的问题，别为它铺摊子。"
+  },
+  {
+    "id": "c41",
+    "project": null,
+    "kind": "rule",
+    "text": "**主线优先。** 主线通过验收前，只处理直接阻塞验收的问题；边界条件、异常分支、低概率情况先放下。主线验收后，再按真实需要、概率与损失评估是否处理——不是验收后全部修。"
+  },
+  {
+    "id": "c42",
+    "project": null,
+    "kind": "rule",
+    "text": "**验证别自己说了算。** 真实运行结果（测试、构建、smoke、真实使用）是证据，即使由执行者运行；执行者或另一个 AI 仅凭阅读/主观判断说可用，不算证据。"
+  },
+  {
+    "id": "c43",
+    "project": null,
+    "kind": "rule",
+    "text": "**舍得删。** git 就是退路：能删就删、错了重做，别留「以防万一」的死代码/备份/旧逻辑/占位附录（价值是负的）。只有 git 撤不掉的（外部系统、线上状态、数据、钱）才需要单独想清楚回滚。"
+  },
+  {
+    "id": "c44",
+    "project": null,
+    "kind": "rule",
+    "text": "**越难回头，才越上规矩。** 流程轻重只看有多难回头（撤销成本 × 影响范围 × 多久才被发现），不看代码多少、不看花了多少钱。能随手撤的，别折腾。"
+  },
+  {
+    "id": "c45",
+    "project": null,
+    "kind": "rule",
+    "text": "**加任何一步，先说出「为什么值得」。** 说不出就不加——这条对约定本身也成立。"
+  },
+  {
+    "id": "c46",
+    "project": null,
+    "kind": "rule",
+    "text": "读 (`cat`/`head`/`tail` — 但优先用 `read`)、查 (`grep`/`find`/`ls`)"
+  },
+  {
+    "id": "c47",
+    "project": null,
+    "kind": "rule",
+    "text": "运行测试 / smoke / build"
+  },
+  {
+    "id": "c48",
+    "project": null,
+    "kind": "rule",
+    "text": "git 操作（`add`/`commit`/`mv`/`rm`/`status`/`diff`/`log`）"
+  },
+  {
+    "id": "c49",
+    "project": null,
+    "kind": "rule",
+    "text": "系统状态（`ps`/`df`/`du`/`stat`）"
+  },
+  {
+    "id": "c50",
+    "project": null,
+    "kind": "rule",
+    "text": "编排（cmux send-keys、启动 server）"
+  },
+  {
+    "id": "c51",
+    "project": null,
+    "kind": "rule",
+    "text": "不再需要的 worktree（含 pi-subagents / codex 等子 agent 留下的）要及时删掉，连同它的临时分支。"
+  },
+  {
+    "id": "c52",
+    "project": null,
+    "kind": "rule",
+    "text": "派活在右侧终端面板里跑：Write 写 `/tmp/w-<slug>/prompt`，`run_in_terminal` 跑 `~/code_me/pm/tools/dispatch <pi|codex|codex-ro> <仓库> <prompt> [模型]`，后台 Bash 等 `done`，读 `out.log` / `last.txt`。完整流程见全局 `~/.claude/CLAUDE.md`。"
+  },
+  {
+    "id": "c53",
+    "project": null,
+    "kind": "rule",
+    "text": "本机 shell 是 zsh：以 `=` 开头的词会被当成\"找同名命令\"展开，`echo =====` 报 `==== not found`，整条命令中止、后面的命令不执行、调用显示 Exit code 1。"
+  }
+]

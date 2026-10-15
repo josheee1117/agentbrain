@@ -1,0 +1,6 @@
+0.25 multi 60 size>=3 6 per proj [('data-asset', 5), ('ai-data', 1)]
+['派生指标 dim1..dim8 槽位以 data-asset-platform 的 docs/con', '派生 dimN 的写读两侧规则不同：平台生成的开发脚本 developmentScript.js 写']
+['删除 apps/web/instrumentation.ts 后 Next 16 dev 仍会加载 ', 'ai-data Web 端目录和存储在首个请求时由 ensureStorage() 载入，不用 Ne']
+['embedding 补算判定改用「文本 + 模型」的哈希而不是文本哈希，EMBEDDING_MODE', 'embedding 补算判定用「文本 + 模型」哈希，且每批请求固定当轮模型；否则请求返回前切换模型']
+['不要自己加或改 prisma 迁移；实现若需要新列，停下来在汇报里说明，等用户处理。', 'ai-data worktree 里干活：不要 git checkout/stash/restore']
+0.45 multi 99 size>=3 67 per proj [('data-asset', 25), ('ai-data', 18), ('GLOBAL', 10), ('pstack-pi', 4), ('pi-ops', 4), ('agentbrain', 4), ('insuranceagent', 2)]

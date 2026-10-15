@@ -1,0 +1,24 @@
+{"variant": "project×kind", "split": "test", "clusters": 26, "avg_size": 19.7, "max_size": 77, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 4352, "extra_nongold_per_q": 32.3}
+{"variant": "emb t=0.25", "split": "test", "clusters": 445, "avg_size": 1.1, "max_size": 3, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 37, "extra_nongold_per_q": 0.1}
+{"variant": "emb t=0.25 cap1500", "split": "test", "clusters": 445, "avg_size": 1.1, "max_size": 3, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 37, "extra_nongold_per_q": 0.1}
+{"variant": "emb t=0.35", "split": "test", "clusters": 292, "avg_size": 1.8, "max_size": 7, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 199, "extra_nongold_per_q": 1.1}
+{"variant": "emb t=0.35 cap1500", "split": "test", "clusters": 292, "avg_size": 1.8, "max_size": 7, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 199, "extra_nongold_per_q": 1.1}
+{"variant": "emb t=0.45", "split": "test", "clusters": 142, "avg_size": 3.6, "max_size": 19, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 833, "extra_nongold_per_q": 5.1}
+{"variant": "emb t=0.45 cap1500", "split": "test", "clusters": 142, "avg_size": 3.6, "max_size": 19, "base_cov": 0.852, "scene_cov": 0.852, "rescued": [], "base_chars_per_q": 148, "extra_chars_per_q": 671, "extra_nongold_per_q": 4.4}
+{"variant": "project×kind", "split": "all", "clusters": 26, "avg_size": 19.7, "max_size": 77, "base_cov": 0.844, "scene_cov": 0.896, "rescued": ["D14", "R06", "R18", "R26"], "base_chars_per_q": 166, "extra_chars_per_q": 4593, "extra_nongold_per_q": 34.1}
+{"variant": "emb t=0.25", "split": "all", "clusters": 445, "avg_size": 1.1, "max_size": 3, "base_cov": 0.844, "scene_cov": 0.844, "rescued": [], "base_chars_per_q": 166, "extra_chars_per_q": 43, "extra_nongold_per_q": 0.2}
+{"variant": "emb t=0.25 cap1500", "split": "all", "clusters": 445, "avg_size": 1.1, "max_size": 3, "base_cov": 0.844, "scene_cov": 0.844, "rescued": [], "base_chars_per_q": 166, "extra_chars_per_q": 43, "extra_nongold_per_q": 0.2}
+{"variant": "emb t=0.35", "split": "all", "clusters": 292, "avg_size": 1.8, "max_size": 7, "base_cov": 0.844, "scene_cov": 0.883, "rescued": ["D14", "R18", "R29"], "base_chars_per_q": 166, "extra_chars_per_q": 230, "extra_nongold_per_q": 1.3}
+{"variant": "emb t=0.35 cap1500", "split": "all", "clusters": 292, "avg_size": 1.8, "max_size": 7, "base_cov": 0.844, "scene_cov": 0.883, "rescued": ["D14", "R18", "R29"], "base_chars_per_q": 166, "extra_chars_per_q": 230, "extra_nongold_per_q": 1.3}
+{"variant": "emb t=0.45", "split": "all", "clusters": 142, "avg_size": 3.6, "max_size": 19, "base_cov": 0.844, "scene_cov": 0.883, "rescued": ["D14", "R18", "R29"], "base_chars_per_q": 166, "extra_chars_per_q": 978, "extra_nongold_per_q": 6.0}
+{"variant": "emb t=0.45 cap1500", "split": "all", "clusters": 142, "avg_size": 3.6, "max_size": 19, "base_cov": 0.844, "scene_cov": 0.883, "rescued": ["D14", "R18", "R29"], "base_chars_per_q": 166, "extra_chars_per_q": 752, "extra_nongold_per_q": 4.9}
+{"variant": "scene-first top1 th=0.0", "split": "test", "cov": 0.963, "falseInj": "7/7", "chars_per_q": 405}
+{"variant": "scene-first top1 th=0.45", "split": "test", "cov": 0.963, "falseInj": "4/7", "chars_per_q": 362}
+{"variant": "scene-first top1 th=0.55", "split": "test", "cov": 0.963, "falseInj": "0/7", "chars_per_q": 309}
+Traceback (most recent call last):
+  File "/workspace/agentbrain-review/scene-eval/sim.py", line 82, in <module>
+    q=qv(r['query'])
+  File "/workspace/agentbrain-review/scene-eval/sim.py", line 17, in qv
+    def qv(t): return nz(np.frombuffer(base64.b64decode(cache[t]),dtype=np.float32))
+                                                        ~~~~~^^^
+KeyError: '你好'

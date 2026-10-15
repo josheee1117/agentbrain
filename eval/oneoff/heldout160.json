@@ -1,0 +1,806 @@
+{
+ "definition": "oneOff = message is only a go-ahead/approval or a one-time commit/push/merge/deploy/revert/restart/close style action, with no durable preference, decision or fact. Tasks (review X, write doc), questions, statements are not.",
+ "labeled_before_running_code": true,
+ "items": [
+  {
+   "i": 0,
+   "text": "当前确实知识一个 prompt 加一个 llm 节点。如果可以的话尽量本次就优化了",
+   "oneOff": false
+  },
+  {
+   "i": 1,
+   "text": "按照这个逻辑修改乐享同步的代码",
+   "oneOff": false
+  },
+  {
+   "i": 2,
+   "text": "data-asset-dal/src/main/resources/mapper/TStandardFieldDao.xml 报错了",
+   "oneOff": false
+  },
+  {
+   "i": 3,
+   "text": "你自己启动一个ragflow容器，还有本地的dataasset项目放到docker执行dev_jdk17分支",
+   "oneOff": false
+  },
+  {
+   "i": 4,
+   "text": "去掉这个禁止 restful 风格的限制吧。前端说他更容易接受这个",
+   "oneOff": false
+  },
+  {
+   "i": 5,
+   "text": "好，把这个记到启动脚本里面，然后再次跑一遍整体e2e,没问题我们要转测了",
+   "oneOff": false
+  },
+  {
+   "i": 6,
+   "text": "你读一下他的源码",
+   "oneOff": false
+  },
+  {
+   "i": 7,
+   "text": "我想让你做的是，使用了ikun渠道可以继续官方的对话，使用官方的渠道也可以继续ikun的对话",
+   "oneOff": false
+  },
+  {
+   "i": 8,
+   "text": "如果一个平台的规则没有定制的话，如何保存，如果几个都没有定制，是不是只需要一条 document 就可以",
+   "oneOff": false
+  },
+  {
+   "i": 9,
+   "text": "并且变更日志需要加上，不用太细",
+   "oneOff": false
+  },
+  {
+   "i": 10,
+   "text": "帮我优化一下现有的 skill。检查一下是不是太过复杂或者约束太多",
+   "oneOff": false
+  },
+  {
+   "i": 11,
+   "text": "接手herdr中pane2的工作",
+   "oneOff": false
+  },
+  {
+   "i": 12,
+   "text": "需要带上 schema 才行product-center，注意转义",
+   "oneOff": false
+  },
+  {
+   "i": 13,
+   "text": "你检查一下我当前的 ccswitch 配置",
+   "oneOff": false
+  },
+  {
+   "i": 14,
+   "text": "evidence_chunk_limit 这个有什么用",
+   "oneOff": false
+  },
+  {
+   "i": 15,
+   "text": "不对，主代理需要审查子代理搜集到的沉淀知识是否真的值得沉淀。",
+   "oneOff": false
+  },
+  {
+   "i": 16,
+   "text": "都是自己部署的",
+   "oneOff": false
+  },
+  {
+   "i": 17,
+   "text": "检查知识库当前的转移功能，比如从知识库a转移到了b，那么ragflow知识库a下的知识应该也同步删除才对。我在测试环境转移后ragflow老知识库的知识还存在。",
+   "oneOff": false
+  },
+  {
+   "i": 18,
+   "text": "swarm 形式的又是什么样的工作形式？多 agent 都有哪些类型的？",
+   "oneOff": false
+  },
+  {
+   "i": 19,
+   "text": "好，按你说的改正吧",
+   "oneOff": true
+  },
+  {
+   "i": 20,
+   "text": "当前项目状态",
+   "oneOff": false
+  },
+  {
+   "i": 21,
+   "text": "恢复",
+   "oneOff": true
+  },
+  {
+   "i": 22,
+   "text": "已经打开了，没看到你代理啊",
+   "oneOff": false
+  },
+  {
+   "i": 23,
+   "text": "要后者，你给 json 肯定是不行，要把一个完整单元的变更给一个可理解的。",
+   "oneOff": false
+  },
+  {
+   "i": 24,
+   "text": "线程池修改了什么",
+   "oneOff": false
+  },
+  {
+   "i": 25,
+   "text": "/skill:ponytail-review",
+   "oneOff": false
+  },
+  {
+   "i": 26,
+   "text": "当前状态",
+   "oneOff": false
+  },
+  {
+   "i": 27,
+   "text": "应该是在创建字典类型时，选择了库表后，返回字段的接口中增加一个根据当前库表字段查询是否已有创建过的字典类型然后返回才对",
+   "oneOff": false
+  },
+  {
+   "i": 28,
+   "text": "那1800秒吧，另外ragflow超时时间改成120秒",
+   "oneOff": false
+  },
+  {
+   "i": 29,
+   "text": "调用 memory_search 搜索“用于验证新版知识写入、投影和向量索引同步的项目测试记忆”，不要使用任何 PIASTACK 标识符。",
+   "oneOff": false
+  },
+  {
+   "i": 30,
+   "text": "连一下我们的 dev 数据库，看看本次上线的分支中有哪些表是明确可以删除的，哪些结构不对",
+   "oneOff": false
+  },
+  {
+   "i": 31,
+   "text": "接口",
+   "oneOff": false
+  },
+  {
+   "i": 32,
+   "text": "ragflowde 数据",
+   "oneOff": false
+  },
+  {
+   "i": 33,
+   "text": "checkExpressionCompliance 这个目前也不用。我们还未提供表达合规的内容",
+   "oneOff": false
+  },
+  {
+   "i": 34,
+   "text": "[$archify](~/.codex/skills/archify/SKILL.md)",
+   "oneOff": false
+  },
+  {
+   "i": 35,
+   "text": "部署主机后面再说，需要本地测试通过再说。c我没有额度了。",
+   "oneOff": false
+  },
+  {
+   "i": 36,
+   "text": "什么勾八，我不是在 claude 安装了 chrom 扩展吗",
+   "oneOff": false
+  },
+  {
+   "i": 37,
+   "text": "另外即使 job 的流程是经过检验的，需要改动吗？我看你改了很多里面的代码",
+   "oneOff": false
+  },
+  {
+   "i": 38,
+   "text": "不对吧，[REDACTED:url] 这篇文章不是这么写的",
+   "oneOff": false
+  },
+  {
+   "i": 39,
+   "text": "修复了",
+   "oneOff": false
+  },
+  {
+   "i": 40,
+   "text": "代码 review",
+   "oneOff": false
+  },
+  {
+   "i": 41,
+   "text": "reply with exactly: LOAD_OK",
+   "oneOff": false
+  },
+  {
+   "i": 42,
+   "text": "这个是我临时注释掉的，你的意思是反而本身就没有derive衍生对象的那个cust标签会导致一直重复触发吗",
+   "oneOff": false
+  },
+  {
+   "i": 43,
+   "text": "核验完一条就显示一条 这个可能更合适，既然要流式了那就是完整的流式",
+   "oneOff": false
+  },
+  {
+   "i": 44,
+   "text": "现在给我生成一下这个场景的 e2e 用例，你有没有使用 skill",
+   "oneOff": false
+  },
+  {
+   "i": 45,
+   "text": "你说的第一个工具，应该是要把美的考试这个标签组下的所有的标签都重新同步下游，应该怎么配置",
+   "oneOff": false
+  },
+  {
+   "i": 46,
+   "text": "你要跟他的原始项目对比，移植到pi中有没有丢失功能。以及后续原始项目更新，我们能不能无缝更新。",
+   "oneOff": false
+  },
+  {
+   "i": 47,
+   "text": "好，先出一个specs 文档",
+   "oneOff": false
+  },
+  {
+   "i": 48,
+   "text": "你直接操作页面验证，后验证一个有查询条件的问答对搜索",
+   "oneOff": false
+  },
+  {
+   "i": 49,
+   "text": "合并到 master 把",
+   "oneOff": true
+  },
+  {
+   "i": 50,
+   "text": "docid 能全量获取吗？微盘里面的文档，可以通过 api 批量获取吗",
+   "oneOff": false
+  },
+  {
+   "i": 51,
+   "text": "不是，你行不行啊",
+   "oneOff": false
+  },
+  {
+   "i": 52,
+   "text": "企微官方 CLI 已提供 URL→Markdown 能力。这个怎么验证下",
+   "oneOff": false
+  },
+  {
+   "i": 53,
+   "text": "把代码可能造成 oom 的地方优化下",
+   "oneOff": false
+  },
+  {
+   "i": 54,
+   "text": "你准备如何修改，给我个方案",
+   "oneOff": false
+  },
+  {
+   "i": 55,
+   "text": "review一下，我已经让deepseekv4.1 flash根据你的计划实现了",
+   "oneOff": false
+  },
+  {
+   "i": 56,
+   "text": "现在引入的这个日志框架感觉有点垃圾，不如SpringBoot项目打印的好",
+   "oneOff": false
+  },
+  {
+   "i": 57,
+   "text": "提交一下",
+   "oneOff": true
+  },
+  {
+   "i": 58,
+   "text": "每天早上 5:30（UTC+8）直接发送以下原文，不要改写：你好，五小时限额已重置，欢迎继续使用~ 你看看你是几点通知的",
+   "oneOff": false
+  },
+  {
+   "i": 59,
+   "text": "新开一个 worktree 然后重新从 master 拉一个分支使用 terra high 实现后你仔细 review",
+   "oneOff": false
+  },
+  {
+   "i": 60,
+   "text": "虽然确实 ai 知识来源的问答改成了待审核，但是没有生成审核任务 id，审核时报错了。当前问答缺少审核任务 ID，无法进入审核",
+   "oneOff": false
+  },
+  {
+   "i": 61,
+   "text": "用人话说明。听不懂",
+   "oneOff": false
+  },
+  {
+   "i": 62,
+   "text": "以一个场景为例，我如何端到端 review 你的用例和测试流程 结果 该看哪些目录的文件",
+   "oneOff": false
+  },
+  {
+   "i": 63,
+   "text": "检查下advisor可不可用",
+   "oneOff": false
+  },
+  {
+   "i": 64,
+   "text": "从1改成4是因为耗时，如果改回1的话时间太长了。用4的时候如果没有返回关联的知识，你用1就能返回了吗",
+   "oneOff": false
+  },
+  {
+   "i": 65,
+   "text": "那我们的流式现在展示的是啥",
+   "oneOff": false
+  },
+  {
+   "i": 66,
+   "text": "本次你修改了哪些需求",
+   "oneOff": false
+  },
+  {
+   "i": 67,
+   "text": "按最新的设计文档，重新梳理一下实现ticket",
+   "oneOff": false
+  },
+  {
+   "i": 68,
+   "text": "合并到该问答对时，没有将该问答对的相识问法一并合并过去",
+   "oneOff": false
+  },
+  {
+   "i": 69,
+   "text": "linus 式的能否放到 codex 本身的个性化设置里面？",
+   "oneOff": false
+  },
+  {
+   "i": 70,
+   "text": "这些任务都执行的这么慢吗？",
+   "oneOff": false
+  },
+  {
+   "i": 71,
+   "text": "codex 优先读取的是 agents.md？可是 pi 也是，我想让 pi 的跟 codex 不一样该怎么设置",
+   "oneOff": false
+  },
+  {
+   "i": 72,
+   "text": "不是吧，agentscope本身的流式打开以后，可以跟我们的流式模式一起返回吧。也能看到更完整的工作过程，不对吗",
+   "oneOff": false
+  },
+  {
+   "i": 73,
+   "text": "请你把 ragflow 的 python 后端",
+   "oneOff": false
+  },
+  {
+   "i": 74,
+   "text": "你直接帮我改了不得了吗",
+   "oneOff": true
+  },
+  {
+   "i": 75,
+   "text": "我在里面启动了一个 5.6 sol medium",
+   "oneOff": false
+  },
+  {
+   "i": 76,
+   "text": "应该是判断前一天的才对",
+   "oneOff": false
+  },
+  {
+   "i": 77,
+   "text": "linusreview",
+   "oneOff": false
+  },
+  {
+   "i": 78,
+   "text": "到 0413-ragflow 这个分支",
+   "oneOff": false
+  },
+  {
+   "i": 79,
+   "text": "我有个问题，pensieve的图的节点关系你是怎么确定依赖关系的？",
+   "oneOff": false
+  },
+  {
+   "i": 80,
+   "text": "你直接给我一个 sql，我来刷一下就得了",
+   "oneOff": false
+  },
+  {
+   "i": 81,
+   "text": "切换到主 worktree，他在 rtagflow 分支",
+   "oneOff": false
+  },
+  {
+   "i": 82,
+   "text": "group.getTagIds这里的数据是怎么查出来的",
+   "oneOff": false
+  },
+  {
+   "i": 83,
+   "text": "pi现在可以指定subagent是用什么模型吗",
+   "oneOff": false
+  },
+  {
+   "i": 84,
+   "text": "帮我优化一下到 99 分",
+   "oneOff": false
+  },
+  {
+   "i": 85,
+   "text": "按照之前文档优化后的架构是怎样的",
+   "oneOff": false
+  },
+  {
+   "i": 86,
+   "text": "提交推送合并 dev",
+   "oneOff": true
+  },
+  {
+   "i": 87,
+   "text": "算了，还是保持现状吧。下一阶段",
+   "oneOff": false
+  },
+  {
+   "i": 88,
+   "text": "好，帮我先把pi-astack弄可用了",
+   "oneOff": false
+  },
+  {
+   "i": 89,
+   "text": "那岂不是我们在判断的时候压根不要比较hash，直接把他这个算法拿过来，然后使用生成的chunkid查一下对应chunk存不存在不就知道了吗",
+   "oneOff": false
+  },
+  {
+   "i": 90,
+   "text": "确认pi现在的状态，装了哪些扩展，分别有什么能力",
+   "oneOff": false
+  },
+  {
+   "i": 91,
+   "text": "为我们待实现的计划生成一个goal验收标准",
+   "oneOff": false
+  },
+  {
+   "i": 92,
+   "text": "[REDACTED:url] 这个 skill 的作用",
+   "oneOff": false
+  },
+  {
+   "i": 93,
+   "text": "我是说用herdr控制pi、codex 还是直接pi rpc codex rescue。多agent协作能够更顺畅",
+   "oneOff": false
+  },
+  {
+   "i": 94,
+   "text": "啥意思，我现在是另一个 worktree，主分支在做别的事",
+   "oneOff": false
+  },
+  {
+   "i": 95,
+   "text": "作为技术文档提交上去",
+   "oneOff": false
+  },
+  {
+   "i": 96,
+   "text": "交给他实施吧",
+   "oneOff": true
+  },
+  {
+   "i": 97,
+   "text": "生成一个正常的前端接入说明吧。另外关闭还在运行的子代理",
+   "oneOff": false
+  },
+  {
+   "i": 98,
+   "text": "另一个启动的把它关了",
+   "oneOff": true
+  },
+  {
+   "i": 99,
+   "text": "落地后端就可以，前端不用管",
+   "oneOff": false
+  },
+  {
+   "i": 100,
+   "text": "给我一个方案。我要的是e2e 能力工程化。",
+   "oneOff": false
+  },
+  {
+   "i": 101,
+   "text": "那么他这里面自带的这么多skill都有什么作用",
+   "oneOff": false
+  },
+  {
+   "i": 102,
+   "text": "口径字段作为描述",
+   "oneOff": false
+  },
+  {
+   "i": 103,
+   "text": "如何将本项目的pensieve只是迁移到abrain",
+   "oneOff": false
+  },
+  {
+   "i": 104,
+   "text": "你拉个分支改完以后合并到 master",
+   "oneOff": true
+  },
+  {
+   "i": 105,
+   "text": "为什么这种问题会出现？我切换成中转站以后尤其明显。能否彻底修复",
+   "oneOff": false
+  },
+  {
+   "i": 106,
+   "text": "这个返回元数据和 chunk 接口查询的是哪里的元数据？什么时候保存的",
+   "oneOff": false
+  },
+  {
+   "i": 107,
+   "text": "那还需要调用init接口吗？不是已经有reviewTaskId了吗",
+   "oneOff": false
+  },
+  {
+   "i": 108,
+   "text": "a 合并到 b 之后，a 的相似问没有带到 b 的审核页面中（可能是草稿中没有？）",
+   "oneOff": false
+  },
+  {
+   "i": 109,
+   "text": "重点是 ragflow 中的，脏数据。",
+   "oneOff": false
+  },
+  {
+   "i": 110,
+   "text": "什么几把玩意，我直接查询这张表的字段全部返回给前端，不行吗？至于当前模版下面哪些字段已映射，不是有地方存 吗？你到底在说什么",
+   "oneOff": false
+  },
+  {
+   "i": 111,
+   "text": "谁让你改glm-latest 声明 contextWindow: 1000000的这个了，报错的模型是grok4.6",
+   "oneOff": false
+  },
+  {
+   "i": 112,
+   "text": "确认",
+   "oneOff": true
+  },
+  {
+   "i": 113,
+   "text": "开始吧。我觉得总结报告可以使用类似 show-me 的技能，输出一个阅读有好的内容",
+   "oneOff": false
+  },
+  {
+   "i": 114,
+   "text": "调整我们的设计方案，然后把表结构和流程给我用流程图说清楚",
+   "oneOff": false
+  },
+  {
+   "i": 115,
+   "text": "你为什么只更新了 summary 没有记录 adr？",
+   "oneOff": false
+  },
+  {
+   "i": 116,
+   "text": "切换到另一个 ragflow 分支所在的 worktree",
+   "oneOff": false
+  },
+  {
+   "i": 117,
+   "text": "采用“整棵树编译为外层行级 WHERE 谓词是什么意思",
+   "oneOff": false
+  },
+  {
+   "i": 118,
+   "text": "请使用子代理修复这些问题，你把关实现质量",
+   "oneOff": false
+  },
+  {
+   "i": 119,
+   "text": "我说的是codex 本身的批注",
+   "oneOff": false
+  },
+  {
+   "i": 120,
+   "text": "你的方式太复杂了，用户需要等很久才能得到推荐的知识库。",
+   "oneOff": false
+  },
+  {
+   "i": 121,
+   "text": "mac上的alt+up是哪个键？",
+   "oneOff": false
+  },
+  {
+   "i": 122,
+   "text": "你说的这个模型老老实实填了 content 这个字段，但填的是空字符串。不是填错字段名，就是给了个空值，打算如何改动，影响是什么",
+   "oneOff": false
+  },
+  {
+   "i": 123,
+   "text": "echo \"Hello from ZCode!\"",
+   "oneOff": false
+  },
+  {
+   "i": 124,
+   "text": "给我一个dataasset改动的总结",
+   "oneOff": false
+  },
+  {
+   "i": 125,
+   "text": "想办法完成验证",
+   "oneOff": false
+  },
+  {
+   "i": 126,
+   "text": "给我真实的代码，而不是路径",
+   "oneOff": false
+  },
+  {
+   "i": 127,
+   "text": "执行完成后提交代码并推送然后合并到 dev 并推送",
+   "oneOff": true
+  },
+  {
+   "i": 128,
+   "text": "帮我检查下还有哪些丢失了",
+   "oneOff": false
+  },
+  {
+   "i": 129,
+   "text": "再试一下",
+   "oneOff": true
+  },
+  {
+   "i": 130,
+   "text": "修复一下temperature、llm_max_output_tokens可配置。并且相似度阈值似乎也是可选择的参数把。这个也放出来。",
+   "oneOff": false
+  },
+  {
+   "i": 131,
+   "text": "你刚刚说的间隔 30 秒记录存在哪里的",
+   "oneOff": false
+  },
+  {
+   "i": 132,
+   "text": "现在的preview接口使用的是哪个知识库 qa: dataset-id 是这个吗",
+   "oneOff": false
+  },
+  {
+   "i": 133,
+   "text": "为什么查询不出来数据？你底层查的哪张表",
+   "oneOff": false
+  },
+  {
+   "i": 134,
+   "text": "你现在是core还是codingagent",
+   "oneOff": false
+  },
+  {
+   "i": 135,
+   "text": "tail -f看起来也不像终端里面一样显示的很清晰，那种不停闪日志谁能看懂。就按你说的做",
+   "oneOff": false
+  },
+  {
+   "i": 136,
+   "text": "批量导入生成问答对的功能，重复跳过，是跟 excel 中的问题比还是跟数据库中已有的？",
+   "oneOff": false
+  },
+  {
+   "i": 137,
+   "text": "我也是旧的会话可用",
+   "oneOff": false
+  },
+  {
+   "i": 138,
+   "text": "下一步呢？",
+   "oneOff": false
+  },
+  {
+   "i": 139,
+   "text": "新增知识和编辑知识时新增一个字段，是否切片，对应ragflow的创建时解析字段",
+   "oneOff": false
+  },
+  {
+   "i": 140,
+   "text": "那你确认啊",
+   "oneOff": false
+  },
+  {
+   "i": 141,
+   "text": "没有什么默认跳过真实入库的考虑，我都说了有测试库，去掉这个配置，我让你直接跑出可review的真实数据明白吗",
+   "oneOff": false
+  },
+  {
+   "i": 142,
+   "text": "对了，当前项目部署到测试环境之后如何开放给其他组使用？如何鉴权的",
+   "oneOff": false
+  },
+  {
+   "i": 143,
+   "text": "我觉得可以不考虑权限，只根据查询条件缓存，因为权限可能不会变更频繁，而且总数只是参考",
+   "oneOff": false
+  },
+  {
+   "i": 144,
+   "text": "在评审一下，给我一个最终抉择的方案",
+   "oneOff": false
+  },
+  {
+   "i": 145,
+   "text": "指标监测表中的, biz_date 字段需要返回给前端",
+   "oneOff": false
+  },
+  {
+   "i": 146,
+   "text": "你直接给我一个完整版",
+   "oneOff": false
+  },
+  {
+   "i": 147,
+   "text": "改回去吧",
+   "oneOff": true
+  },
+  {
+   "i": 148,
+   "text": "更新了啥",
+   "oneOff": false
+  },
+  {
+   "i": 149,
+   "text": "希望的是b",
+   "oneOff": false
+  },
+  {
+   "i": 150,
+   "text": "markdown的文本和html的有什么不同",
+   "oneOff": false
+  },
+  {
+   "i": 151,
+   "text": "那你给我一个方案吧。",
+   "oneOff": false
+  },
+  {
+   "i": 152,
+   "text": "[$eli5](~/.agents/skills/eli5/SKILL.md)",
+   "oneOff": false
+  },
+  {
+   "i": 153,
+   "text": "把当前模型参与的阶段给我列一下",
+   "oneOff": false
+  },
+  {
+   "i": 154,
+   "text": "切到codex/20260914分支",
+   "oneOff": false
+  },
+  {
+   "i": 155,
+   "text": "不一定局限于现有方案",
+   "oneOff": false
+  },
+  {
+   "i": 156,
+   "text": "修饰词- 参数条件选择指标时，详情接口的sql样例返回的不是我给你传的----这是前端给的反馈",
+   "oneOff": false
+  },
+  {
+   "i": 157,
+   "text": "AttributeError: 'dict' object has no attribute 'ValueError'",
+   "oneOff": false
+  },
+  {
+   "i": 158,
+   "text": "已配置",
+   "oneOff": false
+  },
+  {
+   "i": 159,
+   "text": "生产代码已改为 app_name/app_is_sale 把单测和 pensieve 改成现在代码的样子",
+   "oneOff": false
+  }
+ ]
+}
