@@ -375,6 +375,11 @@ async function timed(member: string, role: CallStat["role"], f: () => ReturnType
         await new Promise((r) => setTimeout(r, wait));
         continue;
       }
+      // 上游过载/暂不可用（502/503/504）：和 429 一样按退避表重试，但用完就算这一票失败，不停整次运行
+      if (/HTTP 50[234]\b/.test(err.message) && throttled < retryPolicy.backoffMs.length) {
+        await new Promise((r) => setTimeout(r, retryPolicy.backoffMs[throttled++]));
+        continue;
+      }
       if (other >= retryPolicy.otherRetries) {
         stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: err.message.slice(0, 200) });
         return null;

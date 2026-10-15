@@ -262,3 +262,16 @@ test("parseRetryAfterMs：头里的秒数、正文里的重置时间、retry aft
   assert.equal(parseRetryAfterMs(null, "please retry after 30s"), 30_000);
   assert.equal(parseRetryAfterMs(null, "nothing"), undefined);
 });
+
+test("上游 503 过载：退避重试后成功", async () => {
+  let n = 0;
+  const busy: Chat = async () => {
+    if (n++ < 2) throw Object.assign(new Error("模型接口 HTTP 503: server_is_overloaded"), { code: "http_error" });
+    return { message: { role: "assistant", content: JSON.stringify({ verdicts: [{ id: "c1", verdict: "discard", class: "none" }] }) }, tokens: 1 };
+  };
+  const ok = reply([{ id: "c1", verdict: "discard", class: "none" }]);
+  const stats: CallStat[] = [];
+  const [r] = await judgeBatch([cand("a")], [{ name: "x", chat: busy }, { name: "y", chat: ok }, { name: "z", chat: ok }], { name: "y", chat: ok }, stats);
+  assert.equal(r.decision.route, "unanimous");
+  assert.equal(n, 3);
+});
