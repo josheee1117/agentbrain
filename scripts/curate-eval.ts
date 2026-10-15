@@ -83,10 +83,10 @@ const q = (xs: number[], p: number) => (xs.length ? xs.sort((a, b) => a - b)[Mat
 const cost = Object.fromEntries(
   [...new Set(stats.map((s) => `${s.member}/${s.role}`))].map((k) => {
     const xs = stats.filter((s) => `${s.member}/${s.role}` === k);
-    return [k, { calls: xs.length, failed: xs.filter((s) => !s.ok).length, tokens: xs.reduce((n, s) => n + s.tokens, 0), p50_ms: q(xs.map((s) => s.ms), 0.5), max_ms: Math.max(...xs.map((s) => s.ms)), errors: [...new Set(xs.map((s) => s.error).filter(Boolean))] }];
+    return [k, { calls: xs.length, failed: xs.filter((s) => !s.ok).length, tokens: xs.reduce((n, s) => n + s.tokens, 0), cost_usd: Number(xs.reduce((n, s) => n + (s.costUsd ?? 0), 0).toFixed(4)), total_ms: xs.reduce((n, s) => n + s.ms, 0), p50_ms: q(xs.map((s) => s.ms), 0.5), max_ms: Math.max(...xs.map((s) => s.ms)), errors: [...new Set(xs.map((s) => s.error).filter(Boolean))] }];
   }),
 );
-const summary = { at: new Date().toISOString(), panel: cfg.panel.map((m) => `${m.name}:${m.model}`), mode: cfg.mode, primary: cfg.primary, arbiter: cfg.mode === "primary" ? null : cfg.arbiter, batch: cfg.batchSize, wall_ms: wall, all: split(null), ...Object.fromEntries([...new Set(rows.map((r) => r.set))].map((s) => [s, split(s)])), cost };
+const summary = { at: new Date().toISOString(), panel: cfg.panel.map((m) => (m.type === "cli" ? `${m.name}:${m.host}:${m.model || "默认"}@${m.effort ?? "-"}` : `${m.name}:${m.model}`)), mode: cfg.mode, primary: cfg.primary, arbiter: cfg.mode === "primary" ? null : cfg.arbiter, batch: cfg.batchSize, wall_ms: wall, all: split(null), ...Object.fromEntries([...new Set(rows.map((r) => r.set))].map((s) => [s, split(s)])), cost };
 writeFileSync(outPath, JSON.stringify({ summary, rows }, null, 1));
 console.log(JSON.stringify(summary, null, 1));
 store.close();
