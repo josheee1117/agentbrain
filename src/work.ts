@@ -3,6 +3,7 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
+import { buildScenes, sceneRebuildReason } from "./scene.ts";
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -85,6 +86,8 @@ export interface WorkReport {
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
   relate: Record<RelateOutcome | "corroborated" | "errors", number>;
   dry: { session: string; windows: number; chars: number }[];
+  /** 场景目录（L3）重建：建成、因条件不足跳过、出错。 */
+  scenes: { built: string[]; skipped: number; errors: number };
 }
 
 // ---------- 会话登记 ----------
@@ -825,6 +828,31 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   }
 }
 
+/**
+ * 场景目录重建（L3，scene.ts）：只对登记了路径的项目、只在变化够大或太旧时请模型起标题。
+ * 出错只计数，不影响本次 work 的其他结果；brief 读旧目录或退回原提示。
+ */
+async function scenePass(deps: WorkDeps, report: WorkReport): Promise<void> {
+  const chat = "error" in deps.chat ? null : deps.chat;
+  const known = new Map(deps.store.listProjects().map((p) => [p.name, p.id]));
+  for (const e of deps.registry) {
+    const pid = known.get(e.name);
+    if (!e.path || !pid) continue;
+    try {
+      if (!sceneRebuildReason(deps.store, pid, deps.now())) continue;
+      if (!chat) {
+        report.scenes.skipped++;
+        continue;
+      }
+      const r = await buildScenes({ store: deps.store, chat, now: deps.now }, pid);
+      if (r.status === "built") report.scenes.built.push(e.name);
+      else report.scenes.skipped++;
+    } catch {
+      report.scenes.errors++;
+    }
+  }
+}
+
 export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkReport> {
   const report: WorkReport = {
     busy: false,
@@ -835,6 +863,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
     relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
+    scenes: { built: [], skipped: 0, errors: 0 },
   };
   const db = deps.store.workDb;
   const holder = opts.dryRun ? "dry-run" : intake.acquireLease(db, deps.now());
@@ -854,6 +883,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     const backlog: Backlog = { left: BACKLOG_WINDOWS_PER_SWEEP };
     for (const s of ordered) await processSession(deps, s, opts, report, holder, backlog);
     if (!opts.dryRun) await relatePass(deps, report, holder);
+    if (!opts.dryRun) await scenePass(deps, report);
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);
       intake.prune(db, deps.now());

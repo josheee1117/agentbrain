@@ -20,6 +20,7 @@ import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM,
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { brief, BriefError } from "./brief.ts";
+import { buildScenes, findScene, resolveScenes, sceneRebuildReason, SCENE_PROMPT_VERSION } from "./scene.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
@@ -901,7 +902,91 @@ async function cmdWork(argv: string[]): Promise<void> {
         `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
         Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
+        r.scenes.built.length || r.scenes.errors ? `场景目录: 重建 ${r.scenes.built.length}${r.scenes.built.length ? `（${r.scenes.built.join("、")}）` : ""}，出错 ${r.scenes.errors}` : "",
         values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}` : "",
+      ].filter(Boolean).join("\n"),
+    );
+  } finally {
+    store.close();
+  }
+}
+
+const KIND_ORDER: PropKind[] = ["rule", "pitfall", "decision", "note"];
+
+/** ab scene：场景目录（L3 派生索引，scene.ts）。打开一个场景只列原条目，不改写。 */
+async function cmdScene(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      project: { type: "string" },
+      force: { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  const store = open();
+  try {
+    const names = namesOf(store);
+    const projectName = values.project ?? resolveProject(process.cwd())?.name;
+    if (positionals[0] === "build") {
+      const targets = values.project
+        ? [values.project]
+        : projectName
+          ? [projectName]
+          : loadRegistry().filter((e) => e.path).map((e) => e.name);
+      const deps = workDeps(store);
+      const chat = "error" in deps.chat ? null : deps.chat;
+      if (!chat) die(`场景标题要用抽取模型，当前不可用：${"error" in deps.chat ? deps.chat.message : ""}`);
+      const reason = await updateVectors(store);
+      if (reason) console.log(`向量未更新：${reason}（用已有向量分组）`);
+      for (const name of targets) {
+        const pid = projectIdByName(store, name);
+        const why = values.force ? "force" : sceneRebuildReason(store, pid, new Date());
+        if (!why) {
+          console.log(`${name}: 场景目录不需要重建`);
+          continue;
+        }
+        const r = await buildScenes({ store, chat, now: () => new Date() }, pid);
+        console.log(
+          r.status === "built"
+            ? `${name}: 已重建 ${r.set.scenes.length} 个场景，覆盖 ${r.set.scenes.reduce((n, s) => n + s.members.length, 0)} 条（${why}；${chat.model}，${SCENE_PROMPT_VERSION}，${r.tokens} tokens）`
+            : `${name}: 跳过（${r.status === "skipped" ? r.reason : ""}）`,
+        );
+      }
+      return;
+    }
+    if (positionals[0]) {
+      const hit = findScene(store, positionals[0]);
+      if (!hit) die(`找不到场景: ${positionals[0]}（ab scene 列出当前项目的场景）`);
+      const { scene } = hit;
+      const rows = [...scene.members].sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || b.seq - a.seq);
+      const out = [`场景 [${scene.sid}] ${scene.title}（${names.get(hit.projectId) ?? "未知项目"}，${rows.length} 条；以下是原条目，未改写）`];
+      for (const p of rows) {
+        out.push(
+          `[${short(p.id)}] ${KIND_LABEL[p.kind]}${marks(p)}${disputed(p)}${p.conflicts_with ? `（与 [${short(p.conflicts_with)}] 说法冲突）` : ""}: ${p.text}`,
+          ...(p.value?.scenario ?? p.trigger ? [`  场景: ${p.value?.scenario ?? p.trigger}`] : []),
+          ...(p.why ? [`  为什么: ${p.why}`] : []),
+          `  来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）  记录于 ${p.ts.slice(0, 10)}`,
+        );
+      }
+      out.push("看某条的完整证据和当时的讨论：ab get <id> --expand");
+      console.log(out.join("\n"));
+      markUsed(store, rows.map((p) => p.id));
+      return;
+    }
+    if (!projectName) die("当前目录不是已登记项目：用 --project <项目名>，或给出场景编号");
+    const pid = projectIdByName(store, projectName);
+    const r = resolveScenes(store, pid);
+    if (!r || !r.scenes.length) {
+      console.log(`${projectName} 还没有场景目录（条目够多时 ab work 会在后台建；手动建用 ab scene build）。`);
+      return;
+    }
+    console.log(
+      [
+        `${projectName} 的场景目录（${r.set.built_at.slice(0, 10)} 建，${r.set.model}）：`,
+        ...r.scenes.map((s) => `- [${s.sid}] ${s.title}（${s.members.length} 条）`),
+        r.unassigned.length ? `未归组 ${r.unassigned.length} 条：用 ab search 查。` : "",
+        "打开一个场景：ab scene <编号>",
       ].filter(Boolean).join("\n"),
     );
   } finally {
@@ -1017,6 +1102,10 @@ const USAGE = `用法:
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
   ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
+  ab scene [<编号>] [--project <项目名>]
+                                    场景目录：同一类工作情境的记忆分在一组（只有标题，不改写原文）；给编号列出该组的原条目
+  ab scene build [--project <项目名>] [--force]
+                                    重建场景目录（ab work 会在条目变化够多时自动重建；标题由抽取模型起）
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
@@ -1070,6 +1159,7 @@ async function main(): Promise<void> {
     if (cmd === "import") return await cmdImport(rest);
     if (cmd === "view") return cmdView(rest);
     if (cmd === "review") return cmdReview(rest);
+    if (cmd === "scene") return await cmdScene(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;

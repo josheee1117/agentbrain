@@ -3,8 +3,11 @@ import type { Store } from "./store.ts";
 import type { PropKind, Proposition } from "./l2.ts";
 import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
 import { active, disputed, projectIdByName, short } from "./present.ts";
+import { resolveScenes } from "./scene.ts";
 
 export const BRIEF_MAX_CHARS = 2000;
+/** 场景目录在 brief 里最多占的字数（开工背景评测 tune 集选定）。 */
+export const SCENE_DIR_MAX_CHARS = 600;
 
 /** 用法错误（项目名不在清单、--worker 不在项目里）：CLI 打到 stderr 并以 1 退出。 */
 export class BriefError extends Error {}
@@ -32,6 +35,28 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
 }
 
 const CLOSE = "\n</agentbrain>\n";
+
+/**
+ * 场景目录：只有标题和条数，不放记忆正文（正文用 ab scene <编号> 看原条目）。
+ * 没建过场景（或全部成员都已掉出）返回 null，brief 退回原来的"决定/事实 N 条"提示。
+ */
+export function sceneDirectory(store: Store, projectId: string, max = SCENE_DIR_MAX_CHARS): string | null {
+  const r = resolveScenes(store, projectId);
+  if (!r || !r.scenes.length) return null;
+  const head = "本项目记忆按场景分组（只列标题；做相关的事前用 ab scene <编号> 看原条目）：";
+  const tail = (left: number, more: number) =>
+    [more ? `另有 ${more} 个较小的场景：ab scene 列全部。` : "", left ? `未归组 ${left} 条：用 ab search 查。` : ""].filter(Boolean).join("\n");
+  const rows: string[] = [];
+  let used = head.length + tail(r.unassigned.length, r.scenes.length).length + 2;
+  for (const s of r.scenes) {
+    const line = `- [${s.sid}] ${s.title}（${s.members.length} 条）`;
+    if (used + line.length + 1 > max) break;
+    rows.push(line);
+    used += line.length + 1;
+  }
+  if (!rows.length) return null;
+  return [head, ...rows, tail(r.unassigned.length, r.scenes.length - rows.length)].filter(Boolean).join("\n");
+}
 
 /** 正文预算 = 上限减掉开头、各段标题、结尾提示。各段再按原比例（均分）分。 */
 function contentBudgets(fixed: string[], titles: string[]): number[] {
@@ -108,9 +133,15 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
         kinds: ["pitfall", "rule"],
       },
     );
-    const decisions = mine.filter((p) => p.kind === "decision" && p.confirmed).length;
-    const notes = mine.filter((p) => p.kind === "note" && p.confirmed).length;
-    after.push(`决定 ${decisions} 条、事实 ${notes} 条：用 ab search 查，ab get 看当时的讨论。`);
+    const dir = sceneDirectory(store, pid);
+    if (dir) {
+      after.push(dir);
+      noteFor = (n) => `坑与规则还有 ${n} 条放不下，按上面的场景目录打开，或用 ab search 查。`;
+    } else {
+      const decisions = mine.filter((p) => p.kind === "decision" && p.confirmed).length;
+      const notes = mine.filter((p) => p.kind === "note" && p.confirmed).length;
+      after.push(`决定 ${decisions} 条、事实 ${notes} 条：用 ab search 查，ab get 看当时的讨论。`);
+    }
   } else {
     head = '<agentbrain scope="unregistered">';
     before.push("当前目录不是已登记项目，只给出全局记忆。");

@@ -12,6 +12,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { cosine, fromBlob, toBlob } from "./embed.ts";
+import type { SceneSet } from "./scene.ts";
 import { fold, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
 
 const BUSY_TIMEOUT_MS = 5000;
@@ -95,6 +96,7 @@ CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, text_hash TEXT NOT NULL, ve
 CREATE VIRTUAL TABLE IF NOT EXISTS props USING fts5(
   id UNINDEXED, project_id UNINDEXED, kind UNINDEXED, state UNINDEXED, text,
   tokenize='trigram');
+CREATE TABLE IF NOT EXISTS scenes(project_id TEXT PRIMARY KEY, body TEXT NOT NULL);
 `;
 
 function openDb(path: string): DatabaseSync {
@@ -312,7 +314,7 @@ export class Store {
 
   // ---------- L2：纯函数投影；缓存按 L1 水位校验（§7.3） ----------
 
-  private watermark(): number {
+  watermark(): number {
     const row = this.db.prepare("SELECT max(seq) AS seq FROM events").get() as { seq: number | null };
     return row.seq ?? 0;
   }
@@ -416,6 +418,26 @@ export class Store {
       throw e;
     }
     return { embedded, pending: this.pendingVectors().length };
+  }
+
+  // ---------- L3：场景目录（scene.ts）。派生索引，可整表删掉后用 ab scene build 重建 ----------
+
+  readScenes(projectId: string): SceneSet | null {
+    const row = this.fts.prepare("SELECT body FROM scenes WHERE project_id=?").get(projectId) as { body: string } | undefined;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.body) as SceneSet;
+    } catch {
+      return null;
+    }
+  }
+
+  writeScenes(set: SceneSet): void {
+    this.fts.prepare("INSERT OR REPLACE INTO scenes(project_id, body) VALUES(?,?)").run(set.project_id, JSON.stringify(set));
+  }
+
+  sceneProjects(): string[] {
+    return (this.fts.prepare("SELECT project_id FROM scenes ORDER BY project_id").all() as { project_id: string }[]).map((r) => r.project_id);
   }
 
   /** 所有与当前文本一致的已存向量（只读，不发网络请求）；供 ab view 画图和算近邻。 */
