@@ -308,6 +308,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
       confirmed,
       source,
       ...(staged ? { candidate: true } : {}),
+      ...(values.direct && !confirmed ? { direct: true } : {}),
     });
     let out = staged
       ? `已放进候选区 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`
@@ -577,7 +578,7 @@ function cmdAudit(argv: string[]): void {
 
 /**
  * agent 用 ab remember 直接写进正式库、没加 --confirmed 的条目（v3 候选区上线前的旧行为）→ 移回候选区，交给审稿。
- * 只挑：手工写入（非自动抽取、非导入）、写入时未确认、不是纠正、当前在正式库、用户没确认过。可用 ab stage <id> --undo 撤销。
+ * 只挑：手工写入（非自动抽取、非导入、非 --direct 迁移）、写入时未确认、不是纠正、当前在正式库、用户没确认过。可用 ab stage <id> --undo 撤销。
  */
 function auditAgentRemember(since: string | undefined, apply: boolean): void {
   if (!since || Number.isNaN(Date.parse(since))) die("用法: ab audit agent-remember --since <ISO 时间，如 2026-10-14T08:46:00Z> [--apply]");
@@ -590,7 +591,7 @@ function auditAgentRemember(since: string | undefined, apply: boolean): void {
     const plan: Proposition[] = [];
     for (const r of rows) {
       const b = r.body;
-      if ((b.origin ?? "manual") !== "manual" || b.confirmed !== false || b.supersedes || b.candidate) continue;
+      if ((b.origin ?? "manual") !== "manual" || b.confirmed !== false || b.supersedes || b.candidate || b.direct) continue;
       const p = props.get(r.id);
       if (!p || p.state !== "active" || p.confirmed_by === "user") continue;
       plan.push(p);

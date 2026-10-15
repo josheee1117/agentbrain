@@ -79,6 +79,8 @@ export interface RememberBody {
   guidance?: boolean;
   /** 写进候选区（v3）：投影成 state=candidate。 */
   candidate?: boolean;
+  /** ab remember --direct（人工迁移数据）写入：ab audit agent-remember 不把它当成 agent 自记。 */
+  direct?: boolean;
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
 }

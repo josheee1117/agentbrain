@@ -67,7 +67,7 @@ mkdirSync(nowhere);
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-function ab(args: string[], cwd: string, storeHome = home): { out: string; err: string; code: number } {
+function ab(args: string[], cwd: string, storeHome = home, extraEnv: Record<string, string> = {}): { out: string; err: string; code: number } {
   try {
     const out = execFileSync("node", ["--import", networkGuard, CLI, ...args], {
       cwd,
@@ -81,6 +81,7 @@ function ab(args: string[], cwd: string, storeHome = home): { out: string; err: 
         CLAUDE_CODE_SESSION_ID: "",
         CODEX_THREAD_ID: "",
         PI_SESSION_ID: SESSION,
+        ...extraEnv,
       },
     });
     return { out, err: "", code: 0 };
@@ -209,12 +210,16 @@ test("v3：--confirmed 直接进正式库；AB_STAGING=off 回到旧行为", () 
 test("v3：ab audit agent-remember 预览/应用，ab stage --undo 撤销；用户确认的、自动抽取的不动", () => {
   const own = join(dir, "stage-home");
   const since = new Date(Date.now() - 1000).toISOString();
-  const direct = ab(["remember", "--direct", "--kind", "pitfall", "--text", "旧行为直接写进正式库的坑", "--summary", "迁移"], alpha, own);
+  // 候选区上线前 agent 的旧行为（等同 AB_STAGING=off）：直接写进正式库、未确认
+  const legacy = { AB_STAGING: "off" };
+  const direct = ab(["remember", "--kind", "pitfall", "--text", "旧行为直接写进正式库的坑", "--summary", "迁移"], alpha, own, legacy);
   assert.equal(direct.code, 0, direct.err);
   const did = direct.out.match(/\[([0-9a-f]{8})\]/)![1];
   const user = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "用户确认的坑不许动", "--summary", "用户"], alpha, own);
   const uid = user.out.match(/\[([0-9a-f]{8})\]/)![1];
-  const later = ab(["remember", "--direct", "--kind", "rule", "--text", "又一条直接写的规则", "--summary", "迁移"], alpha, own);
+  const later = ab(["remember", "--kind", "rule", "--text", "又一条直接写的规则", "--summary", "迁移"], alpha, own, legacy);
+  const migr = ab(["remember", "--direct", "--kind", "note", "--text", "人工迁移的条目", "--summary", "迁移"], alpha, own);
+  const mid = migr.out.match(/\[([0-9a-f]{8})\]/)![1];
   const lid = later.out.match(/\[([0-9a-f]{8})\]/)![1];
   assert.equal(ab(["confirm", lid], alpha, own).code, 0); // 用户事后确认过：不动
 
@@ -222,7 +227,7 @@ test("v3：ab audit agent-remember 预览/应用，ab stage --undo 撤销；用�
   assert.equal(dry.code, 0, dry.err);
   assert.match(dry.out, /1 条/);
   assert.match(dry.out, new RegExp(`\\[${did}\\]`));
-  assert.doesNotMatch(dry.out, new RegExp(`\\[${uid}\\]|\\[${lid}\\]`));
+  assert.doesNotMatch(dry.out, new RegExp(`\\[${uid}\\]|\\[${lid}\\]|\\[${mid}\\]`)); // --direct 迁移的不算 agent 自记
   assert.match(dry.out, /预览，未写入/);
   assert.match(ab(["search", "旧行为直接写进正式库的坑"], alpha, own).out, /旧行为直接写进正式库的坑/);
 
