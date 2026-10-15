@@ -16,12 +16,32 @@ export type HostName = "claude" | "codex" | "pi";
 export const STEPS = ["fast", "reviewers", "panel", "keys", "hosts", "test"] as const;
 export type Step = (typeof STEPS)[number];
 
-/** 按宿主的默认审稿人（2026-10-15 用户认可）：Claude 用 Haiku 5.5 max；Codex 用它的第二档模型 gpt-6-astra max；Pi 用它自己配的默认模型。 */
+/** 按宿主的默认审稿人（2026-10-15 用户认可）：各宿主用自己的副模型、推理开到最高。Claude 用 Haiku 5.5 max；Codex 用第二档 gpt-6-astra max；Pi 用它配的 reviewer 子代理模型 max（没配就用 Pi 默认模型）。setup 里都可以改。 */
 export const HOST_REVIEWER_DEFAULTS: Record<CliHost, { model: string; effort: string }> = {
   claude: { model: "haiku", effort: "max" },
   codex: { model: "gpt-6-astra", effort: "max" },
-  pi: { model: "", effort: "high" },
+  pi: { model: "", effort: "max" },
 };
+
+/** 按本机宿主配置推出默认审稿人（AB_HOST_HOME 可改宿主配置所在的 home，测试用）：Codex 读 ~/.codex/config.toml 的 review_model；Pi 读 ~/.pi/agent/settings.json 的 subagents.agentOverrides.reviewer.model。读不到就用 HOST_REVIEWER_DEFAULTS。 */
+export function hostReviewerDefault(host: CliHost, home = process.env.AB_HOST_HOME || homedir()): { model: string; effort: string; from?: string } {
+  const d = { ...HOST_REVIEWER_DEFAULTS[host] };
+  try {
+    if (host === "codex") {
+      const f = join(home, ".codex", "config.toml");
+      const m = existsSync(f) ? /^\s*review_model\s*=\s*"([^"]+)"/m.exec(readFileSync(f, "utf8")) : null;
+      if (m) return { ...d, model: m[1], from: f };
+    }
+    if (host === "pi") {
+      const f = join(home, ".pi", "agent", "settings.json");
+      const model = existsSync(f) ? JSON.parse(readFileSync(f, "utf8"))?.subagents?.agentOverrides?.reviewer?.model : undefined;
+      if (typeof model === "string" && model && model !== "inherit") return { ...d, model, from: f };
+    }
+  } catch {
+    // 宿主配置读不了就用内置默认
+  }
+  return d;
+}
 /** 保留的 API 选项：经 cpa 的 gpt-6-astra。 */
 export const ASTRA_VIA_CPA = { baseUrl: "http://127.0.0.1:8317/v1", model: "gpt-6-astra", keyService: "codex-cpa-local-api-key", extraBody: { reasoning_effort: "medium" } };
 
@@ -32,7 +52,7 @@ async function askMember(u: SetupIO, old: any, name: string, fixed: { type?: "ap
   const type = fixed.type ?? ((await u.ask("类型：cli（宿主命令行无头，用宿主自己的账号额度）/ api（OpenAI 兼容接口）", old?.type ?? (old?.baseUrl ? "api" : "cli"))) === "api" ? "api" : "cli");
   if (type === "cli") {
     const host = fixed.host ?? ((await u.ask("宿主（claude/codex/pi）", old?.host ?? "claude")) as CliHost);
-    const d = HOST_REVIEWER_DEFAULTS[host] ?? HOST_REVIEWER_DEFAULTS.claude;
+    const d = HOST_REVIEWER_DEFAULTS[host] ? hostReviewerDefault(host) : HOST_REVIEWER_DEFAULTS.claude;
     const model = await u.ask(`模型（${host === "pi" ? "provider/id，回车用 Pi 的默认模型" : "别名或完整名"}）`, old?.type === "cli" && old.host === host ? old.model : d.model);
     const effort = await u.ask("推理强度", old?.type === "cli" && old.host === host ? old.effort : d.effort);
     const { baseUrl: _b, keyService: _k, extraBody: _e, ...rest } = old ?? {};
@@ -194,7 +214,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       const hr: Record<string, any> = { ...(review.hostReviewers ?? {}) };
       for (const host of ["claude", "codex", "pi"] as const) {
         const old = hr[host];
-        const d = HOST_REVIEWER_DEFAULTS[host];
+        const d = hostReviewerDefault(host);
         const pick = await u.ask(`${HOST_LABEL[host]} 会话的审稿人：cli（${host}${d.model ? ` ${d.model}` : ""} ${d.effort}）/ api（例如经 cpa 的 gpt-6-astra）/ none`, old ? (old.type ?? "api") : "cli");
         if (pick === "none") {
           delete hr[host];

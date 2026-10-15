@@ -102,8 +102,10 @@ test("配置：cli 成员不要 baseUrl/key；host 必须合法；hostReviewers 
   assert.equal(configForHost(cfg, "pi").cfg, cfg);
 });
 
-test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra max、Pi 用默认模型；没有主配置时用 Claude 审稿人当主审", async () => {
+test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra max、Pi 用默认模型 max；没有主配置时用 Claude 审稿人当主审", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-setup-"));
+  const prevHostHome = process.env.AB_HOST_HOME;
+  process.env.AB_HOST_HOME = home; // 宿主配置读空目录，不受本机 ~/.pi ~/.codex 影响
   try {
     const said: string[] = [];
     await runSetup(home, ["reviewers"], { ask: async (_q, def) => def ?? "", secret: async () => "", say: (x) => said.push(x) });
@@ -112,6 +114,7 @@ test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra m
     assert.equal(r.hostReviewers.codex.model, "gpt-6-astra");
     assert.equal(r.hostReviewers.codex.effort, "max");
     assert.equal(r.hostReviewers.pi.model, "");
+    assert.equal(r.hostReviewers.pi.effort, "max");
     assert.deepEqual([r.mode, r.primary, r.panel[0].name], ["primary", "claude-review", "claude-review"]);
     // 选 api：默认是经 cpa 的 astra
     const answers = (q: string, def?: string) => (q.startsWith("Claude Code 会话") ? "api" : (def ?? ""));
@@ -119,7 +122,31 @@ test("ab setup reviewers：默认 Claude 用 haiku max、Codex 用 gpt-6-astra m
     const r2 = JSON.parse(readFileSync(join(home, "review.json"), "utf8"));
     assert.deepEqual([r2.hostReviewers.claude.type, r2.hostReviewers.claude.model, r2.hostReviewers.claude.keyService, r2.hostReviewers.claude.baseUrl], ["api", "gpt-6-astra", "codex-cpa-local-api-key", "http://127.0.0.1:8317/v1"]);
   } finally {
+    if (prevHostHome === undefined) delete process.env.AB_HOST_HOME;
+    else process.env.AB_HOST_HOME = prevHostHome;
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ab setup reviewers：默认模型按宿主自己的配置推出（Pi 的 reviewer 子代理模型、Codex 的 review_model），不写死", async () => {
+  const { hostReviewerDefault } = await import("./setup.ts");
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const h = mkdtempSync(join(tmpdir(), "ab-hosthome-"));
+  try {
+    assert.deepEqual(hostReviewerDefault("pi", h), { model: "", effort: "max" });
+    assert.deepEqual(hostReviewerDefault("codex", h), { model: "gpt-6-astra", effort: "max" });
+    mkdirSync(join(h, ".pi", "agent"), { recursive: true });
+    writeFileSync(join(h, ".pi", "agent", "settings.json"), JSON.stringify({ defaultModel: "grok-4.7", subagents: { agentOverrides: { reviewer: { model: "openai-codex/gpt-6-astra" } } } }));
+    mkdirSync(join(h, ".codex"), { recursive: true });
+    writeFileSync(join(h, ".codex", "config.toml"), 'model = "gpt-6.1-sol"\nreview_model = "gpt-6-terra"\n');
+    assert.equal(hostReviewerDefault("pi", h).model, "openai-codex/gpt-6-astra");
+    assert.equal(hostReviewerDefault("pi", h).effort, "max");
+    assert.equal(hostReviewerDefault("codex", h).model, "gpt-6-terra");
+    assert.deepEqual(hostReviewerDefault("claude", h), { model: "haiku", effort: "max" });
+    writeFileSync(join(h, ".pi", "agent", "settings.json"), "{坏的 json");
+    assert.equal(hostReviewerDefault("pi", h).model, "", "读坏了就用内置默认");
+  } finally {
+    rmSync(h, { recursive: true, force: true });
   }
 });
 

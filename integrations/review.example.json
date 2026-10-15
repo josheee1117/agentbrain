@@ -7,7 +7,7 @@
   "hostReviewers": {
     "claude": {"name": "claude-review", "type": "cli", "host": "claude", "model": "haiku", "effort": "max", "concurrency": 1},
     "codex": {"name": "codex-review", "type": "cli", "host": "codex", "model": "gpt-6-astra", "effort": "max", "concurrency": 1},
-    "pi": {"name": "pi-review", "type": "cli", "host": "pi", "concurrency": 1}
+    "pi": {"name": "pi-review", "type": "cli", "host": "pi", "model": "openai-codex/gpt-6-astra", "effort": "max", "concurrency": 1}
   },
   "batchSize": 10,
   "maxBatches": 3
