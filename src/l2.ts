@@ -3,7 +3,7 @@
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
-export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag";
+export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage";
 export type Host = "claude" | "codex" | "pi";
 /** candidate：v3 候选区（ab work 自动抽取写这里），不进召回、brief、搜索，等审稿人裁决（§21 2026-10-14 v3）。 */
 export type PropState = "active" | "archived" | "superseded" | "candidate";
@@ -79,6 +79,8 @@ export interface RememberBody {
   guidance?: boolean;
   /** 写进候选区（v3）：投影成 state=candidate。 */
   candidate?: boolean;
+  /** ab remember --direct（人工迁移数据）写入：ab audit agent-remember 不把它当成 agent 自记。 */
+  direct?: boolean;
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
 }
@@ -120,6 +122,16 @@ export interface ArchiveBody {
  */
 export interface UnconfirmBody {
   reason: "worker_prompt";
+  note?: string;
+}
+
+/**
+ * stage 事件（v3）：把 agent 用 ab remember 直接写进正式库的条目移回候选区（stage），或撤销这一步（unstage）。
+ * 用于补救候选区上线前后 agent 自记、未经审稿的条目。用户确认过的条目投影时忽略 stage；unstage 只对 stage 过的条目生效。
+ */
+export interface StageBody {
+  action: "stage" | "unstage";
+  reason?: "agent_remember";
   note?: string;
 }
 
@@ -190,6 +202,8 @@ export interface Proposition {
   demoted: UnconfirmBody["reason"] | null;
   /** 进过候选区（归档后再恢复也回到候选区，不会被恢复成正式条目）。 */
   candidate: boolean;
+  /** 被 stage 事件从正式库移回候选区（unstage 只对它生效）。 */
+  staged: boolean;
   value: RememberBody["value"] | null;
 }
 
@@ -265,6 +279,7 @@ export function fold(rows: EventRow[]): Projection {
         guidance: b.guidance === true,
         demoted: null,
         candidate: b.candidate === true,
+        staged: false,
         value: b.value ?? null,
       });
       continue;
@@ -283,6 +298,7 @@ export function fold(rows: EventRow[]): Projection {
       // 用户亲自确认的候选直接进正式库（用户的话优先于审稿人）
       if ((b.by ?? "user") === "user" && target.candidate) {
         target.candidate = false;
+        target.staged = false;
         if (target.state === "candidate") target.state = "active";
       }
       else if (target.demoted) {
@@ -301,6 +317,21 @@ export function fold(rows: EventRow[]): Projection {
       target.confirmed_by = null;
       target.code_evidence = null;
       target.demoted = b.reason;
+      continue;
+    }
+    if (r.kind === "stage") {
+      const b = JSON.parse(r.body) as StageBody;
+      if (b.action === "stage") {
+        // 用户确认过的不动；已在候选区或已归档/被替代的也不动
+        if (target.confirmed_by === "user" || target.candidate || target.state !== "active") continue;
+        target.candidate = true;
+        target.staged = true;
+        target.state = "candidate";
+      } else if (b.action === "unstage" && target.staged) {
+        target.candidate = false;
+        target.staged = false;
+        if (target.state === "candidate") target.state = "active";
+      }
       continue;
     }
     if (r.kind === "tag") {

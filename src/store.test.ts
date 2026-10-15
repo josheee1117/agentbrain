@@ -628,3 +628,32 @@ test("recallableUnconfirmed：只放有用户原话的未确认规则/决定，�
   for (const bad of [{ confirmed: true }, { kind: "pitfall" }, { basis: "agent_inference" }, { evidence: [{ role: "assistant" }] }, { unreconciled: true }, { stale: {} }, { conflicts_with: "x" }, { supersedes: "x" }, { pending_corrections: ["x"] }])
     assert.equal(recallableUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
 });
+
+test("stage 事件：正式条目移回候选区可撤销；用户确认的不动；用户 confirm 直接转正；归档再恢复仍是候选", () => {
+  const s = mem();
+  const pid = s.ensureProject("p");
+  const a = s.remember(pid, "s1", false, { kind: "pitfall", text: "agent 自记", confirmed: false, source: src() });
+  const u = s.remember(pid, "s1", false, { kind: "rule", text: "用户要记", confirmed: true, source: src() });
+  s.lifecycle("stage", a, null, { action: "stage", reason: "agent_remember" });
+  s.lifecycle("stage", u, null, { action: "stage", reason: "agent_remember" });
+  let p = s.project().props;
+  assert.equal(p.get(a)!.state, "candidate");
+  assert.equal(p.get(a)!.staged, true);
+  assert.equal(p.get(u)!.state, "active");
+  assert.equal(p.get(u)!.staged, false);
+  s.lifecycle("archive", a, null);
+  s.lifecycle("reactivate", a, null);
+  assert.equal(s.project().props.get(a)!.state, "candidate");
+  s.lifecycle("stage", a, null, { action: "unstage" });
+  p = s.project().props;
+  assert.equal(p.get(a)!.state, "active");
+  assert.equal(p.get(a)!.candidate, false);
+  s.lifecycle("stage", u, null, { action: "unstage" }); // 没 stage 过：不变
+  assert.equal(s.project().props.get(u)!.state, "active");
+  s.lifecycle("stage", a, null, { action: "stage" });
+  s.lifecycle("confirm", a, null, {});
+  p = s.project().props;
+  assert.equal(p.get(a)!.state, "active");
+  assert.equal(p.get(a)!.staged, false);
+  assert.equal(p.get(a)!.confirmed_by, "user");
+});
