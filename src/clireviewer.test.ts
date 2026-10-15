@@ -157,5 +157,9 @@ test("一步式：提示词含标准与新记/并入/不记；输出校验丢掉
   assert.deepEqual(r!.items.map((i) => [i.action, i.into]), [["new", null], ["merge", "P1"]]);
   assert.deepEqual(r!.invalid, { merge_bad_target: 1, no_scenario: 1, bad_action: 1 });
   assert.deepEqual(parseOnePass('{"items":[]}', [])!.items, []);
+  const { ONE_PASS_WORKER_NOTE } = await import("./onepass.ts");
+  const { WORKER_NOTE } = await import("./extract.ts");
+  const wm = buildOnePassMessages({ turns: [{ role: "user", text: "派活", anchor: "a1" } as any], context: [], worker: true }, { name: "x", docs: "", registry: "", confirmed: "" }, []);
+  assert.ok(wm[1].content!.includes(ONE_PASS_WORKER_NOTE) && !wm[1].content!.includes(WORKER_NOTE));
   assert.equal(parseOnePass("不是 JSON", []), null);
 });

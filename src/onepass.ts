@@ -7,7 +7,7 @@
 import type { ChatMessage } from "./llm.ts";
 import { parseJsonLoose } from "./llm.ts";
 import type { Proposition } from "./l2.ts";
-import { buildMessages, neighborLabel, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { buildMessages, neighborLabel, WORKER_NOTE, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { GOOD_MEMORY_STANDARD } from "./standard.ts";
 import { JUDGE_RULES } from "./review.ts";
 
@@ -32,11 +32,14 @@ ${JUDGE_RULES.replace(/- 格式硬要求[\s\S]*$/, "").trim()}
 
 只输出 JSON：{"items":[{"action":"new|merge","into":"m1（merge 必填）","kind":"rule|decision|pitfall","class":"A|B|C","text":"…","scenario":"当…时","why":"…","guidance":false,"reason":"一句话：为什么值得记"}]}`;
 
+/** 子代理会话说明：按 v4 标准（2026-10-14 用户定）——派活提示不算用户原话，但其中的通用干活方法照常按 A 类判断，只丢一次性任务限制；agent 自己观察到的坑、设计理由照常记。抽取器那条 WORKER_NOTE 更严，一步式不用它。 */
+export const ONE_PASS_WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话，不能单独证明"用户要求"；但其中的通用干活方法（测试写法、验证方式、临时产物放哪）按内容当 A 类判断，只有一次性任务限制不记。agent 自己从工具输出观察到的坑、代码里的设计理由，照常按 C/B 类判断。`;
+
 export function buildOnePassMessages(win: ExtractWindow, ctx: ProjectContext, neighbors: Proposition[]): ChatMessage[] {
   const [, user] = buildMessages(win, ctx, neighbors);
   return [
     { role: "system", content: ONE_PASS_SYSTEM },
-    { role: "user", content: user.content },
+    { role: "user", content: win.worker ? user.content!.replace(WORKER_NOTE, ONE_PASS_WORKER_NOTE) : user.content },
   ];
 }
 
