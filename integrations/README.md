@@ -138,7 +138,7 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
   - `mode` 有两种：
     - `primary`（默认）：只有 `primary` 一位主审定结论。panel 里可以另加成员当参考意见（先各自给意见，附给主审、写进报告，不投票，不仲裁）；90 条标注评测里参考意见没带来提升，默认不加。没有参考成员时主审的提示词和普通审稿人一样。主审没给出有效结论的条目算未决，不执行。
     - `panel`：各成员投票，一致就执行，有分歧交仲裁（三票都要留、只是写法不同时，仲裁只定写法）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象。不写 `mode` 时按 panel 处理。
-  - API 成员的推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别）。每个成员可选 `timeoutMs`（API 默认 300000，CLI 默认 600000）、`concurrency`（默认 1）、`extraBody`（只对 API）。
+  - API 成员的推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别）。每个成员可选 `extraBody`（只对 API）。超时（API 300 s、CLI 600 s）、每个成员并发 1、每批 10 条、一次最多 3 批都写死在代码里（设计 §2.2：预算类参数不给配置键），`review.json` 里写了也不读。
 - `ab curate` 默认 dry-run，只把每条候选的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在配置里的审稿成员都连得上时生效（panel 模式还要满 3 家）：
   - 一致沉淀 → `curate` 事件把候选转正（A 类同时打 guidance 标记）；
   - 改写 → 新条目（origin=curate，仍未确认），原候选归档并指向新条目；

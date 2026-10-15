@@ -1114,9 +1114,15 @@ async function cmdCurate(argv: string[]): Promise<void> {
       arbiter: cfg.mode === "primary" ? `primary:${cfg.primary}` : cfg.arbiter,
       results: results.map((r, i) => ({ ...r, action: actions[i], text: (fresh.get(r.id) ?? props.get(r.id))!.text })),
       stats,
-      applied: apply ? applyActions(store, run, actions, fresh) : [],
+      applied: [],
     };
-    const path = saveReport(root, report);
+    // 先落盘报告再写库，每写一步更新一次：中途出错也能 ab curate --undo
+    let path = saveReport(root, report);
+    if (apply)
+      applyActions(store, run, actions, fresh, (applied) => {
+        report.applied = applied;
+        path = saveReport(root, report);
+      });
     const count = (op: string) => actions.filter((a) => a.op === op).length;
     const routes = results.map((r) => r.decision.route);
     const arb = routes.filter((r) => r === "arbiter" || r === "arbiter_wording").length;

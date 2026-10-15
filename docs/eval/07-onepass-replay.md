@@ -94,5 +94,6 @@ AB_HOME=~/.agentbrain/eval/h_replay node scripts/replay-rematch.ts ~/.agentbrain
 
 ## 保留意见
 - 匹配员本身是模型，会判错；目前 9 个窗口还是 low 档匹配。
+- 2026-10-15 独立审查发现：当时的重放/二次匹配脚本把"匹配员输出不完整或不是 JSON"也记成"全部没匹配上"，而且没留匹配员原始输出，所以已有结果里有没有这种情况查不出来。脚本已修（无效输出标 `match_invalid` / 不落盘、续跑时重试）；补跑时建议把全部 27 个窗口用 high 档重新匹配一遍。
 - 31 条样本小，s60 的"没用"只有 2 条。
 - 窗口转录和候选原文是私有内容，只在 Mac `~/.agentbrain/eval/replay/`。

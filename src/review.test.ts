@@ -370,3 +370,62 @@ test("改写正文写 L1 前脱敏；撤销时用户已确认的转正条目不�
   assert.equal(p2.get(keep)!.confirmed_by, "user");
   assert.equal(p2.get(rew)!.state, "candidate");
 });
+
+test("持续 429 + 很短的 Retry-After：用完退避次数就停下，不无限重试；报告里的错误正文脱敏", async () => {
+  const { QuotaExhausted } = await import("./review.ts");
+  let n = 0;
+  const key = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWX";
+  const spam: Chat = async () => {
+    n++;
+    throw Object.assign(new Error(`模型接口限流 429: bad key ${key}`), { code: "http_429", retryAfterMs: 0 });
+  };
+  const stats: CallStat[] = [];
+  await assert.rejects(judgeBatchPrimary([cand("a")], { name: "x", chat: spam }, [], stats), (e: any) => e instanceof QuotaExhausted && !e.message.includes(key));
+  assert.equal(n, retryPolicy.backoffMs.length + 1);
+  assert.ok(stats.every((s) => !(s.error ?? "").includes(key)));
+  const failing: Chat = async () => {
+    throw new Error(`模型接口 HTTP 401: Invalid API key ${key}`);
+  };
+  const st2: CallStat[] = [];
+  await judgeBatchPrimary([cand("a")], { name: "x", chat: failing }, [], st2);
+  assert.ok(st2.length > 0 && st2.every((s) => !(s.error ?? "").includes(key)), "普通失败的错误正文也脱敏");
+});
+
+test("撤销只认这次运行写下的最后一步：A 撤销后 B 再转正，重复撤销 A 不会撤掉 B；改写的新条目被动过就不动", () => {
+  const s = new Store(":memory:", ":memory:");
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const c = mk("c");
+  const d = mk("d");
+  const rep = (run: string, applied: any) => ({ run, at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied });
+  const appliedA = applyActions(s, "A", [{ op: "promote", id: c, guidance: false, scenario: "当x时" }, { op: "discard", id: d, reason: "r" }], s.project().props);
+  assert.equal(undoRun(s, rep("A", appliedA)), 2);
+  assert.equal(undoRun(s, rep("A", appliedA)), 0, "重复撤销什么都不做");
+  const appliedB = applyActions(s, "B", [{ op: "promote", id: c, guidance: false, scenario: "当x时" }, { op: "discard", id: d, reason: "r" }], s.project().props);
+  assert.equal(undoRun(s, rep("A", appliedA)), 0, "旧运行的撤销不撤后来的运行");
+  assert.equal(s.project().props.get(c)!.state, "active");
+  assert.equal(s.project().props.get(d)!.state, "archived");
+  assert.equal(undoRun(s, rep("B", appliedB)), 2);
+  // 改写：新条目之后被手动归档再恢复（被动过），撤销不再归档它
+  const e = mk("e");
+  const appliedC = applyActions(s, "C", [{ op: "rewrite", id: e, text: "新正文", scenario: "当y时", guidance: false }], s.project().props);
+  const created = appliedC[0].created!;
+  s.lifecycle("archive", created, null, {});
+  s.lifecycle("reactivate", created, null);
+  undoRun(s, rep("C", appliedC));
+  assert.equal(s.project().props.get(created)!.state, "active");
+  assert.equal(s.project().props.get(e)!.state, "candidate");
+});
+
+test("applyActions 每写一步就回调（调用方据此落盘报告）；改写先记下新条目", () => {
+  const s = new Store(":memory:", ":memory:");
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const a = mk("a");
+  const b = mk("b");
+  const snaps: string[] = [];
+  applyActions(s, "R", [{ op: "rewrite", id: a, text: "t", scenario: "当z时", guidance: false }, { op: "discard", id: b, reason: "r" }], s.project().props, (ap) => snaps.push(JSON.stringify(ap)));
+  assert.ok(snaps.length >= 3);
+  const first = JSON.parse(snaps[0]);
+  assert.equal(first[0].op, "rewrite");
+  assert.ok(first[0].created, "归档原条目之前已经记下新条目");
+  assert.equal(first[0].events.length, 0);
+});

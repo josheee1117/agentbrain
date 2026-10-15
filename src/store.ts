@@ -166,6 +166,14 @@ export class Store {
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
   }
 
+  /** 目标条目最近一条去留类事件（archive/reactivate/curate/stage）的 id；没有为 null。ab curate --undo 据此确认这一步没被后来的操作取代。 */
+  lastStateEvent(targetId: string): string | null {
+    const r = this.db
+      .prepare("SELECT id FROM events WHERE target_id=? AND kind IN ('archive','reactivate','curate','stage') AND body IS NOT NULL ORDER BY seq DESC LIMIT 1")
+      .get(targetId) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
   /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */
   rememberEventsSince(since: string): { id: string; body: RememberBody }[] {
     const rows = this.db

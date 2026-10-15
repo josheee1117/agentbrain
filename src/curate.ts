@@ -13,7 +13,7 @@ import { sanitize } from "./sanitize.ts";
 import type { Store } from "./store.ts";
 import { isWorkerTranscript } from "./transcript.ts";
 import type { Action, CallStat, CandidateInput, CurateResult, Judge, PanelMember, ReviewConfig } from "./review.ts";
-import { judgeBatch, judgeBatchPrimary, limit, memberChatConfig, planAction } from "./review.ts";
+import { API_REVIEW_TIMEOUT_MS, CLI_REVIEW_TIMEOUT_MS, judgeBatch, judgeBatchPrimary, limit, MEMBER_CONCURRENCY, memberChatConfig, planAction } from "./review.ts";
 
 export const CONTEXT_MAX_CHARS = 1500;
 export const NEIGHBORS = 5;
@@ -50,10 +50,10 @@ export function connectPanel(cfg: ReviewConfig, keys: Keys = { read: readKey }, 
   const panel: Judge[] = [];
   const missing: string[] = [];
   const connect = (m: PanelMember): Judge | null => {
-    const gate = limit(m.concurrency ?? 1);
+    const gate = limit(MEMBER_CONCURRENCY);
     if (m.type === "cli") {
       // 用宿主自己的登录和额度，不读钥匙串；命令不存在等问题在调用时报，算这一票失败
-      const chat = cliChat({ host: m.host!, model: m.model || undefined, effort: m.effort, bin: m.bin, timeoutMs: m.timeoutMs ?? 600_000 }, cliRunner);
+      const chat = cliChat({ host: m.host!, model: m.model || undefined, effort: m.effort, bin: m.bin, timeoutMs: CLI_REVIEW_TIMEOUT_MS }, cliRunner);
       return { name: m.name, chat: (msgs, o) => gate(() => chat(msgs, o)) };
     }
     const k = keys.read(m.keyService);
@@ -61,7 +61,7 @@ export function connectPanel(cfg: ReviewConfig, keys: Keys = { read: readKey }, 
       missing.push(`${m.name}: ${k.error}`);
       return null;
     }
-    const chat = chatClient(memberChatConfig(m), k, m.timeoutMs ?? 300_000);
+    const chat = chatClient(memberChatConfig(m), k, API_REVIEW_TIMEOUT_MS);
     return { name: m.name, chat: (msgs, o) => gate(() => chat(msgs, o)) };
   };
   for (const m of cfg.panel) {
@@ -106,18 +106,28 @@ export async function runPanel(inputs: CandidateInput[], panel: Judge[], arbiter
   return out.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
 }
 
-/** 写事件。每条动作记下它写的事件，--undo 据此逆向。用户确认过的条目在 planAction 里已经 skip。 */
-export function applyActions(store: Store, run: string, actions: Action[], props: Map<string, Proposition>): RunReport["applied"] {
+/**
+ * 写事件。每条动作记下它写的事件，--undo 据此逆向。用户确认过的条目在 planAction 里已经 skip。
+ * onProgress：每写下一步就回调一次（调用方据此落盘报告），中途出错也留得下撤销记录。
+ */
+export function applyActions(store: Store, run: string, actions: Action[], props: Map<string, Proposition>, onProgress: (applied: RunReport["applied"]) => void = () => {}): RunReport["applied"] {
   const applied: RunReport["applied"] = [];
+  const done = (x: RunReport["applied"][number]) => {
+    applied.push(x);
+    onProgress(applied);
+    return x;
+  };
   for (const a of actions) {
     const p = props.get(a.id);
     if (!p || p.confirmed_by === "user" || p.state !== "candidate") continue; // 二次把关
     if (a.op === "promote") {
-      const ev = [store.lifecycle("curate", p.id, null, { action: "promote", run, verdict: "keep" })];
-      if (a.guidance && !p.guidance) ev.push(store.lifecycle("tag", p.id, null, { guidance: true }));
-      applied.push({ op: a.op, id: p.id, events: ev });
+      const x = done({ op: a.op, id: p.id, events: [store.lifecycle("curate", p.id, null, { action: "promote", run, verdict: "keep" })] });
+      if (a.guidance && !p.guidance) {
+        x.events.push(store.lifecycle("tag", p.id, null, { guidance: true }));
+        onProgress(applied);
+      }
     } else if (a.op === "discard") {
-      applied.push({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", note: `${run}: ${a.reason}`.slice(0, 300) })] });
+      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", note: `${run}: ${a.reason}`.slice(0, 300) })] });
     } else if (a.op === "rewrite") {
       // 改写正文和场景来自模型输出：写 L1 前再脱敏一次（§13.2）
       const text = sanitize(a.text).text;
@@ -138,33 +148,40 @@ export function applyActions(store: Store, run: string, actions: Action[], props
         guidance: a.guidance,
         value: { scenario, flags: [] },
       });
-      const arch = store.lifecycle("archive", p.id, null, { reason: "curate", into: created, note: `${run}: 改写为 ${created}` });
-      applied.push({ op: a.op, id: p.id, events: [arch], created });
+      const x = done({ op: a.op, id: p.id, events: [], created }); // 先记下新条目，归档原条目前出错也能撤销
+      x.events.push(store.lifecycle("archive", p.id, null, { reason: "curate", into: created, note: `${run}: 改写为 ${created}` }));
+      onProgress(applied);
     } else if (a.op === "merge") {
-      applied.push({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "duplicate", into: a.into, note: `${run}: 并入` })] });
+      done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "duplicate", into: a.into, note: `${run}: 并入` })] });
     }
   }
   return applied;
 }
 
-/** 撤销一次 --apply：转正的退回候选区，归档的恢复，改写生成的新条目归档。 */
+/**
+ * 撤销一次 --apply：转正的退回候选区，归档的恢复，改写生成的新条目归档。
+ * 只撤销仍然是"这次运行写下的最后一步"的动作：之后被用户确认、被别的运行或手动操作改过的条目不动（不重复撤销，也不撤掉后来的运行）。
+ */
 export function undoRun(store: Store, report: RunReport): number {
   let n = 0;
   const props = store.project().props;
   for (const a of report.applied) {
     const p = props.get(a.id);
-    if (!p) continue;
-    if (a.op === "promote" && p.curated && p.confirmed_by !== "user") {
-      store.lifecycle("curate", p.id, null, { action: "unpromote", run: report.run });
-      if (p.guidance && a.events.length > 1) store.lifecycle("tag", p.id, null, { guidance: false });
-      n++;
-    } else if ((a.op === "discard" || a.op === "merge" || a.op === "rewrite") && p.state === "archived") {
-      store.lifecycle("reactivate", p.id, null);
-      n++;
+    const mine = (ev: string | undefined) => !!ev && store.lastStateEvent(a.id) === ev;
+    if (p && p.confirmed_by !== "user") {
+      if (a.op === "promote" && p.curated && mine(a.events[0])) {
+        store.lifecycle("curate", p.id, null, { action: "unpromote", run: report.run });
+        if (p.guidance && a.events.length > 1) store.lifecycle("tag", p.id, null, { guidance: false });
+        n++;
+      } else if ((a.op === "discard" || a.op === "merge" || a.op === "rewrite") && p.state === "archived" && mine(a.events[a.events.length - 1])) {
+        store.lifecycle("reactivate", p.id, null);
+        n++;
+      }
     }
     if (a.created) {
       const c = props.get(a.created);
-      if (c && c.state === "active" && c.confirmed_by !== "user") store.lifecycle("archive", c.id, null, { reason: "curate", note: `undo ${report.run}` });
+      // 新条目自创建后没被动过（没归档/恢复过）且不是用户确认的，才归档
+      if (c && c.state === "active" && c.confirmed_by !== "user" && store.lastStateEvent(c.id) === null) store.lifecycle("archive", c.id, null, { reason: "curate", note: `undo ${report.run}` });
     }
   }
   return n;

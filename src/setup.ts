@@ -5,7 +5,7 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, lstatSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { chatClient, type ChatConfig } from "./llm.ts";
@@ -47,7 +47,7 @@ export const ASTRA_VIA_CPA = { baseUrl: "http://127.0.0.1:8317/v1", model: "gpt-
 
 const HOST_LABEL: Record<CliHost, string> = { claude: "Claude Code", codex: "Codex", pi: "Pi" };
 
-/** 问一个审稿成员：cli（宿主命令行）或 api（OpenAI 兼容接口）。保留旧配置里的手写字段（concurrency、timeoutMs 等）。 */
+/** 问一个审稿成员：cli（宿主命令行）或 api（OpenAI 兼容接口）。保留旧配置里的手写字段（extraBody 等）。 */
 async function askMember(u: SetupIO, old: any, name: string, fixed: { type?: "api" | "cli"; host?: CliHost } = {}): Promise<PanelMember> {
   const type = fixed.type ?? ((await u.ask("类型：cli（宿主命令行无头，用宿主自己的账号额度）/ api（OpenAI 兼容接口）", old?.type ?? (old?.baseUrl ? "api" : "cli"))) === "api" ? "api" : "cli");
   if (type === "cli") {
@@ -147,7 +147,8 @@ function readJson(path: string): any {
 }
 
 function showDiff(path: string, before: string, after: string): string {
-  const tmp = `${path}.agentbrain-new`;
+  // 临时文件放系统临时目录：宿主配置目录可能还不存在（首次接入）
+  const tmp = join(tmpdir(), `agentbrain-new-${process.pid}-${Date.now()}.json`);
   writeFileSync(tmp, after);
   const r = spawnSync("diff", ["-u", existsSync(path) ? path : "/dev/null", tmp], { encoding: "utf8" });
   try {
@@ -253,7 +254,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
         const old = review.panel?.[i] ?? {};
         u.say(`— 第 ${i + 1} 家`);
         const name = await u.ask("简称（字母数字）", old.name ?? (i === 0 ? "haiku" : undefined));
-        panel.push(await askMember(u, i === 0 && !old.name ? { type: "cli", host: "claude" } : old, name)); // 保留 concurrency、extraBody 等手写字段
+        panel.push(await askMember(u, i === 0 && !old.name ? { type: "cli", host: "claude" } : old, name)); // 保留 extraBody 等手写字段
       }
       const mode = (await u.ask("评审方式：primary（一位主审定结论，其余只给参考意见）/ panel（投票 + 仲裁）", review.mode ?? "primary")) === "panel" ? "panel" : "primary";
       let arbiter: string | PanelMember | undefined;
@@ -350,6 +351,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       const add = (label: string, m: PanelMember) => (m.type === "cli" ? cliMembers.push({ label, m }) : models.push({ label, cfg: m }));
       for (const m of review.panel ?? []) add(`审稿 ${m.name}${review.mode === "primary" ? (m.name === review.primary ? "（主审）" : "（参考）") : m.name === review.arbiter ? "（仲裁）" : ""}`, m);
       for (const [h, m] of Object.entries(review.hostReviewers ?? {})) if (m && !(review.panel ?? []).some((p: PanelMember) => p.name === (m as PanelMember).name)) add(`${h} 会话审稿`, m as PanelMember);
+      if (arbObj) add(`仲裁 ${arbObj.name}`, arbObj); // 独立仲裁人也按 type 分流：cli 的不当 HTTP 测
       for (const { label, m } of cliMembers) {
         const t0 = Date.now();
         try {
@@ -359,7 +361,6 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
           u.say(`✗ ${label} ${m.host}:${m.model || "默认"}: ${(e as Error).message}`);
         }
       }
-      if (arbObj) models.push({ label: `仲裁 ${arbObj.name}`, cfg: arbObj });
       const { readKey } = await import("./embed.ts");
       for (const m of models) {
         const k = readKey(m.cfg.keyService);

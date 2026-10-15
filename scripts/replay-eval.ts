@@ -140,6 +140,8 @@ async function windowNeighbors(turns: { role: string; text: string }[], w: Win):
 }
 
 const MATCH_SYSTEM = `你是评测里的匹配员。给你一组"参考记忆"（r1…）和一组"产出"（o1…），判断每条参考记忆在产出里有没有讲同一条知识的（同一个规则/事实/坑，措辞、详略可以不同；只沾边、只是同一话题不算）。一条产出可以对应多条参考。只输出 JSON：{"refs":{"r1":"o2 或 null"}}`;
+/** 匹配员输出不是 {"refs":{r1..rN}} 全覆盖时记为无效（不能当成"全部没匹配上"），用 replay-rematch 重跑。 */
+let matchInvalid = false;
 async function match(refs: { key: string; text: string }[], outs: { key: string; text: string }[], cost: { usd: number; ms: number }): Promise<Map<string, string | null>> {
   const res = new Map<string, string | null>(refs.map((r) => [r.key, null]));
   if (!refs.length || !outs.length) return res;
@@ -148,6 +150,7 @@ async function match(refs: { key: string; text: string }[], outs: { key: string;
   cost.usd += r.costUsd;
   cost.ms += r.ms;
   const o = parseJsonLoose(r.text) as any;
+  if (!o || typeof o.refs !== "object" || o.refs === null || refs.some((_, i) => !(`r${i + 1}` in o.refs))) matchInvalid = true;
   refs.forEach((ref, i) => {
     const v = o?.refs?.[`r${i + 1}`];
     const m = typeof v === "string" ? /^o(\d+)$/.exec(v.trim()) : null;
@@ -213,8 +216,10 @@ async function runWindow(w: Win): Promise<any> {
   const labelled = new Set(w.refs.map((r) => r.id));
   const refs = [...w.refs.map((r) => ({ key: r.id, text: all.get(r.id)!.text })), ...w.siblings.filter((id) => !labelled.has(id)).map((id) => ({ key: id, text: all.get(id)!.text }))];
   const mcost = { usd: 0, ms: 0 };
+  matchInvalid = false;
   if (only.has("A")) out.matchA = Object.fromEntries(await match(refs, outsA, mcost));
   if (only.has("B")) out.matchB = Object.fromEntries(await match(refs, outsB, mcost));
+  if (matchInvalid) out.match_invalid = true; // 打分前必须用 replay-rematch 重跑这个窗口的匹配
   out.match_usd = mcost.usd;
   out.outsA = outsA;
   out.outsB = outsB;

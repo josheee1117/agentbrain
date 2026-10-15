@@ -10,6 +10,7 @@ import { parseJsonLoose } from "./llm.ts";
 import type { PropKind, Proposition } from "./l2.ts";
 import { GOOD_MEMORY_STANDARD } from "./standard.ts";
 import { CLI_HOSTS, type CliHost } from "./clireviewer.ts";
+import { sanitize } from "./sanitize.ts";
 
 export interface PanelMember {
   name: string;
@@ -27,9 +28,6 @@ export interface PanelMember {
   model: string;
   /** 钥匙串 service 名；配置文件只记名字，key 不进文件。type=cli 为空串（用宿主自己的登录）。 */
   keyService: string;
-  timeoutMs?: number;
-  /** 同时在途的请求数（默认 1：代理/套餐常按并发限流）。 */
-  concurrency?: number;
   /** 并进请求体的额外字段。 */
   extraBody?: Record<string, unknown>;
 }
@@ -52,11 +50,19 @@ export interface ReviewConfig {
   arbiter: string;
   /** 仲裁模型的完整配置（在 panel 里时就是那个成员）。 */
   arbiterMember: PanelMember;
-  /** 每批几条候选（默认 10）。 */
+  /** 每批几条候选（写死 REVIEW_BATCH_SIZE，不是配置键：§2.2 预算类参数写死在代码里）。 */
   batchSize: number;
-  /** 一次最多几批（默认 3）。 */
+  /** 一次最多几批（写死 REVIEW_MAX_BATCHES）。 */
   maxBatches: number;
 }
+
+/** 预算类参数（§2.2 LOCKED：写死在代码里，不给配置键）。 */
+export const REVIEW_BATCH_SIZE = 10;
+export const REVIEW_MAX_BATCHES = 3;
+export const CLI_REVIEW_TIMEOUT_MS = 600_000;
+export const API_REVIEW_TIMEOUT_MS = 300_000;
+/** 每个成员同时在途的请求数（代理/套餐常按并发限流）。 */
+export const MEMBER_CONCURRENCY = 1;
 
 export const REVIEW_FILE = "review.json";
 
@@ -95,12 +101,11 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
       hostReviewers[h as CliHost] = r;
     }
   }
-  const int = (v: unknown, d: number) => (typeof v === "number" && Number.isInteger(v) && v > 0 ? v : d);
   if (mode === "primary") {
     const pm = panel.find((m) => m.name === o.primary);
     if (!pm) return { error: `${path} 的 mode=primary 时 primary 必须是 panel 里某个成员的 name` };
     // primary 模式不用仲裁：arbiter 字段即使写了也忽略，这里指向主审只为类型完整
-    return { mode, hostReviewers, primary: pm.name, panel, arbiter: pm.name, arbiterMember: pm, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+    return { mode, hostReviewers, primary: pm.name, panel, arbiter: pm.name, arbiterMember: pm, batchSize: REVIEW_BATCH_SIZE, maxBatches: REVIEW_MAX_BATCHES };
   }
   let arbiterMember: PanelMember | undefined;
   if (typeof o.arbiter === "string") arbiterMember = panel.find((m) => m.name === o.arbiter);
@@ -111,7 +116,7 @@ export function validateReviewConfig(o: any, path = REVIEW_FILE): ReviewConfig |
     arbiterMember = r;
   }
   if (!arbiterMember) return { error: `${path} 的 arbiter 必须是 panel 里某个成员的 name，或一个完整的模型配置对象` };
-  return { mode, hostReviewers, primary: null, panel, arbiter: arbiterMember.name, arbiterMember, batchSize: int(o.batchSize, 10), maxBatches: int(o.maxBatches, 3) };
+  return { mode, hostReviewers, primary: null, panel, arbiter: arbiterMember.name, arbiterMember, batchSize: REVIEW_BATCH_SIZE, maxBatches: REVIEW_MAX_BATCHES };
 }
 
 function validateMember(m: any, path: string): PanelMember | { error: string } {
@@ -130,8 +135,6 @@ function validateMember(m: any, path: string): PanelMember | { error: string } {
       bin: m.bin || undefined,
       baseUrl: "",
       keyService: "",
-      timeoutMs: typeof m.timeoutMs === "number" && m.timeoutMs > 0 ? m.timeoutMs : undefined,
-      concurrency: typeof m.concurrency === "number" && m.concurrency >= 1 ? Math.floor(m.concurrency) : undefined,
     };
   }
   for (const k of ["name", "baseUrl", "model", "keyService"]) {
@@ -144,8 +147,6 @@ function validateMember(m: any, path: string): PanelMember | { error: string } {
     baseUrl: m.baseUrl,
     model: m.model,
     keyService: m.keyService,
-    timeoutMs: typeof m.timeoutMs === "number" && m.timeoutMs > 0 ? m.timeoutMs : undefined,
-    concurrency: typeof m.concurrency === "number" && m.concurrency >= 1 ? Math.floor(m.concurrency) : undefined,
     extraBody: m.extraBody,
   };
 }
@@ -429,12 +430,14 @@ async function timed(member: string, role: CallStat["role"], f: () => ReturnType
       return r.message.content;
     } catch (e) {
       const err = e as Error & { code?: string; retryAfterMs?: number };
+      const msg = sanitize(err.message ?? "").text.slice(0, 200); // 上游错误正文可能带 key，进报告前脱敏
       if (err.code === "http_429") {
         const wait = typeof err.retryAfterMs === "number" ? err.retryAfterMs : retryPolicy.backoffMs[throttled];
-        if (wait === undefined || wait > retryPolicy.maxWaitMs) {
-          stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: err.message.slice(0, 200) });
+        // 带 Retry-After 的 429 也消耗退避次数：持续限流时停下，不无限重试
+        if (wait === undefined || wait > retryPolicy.maxWaitMs || throttled >= retryPolicy.backoffMs.length) {
+          stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: msg });
           const resetAt = typeof err.retryAfterMs === "number" ? new Date(Date.now() + err.retryAfterMs).toISOString() : null;
-          throw new QuotaExhausted(member, resetAt, err.message.slice(0, 200));
+          throw new QuotaExhausted(member, resetAt, msg);
         }
         throttled++;
         await new Promise((r) => setTimeout(r, wait));
@@ -446,7 +449,7 @@ async function timed(member: string, role: CallStat["role"], f: () => ReturnType
         continue;
       }
       if (other >= retryPolicy.otherRetries) {
-        stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: err.message.slice(0, 200) });
+        stats.push({ member, role, ms: Date.now() - t0, tokens: 0, ok: false, error: msg });
         return null;
       }
       other++;
