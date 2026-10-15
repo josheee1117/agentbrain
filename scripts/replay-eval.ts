@@ -58,8 +58,10 @@ if (missing.length || !arbiter) throw new Error(missing.join("；"));
 const haikuMax = cliChat({ host: "claude", model: "haiku", effort: "max", timeoutMs: 900_000 });
 const haikuLow = cliChat({ host: "claude", model: "haiku", effort: "low", timeoutMs: 300_000 });
 
-class Quota extends Error {}
-const LIMIT = /usage[ _]limit|rate.?limit|limit[ _]reached|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
+class Quota extends Error {
+  resetAt: string | null = null;
+}
+const LIMIT = /usage[ _]limit|rate.?limit|limit[ _]reached|hit your (?:\w+ )?limit|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
 async function call(chat: Chat, msgs: ChatMessage[], json = false): Promise<{ text: string | null; tokens: number; costUsd: number; ms: number }> {
   const waits = [30_000, 90_000, 180_000];
   for (let i = 0; ; i++) {
@@ -70,6 +72,13 @@ async function call(chat: Chat, msgs: ChatMessage[], json = false): Promise<{ te
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       const limited = (e as any).code === "http_429" || LIMIT.test(msg);
+      const after = (e as any).retryAfterMs;
+      if (limited && typeof after === "number" && after > 10 * 60_000) {
+        // 套餐额度（如 Claude weekly limit）要几小时后才恢复：不重试，整次停下并记下恢复时间
+        const q = new Quota(msg);
+        q.resetAt = new Date(Date.now() + after).toISOString();
+        throw q;
+      }
       if (i >= waits.length || !limited) {
         if (limited) throw new Quota(msg);
         if (i >= 1) throw e;

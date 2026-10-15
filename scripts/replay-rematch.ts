@@ -1,7 +1,7 @@
 /**
  * 重放评测的二次匹配：对 replay-eval 的结果重新判断"参考记忆在 A/B 产出里有没有同一条知识"。
  * 用法：AB_HOME=<库副本> node scripts/replay-rematch.ts <run.jsonl> <out.json> [--effort high]
- * 已有结果的窗口跳过（断点续跑）。
+ * 已有结果的窗口跳过（断点续跑）。额度/限流失败时打印 STOP 行（含恢复时间）并退出 3，已完成的窗口已逐个写盘。
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +34,16 @@ for (const r of rows) {
     const m: Record<string, string | null> = Object.fromEntries(refs.map((x) => [x.key, null]));
     if (outs.length) {
       const prompt = `<参考记忆>\n${refs.map((x, i) => `r${i + 1}: ${x.text}`).join("\n")}\n</参考记忆>\n<产出>\n${outs.map((o, i) => `o${i + 1}: ${o.text}`).join("\n")}\n</产出>`;
-      const c = await chat([{ role: "system", content: SYSTEM }, { role: "user", content: prompt }]);
+      let c;
+      try {
+        c = await chat([{ role: "system", content: SYSTEM }, { role: "user", content: prompt }]);
+      } catch (e) {
+        const after = (e as any).retryAfterMs;
+        const reset = typeof after === "number" ? `，预计 ${new Date(Date.now() + after).toISOString()} 恢复` : "";
+        console.log(`STOP ${r.window_id.slice(0, 10)} ${(e as any).code ?? ""} ${(e as Error).message.slice(0, 200)}${reset}`);
+        store.close();
+        process.exit((e as any).code === "http_429" ? 3 : 1);
+      }
       usd += c.costUsd ?? 0;
       const o = parseJsonLoose(c.message.content ?? null) as any;
       refs.forEach((x, i) => {

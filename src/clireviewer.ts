@@ -94,7 +94,47 @@ export function cliCommand(spec: CliSpec, system: string, user: string, dir: str
   return { cmd, args, input: user };
 }
 
-const LIMIT = /usage[ _]limit|rate.?limit|limit[ _]reached|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
+const LIMIT = /usage[ _]limit|rate.?limit|limit[ _]reached|hit your (?:\w+ )?limit|quota|too many requests|\b429\b|cooling down|overloaded_error/i;
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+/** 某时区在某时刻相对 UTC 的偏移（毫秒）。 */
+function tzOffsetMs(at: number, tz: string): number {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(at)).map((x) => [x.type, x.value]));
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second)) - at;
+}
+/**
+ * Claude Code 新格式："You've hit your weekly limit · resets Oct 17 at 1am (Asia/Singapore)"；
+ * 也有不带日期的 "resets 3pm (Asia/Singapore)"。返回距重置还有多少毫秒；认不出返回 undefined。
+ */
+export function parseClaudeResetMs(text: string, now = Date.now()): number | undefined {
+  const m = /resets\s+(?:([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*(?:\(([^)]+)\))?/i.exec(text);
+  if (!m) return undefined;
+  const tz = m[7]?.trim() || "UTC";
+  try {
+    tzOffsetMs(now, tz);
+  } catch {
+    return undefined;
+  }
+  let h = Number(m[4]) % 12;
+  if (m[6].toLowerCase() === "pm") h += 12;
+  const min = Number(m[5] ?? 0);
+  const local = new Date(now + tzOffsetMs(now, tz)); // 该时区的"现在"，用 UTC 字段读
+  const toUtc = (y: number, mo: number, d: number) => {
+    const guess = Date.UTC(y, mo, d, h, min);
+    return guess - tzOffsetMs(guess - tzOffsetMs(guess, tz), tz);
+  };
+  let at: number;
+  if (m[1]) {
+    const mo = MONTHS.indexOf(m[1].toLowerCase());
+    if (mo < 0) return undefined;
+    at = toUtc(m[3] ? Number(m[3]) : local.getUTCFullYear(), mo, Number(m[2]));
+    if (!m[3] && at < now - 86_400_000) at = toUtc(local.getUTCFullYear() + 1, mo, Number(m[2]));
+  } else {
+    at = toUtc(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
+    if (at <= now) at += 86_400_000;
+  }
+  return Math.max(0, at - now);
+}
 
 /** 额度/限流类失败 → http_429（交给 timed 的退避与 QuotaExhausted）；其余为一般失败。 */
 export function cliFailure(host: CliHost, text: string): WorkFailure {
@@ -102,7 +142,7 @@ export function cliFailure(host: CliHost, text: string): WorkFailure {
   if (LIMIT.test(text)) {
     // claude 旧格式 "Claude AI usage limit reached|<epoch 秒>"
     const epoch = /limit reached\|(\d{10})/.exec(text);
-    const after = epoch ? Math.max(0, Number(epoch[1]) * 1000 - Date.now()) : parseRetryAfterMs(null, text);
+    const after = epoch ? Math.max(0, Number(epoch[1]) * 1000 - Date.now()) : (parseClaudeResetMs(text) ?? parseRetryAfterMs(null, text));
     return new WorkFailure("http_429", msg, after);
   }
   return new WorkFailure("http_error", msg);

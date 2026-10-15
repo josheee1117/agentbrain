@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cliChat, cliCommand, cliFailure, parseCliOutput, reviewerEnv, REVIEWER_ENV, type Runner } from "./clireviewer.ts";
+import { cliChat, cliCommand, cliFailure, parseClaudeResetMs, parseCliOutput, reviewerEnv, REVIEWER_ENV, type Runner } from "./clireviewer.ts";
 import { configForHost, judgeBatchPrimary, QuotaExhausted, retryPolicy, validateReviewConfig, type CallStat, type CandidateInput } from "./review.ts";
 import { connectPanel } from "./curate.ts";
 import { Store } from "./store.ts";
@@ -174,4 +174,18 @@ test("一步式：提示词含标准与新记/并入/不记；输出校验丢掉
   const wm = buildOnePassMessages({ turns: [{ role: "user", text: "派活", anchor: "a1" } as any], context: [], worker: true }, { name: "x", docs: "", registry: "", confirmed: "" }, []);
   assert.ok(wm[1].content!.includes(ONE_PASS_WORKER_NOTE) && !wm[1].content!.includes(WORKER_NOTE));
   assert.equal(parseOnePass("不是 JSON", []), null);
+});
+
+test("限流识别：Claude 新格式 weekly limit 带重置时间（时区）→ http_429 + 等待时长", () => {
+  const now = Date.parse("2026-10-15T09:08:00Z"); // 新加坡 17:08
+  const ms = parseClaudeResetMs("You've hit your weekly limit · resets Oct 17 at 1am (Asia/Singapore)", now);
+  assert.equal(new Date(now + ms!).toISOString(), "2026-10-16T17:00:00.000Z"); // 10-17 01:00 SGT
+  const ms2 = parseClaudeResetMs("You've hit your session limit · resets 3pm (Asia/Singapore)", now);
+  assert.equal(new Date(now + ms2!).toISOString(), "2026-10-16T07:00:00.000Z", "今天 15:00 已过 → 明天");
+  assert.equal(parseClaudeResetMs("resets 11:30pm (UTC)", now), Date.parse("2026-10-15T23:30:00Z") - now);
+  assert.equal(parseClaudeResetMs("resets Oct 17 at 1am (Not/AZone)", now), undefined);
+  assert.equal(parseClaudeResetMs("no reset here", now), undefined);
+  const f = cliFailure("claude", "You've hit your weekly limit · resets Oct 17 at 1am (Asia/Singapore)");
+  assert.equal(f.code, "http_429");
+  assert.ok((f as any).retryAfterMs > 3_600_000);
 });
