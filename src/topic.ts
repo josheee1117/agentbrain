@@ -38,7 +38,7 @@ export const TOPIC_CALL_TIMEOUT_MS = 15 * 60_000;
 /** 调用子模型期间续租约的间隔（租约 10 分钟，调用可能更久）。 */
 export const TOPIC_HEARTBEAT_MS = 60_000;
 /** 话题标记保留多久（会话坐标是 90 天；标记只在没处理时有用）。 */
-const MARK_RETENTION_DAYS = 30;
+
 
 export type TopicTrigger = "idle" | "compact" | "session_end";
 
@@ -65,6 +65,8 @@ export const PROMPT_VERSION = createHash("sha256").update(`${ONE_PASS_SYSTEM}\n$
 export interface TopicMark {
   cut_at: string;
   trigger: "compact";
+  /** 第一次切窗口时定下的边界轮次。定下后一直用它（重切、--redo 都一样），不再按时间重新找。 */
+  anchor?: string;
 }
 
 const markKey = (host: Host, sessionId: string) => `topic_marks:${host}:${sessionId}`;
@@ -74,7 +76,7 @@ export function topicMarks(db: DatabaseSync, host: Host, sessionId: string): Top
   if (!row) return [];
   try {
     const v = JSON.parse(row.value);
-    return Array.isArray(v) ? v.filter((m) => typeof m?.cut_at === "string" && m.trigger === "compact") : [];
+    return Array.isArray(v) ? v.filter((m) => typeof m?.cut_at === "string" && m.trigger === "compact" && (m.anchor === undefined || typeof m.anchor === "string")) : [];
   } catch {
     return [];
   }
@@ -95,7 +97,7 @@ function inWriteTx(db: DatabaseSync, f: () => void): void {
 
 /**
  * 记一个压缩边界。同一时刻重复记只留一个。
- * 标记处理完也不删（只按保留期清理）：ab work --session --redo 清掉进度重切时还要用它，切出来的窗口和 window_id 才和第一次一样。
+ * 标记处理完也不删（会话坐标删掉时才一起删）：ab work --session --redo 清掉进度重切时还要用它，切出来的窗口和 window_id 才和第一次一样。
  */
 export function addTopicMark(db: DatabaseSync, host: Host, sessionId: string, cutAt: Date): void {
   inWriteTx(db, () => {
@@ -108,22 +110,31 @@ export function addTopicMark(db: DatabaseSync, host: Host, sessionId: string, cu
   });
 }
 
-/** 有界保留：会话坐标已删的、或最新标记早于保留期的，整组删掉。 */
-export function pruneTopicMarks(db: DatabaseSync, now: Date): void {
-  const cutoff = new Date(now.getTime() - MARK_RETENTION_DAYS * 86_400_000).toISOString();
+/** 第一次切窗口时把标记定到具体轮次上（之后不再按时间重找）。只补还没定的。 */
+export function bindTopicMarks(db: DatabaseSync, host: Host, sessionId: string, bindings: readonly { cut_at: string; anchor: string }[]): void {
+  if (!bindings.length) return;
+  inWriteTx(db, () => {
+    const by = new Map(bindings.map((b) => [b.cut_at, b.anchor]));
+    const marks = topicMarks(db, host, sessionId).map((m) => (m.anchor === undefined && by.has(m.cut_at) ? { ...m, anchor: by.get(m.cut_at)! } : m));
+    db.prepare("INSERT OR REPLACE INTO work_meta(key,value) VALUES(?,?)").run(markKey(host, sessionId), JSON.stringify(marks));
+  });
+}
+
+/** 有界保留：和会话坐标同生共死（会话坐标按 §19 的保留期删掉时，它的标记一起删；坏数据也删）。 */
+export function pruneTopicMarks(db: DatabaseSync, _now: Date): void {
   inWriteTx(db, () => {
     const rows = db.prepare("SELECT key,value FROM work_meta WHERE key LIKE 'topic_marks:%'").all() as { key: string; value: string }[];
     for (const r of rows) {
       const [, host, ...rest] = r.key.split(":");
       const sid = rest.join(":");
       const known = db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(host, sid);
-      let latest = "";
+      let ok = false;
       try {
-        latest = (JSON.parse(r.value) as TopicMark[]).reduce((a, m) => (m.cut_at > a ? m.cut_at : a), "");
+        ok = Array.isArray(JSON.parse(r.value));
       } catch {
         /* 坏数据直接删 */
       }
-      if (!known || latest < cutoff) db.prepare("DELETE FROM work_meta WHERE key=?").run(r.key);
+      if (!known || !ok) db.prepare("DELETE FROM work_meta WHERE key=?").run(r.key);
     }
   });
 }
@@ -179,7 +190,7 @@ export interface TopicCutInput {
  * 从处理进度之后切出已经结束的话题。没结束的最后一段（还在聊）不切。
  * 返回窗口和"已失效的标记"（落在处理进度之前，或没有新轮次可切的），调用方删掉它们。
  */
-export function topicChunks(host: Host, sessionId: string, all: readonly Turn[], from: string | null, cut: TopicCutInput): { chunks: TopicChunk[]; staleMarks: string[] } | "anchor_missing" {
+export function topicChunks(host: Host, sessionId: string, all: readonly Turn[], from: string | null, cut: TopicCutInput): { chunks: TopicChunk[]; staleMarks: string[]; bindings: { cut_at: string; anchor: string }[] } | "anchor_missing" {
   let start = 0;
   if (from !== null) {
     const i = all.findIndex((t) => t.anchor === from);
@@ -200,17 +211,24 @@ export function topicChunks(host: Host, sessionId: string, all: readonly Turn[],
     if (Number.isFinite(ts[i]) && Number.isFinite(ts[i + 1]) && ts[i + 1] - ts[i] >= TOPIC_IDLE_MS) ends.set(i, "idle");
   }
   const staleMarks: string[] = [];
+  const bindings: { cut_at: string; anchor: string }[] = [];
   for (const m of cut.marks) {
-    const at = Date.parse(m.cut_at);
     let j = -1;
-    for (let i = all.length - 1; i >= 0; i--) {
-      if (Number.isFinite(ts[i]) && ts[i] <= at) {
-        j = i;
-        break;
+    if (m.anchor !== undefined) {
+      // 已定过的边界：用当时定下的那一轮（那一轮不在了就当失效）
+      j = all.findIndex((t) => t.anchor === m.anchor);
+    } else {
+      const at = Date.parse(m.cut_at);
+      for (let i = all.length - 1; i >= 0; i--) {
+        if (Number.isFinite(ts[i]) && ts[i] <= at) {
+          j = i;
+          break;
+        }
       }
+      // 整份 transcript 都没时间戳：只能把当前最后一轮当边界（第一次切时定下，之后不再随末尾移动）
+      if (j < 0 && !ts.some(Number.isFinite)) j = all.length - 1;
+      if (j >= 0) bindings.push({ cut_at: m.cut_at, anchor: all[j].anchor });
     }
-    // 整份 transcript 都没时间戳：只能把当前最后一轮当边界
-    if (j < 0 && !ts.some(Number.isFinite)) j = all.length - 1;
     if (j < start) staleMarks.push(m.cut_at);
     else {
       ends.set(j, "compact");
@@ -244,7 +262,7 @@ export function topicChunks(host: Host, sessionId: string, all: readonly Turn[],
     });
     begin = end + 1;
   }
-  return { chunks, staleMarks };
+  return { chunks, staleMarks, bindings };
 }
 
 function splitTopic(turns: readonly Turn[]): { turns: Turn[]; chars: number; truncated: number }[] {

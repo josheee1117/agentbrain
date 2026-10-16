@@ -3,6 +3,7 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
+import type { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -19,7 +20,7 @@ import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
 import { buildOnePassMessages, parseOnePass } from "./onepass.ts";
-import { PROMPT_VERSION, pruneTopicMarks, TOPIC_HEARTBEAT_MS, TOPIC_IDLE_MS, topicChunks, topicMarks, type TopicChunk, type TopicRunReport, type TopicWindowReport } from "./topic.ts";
+import { bindTopicMarks, PROMPT_VERSION, pruneTopicMarks, TOPIC_HEARTBEAT_MS, TOPIC_IDLE_MS, topicChunks, topicMarks, type TopicChunk, type TopicRunReport, type TopicWindowReport } from "./topic.ts";
 
 export const SETTLE_IDLE_MS = 30 * 60_000;
 export const WINDOW_MAX_CHARS = 48_000;
@@ -642,7 +643,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     const a = s.processed_anchor;
     if (a !== null && cleaned.aliases?.has(a) && !turns.some((t) => t.anchor === a)) {
       const to = cleaned.aliases.get(a) ?? null;
-      if (!intake.remapCheckpoint(db, s, a, to)) return; // 别的进程刚推进过，下次再说
+      if (!opts.dryRun && !intake.remapCheckpoint(db, s, a, to)) return; // 别的进程刚推进过，下次再说；预览只在内存里换
       s = { ...s, processed_anchor: to };
     }
   } catch {
@@ -723,6 +724,14 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
 
 const emptyAdmission = (): Admission => ({ appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } });
 
+/**
+ * 写库事务里确认租约还在自己手里（顺便续期）。租约过期被别人接管（如 ab work --undo、另一个 ab work）后，
+ * 暂停后恢复的旧进程不能再往库里写：抛错回滚整个窗口的写入。
+ */
+function holdsLease(tx: DatabaseSync, holder: string, now: Date): void {
+  if (!intake.renewLease(tx, holder, now)) throw new Error("工作租约已被接管，本窗口不写库");
+}
+
 /** 本次运行里已经撞上额度/限流的宿主：同一次运行不再给它发请求（窗口照常延后，到时再跑）。 */
 const hostCooldown = new WeakMap<TopicDeps, Map<Host, string>>();
 
@@ -757,6 +766,7 @@ async function processTopicSession(
     report.dry.push({ session: `${s.host}:${s.session_id}`, windows: cut.chunks.length, chars: cut.chunks.reduce((n, c) => n + c.chars, 0) });
     return;
   }
+  bindTopicMarks(db, s.host, s.session_id, cut.bindings);
   const projectId = deps.projectId(s.project!);
   let row = s;
   const capped = opts.sweep && isBacklog(s);
@@ -834,7 +844,10 @@ async function processTopicSession(
       wr.outcome = terminal ? "failed" : "deferred";
       saveReport();
       if (terminal) {
-        deps.store.commit([], (tx) => intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now()));
+        deps.store.commit([], (tx) => {
+          holdsLease(tx, holder, deps.now());
+          intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now());
+        });
         report.windows.failed++;
         row = { ...row, processed_anchor: c.to };
         continue;
@@ -848,6 +861,7 @@ async function processTopicSession(
     wr.skipped_known = adm.keys.length - keys.length;
     Object.assign(receipt, adm.receipt);
     const ids = deps.store.commit(appends, (tx, ids) => {
+      holdsLease(tx, holder, deps.now());
       intake.recordCandidates(tx, keys.map((key, i) => ({ key, event_id: ids[i], window_id: c.id })));
       intake.finishWindow(tx, row, c, "done", null, receipt, deps.now());
     });

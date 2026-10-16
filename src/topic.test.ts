@@ -13,7 +13,7 @@ import { relateTodo, runWork, type TopicDeps, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import type { Turn } from "./transcript.ts";
 import {
-  addTopicMark, PROMPT_VERSION, TOPIC_CONTEXT_MAX_CHARS, TOPIC_CONTEXT_TURNS, TOPIC_IDLE_MS, TOPIC_MAX_CHARS,
+  addTopicMark, PROMPT_VERSION, pruneTopicMarks, TOPIC_CONTEXT_MAX_CHARS, TOPIC_CONTEXT_TURNS, TOPIC_IDLE_MS, TOPIC_MAX_CHARS,
   topicChatFor, topicChunks, topicEnabled, topicMarks, undoTopicRun, type TopicRunReport,
 } from "./topic.ts";
 import type { RunResult } from "./clireviewer.ts";
@@ -475,4 +475,107 @@ test("压缩标记：已在事务里也能记（hook 和 ab work 分属不同进
   db.exec("COMMIT");
   addTopicMark(db, "claude", "s1", new Date(T0 + MIN));
   assert.deepEqual(topicMarks(db, "claude", "s1").map((m) => m.cut_at), [at(0), at(1)]);
+});
+
+// ---------- 审查第 2 轮修复的回归测试 ----------
+
+test("租约在模型调用期间被接管（旧进程暂停后恢复）：本窗口不写库、进度不动", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const chat = fakeChat(() => {
+    e.store.workDb.prepare("UPDATE work_lease SET holder='someone-else' WHERE name='work'").run();
+    return { items: [ITEM] };
+  });
+  await assert.rejects(runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false }), /租约已被接管/);
+  assert.equal(e.store.project().props.size, 0);
+  const row = e.store.workDb.prepare("SELECT processed_anchor FROM capture_sessions WHERE session_id='s1'").get() as { processed_anchor: string | null };
+  assert.equal(row.processed_anchor, null);
+});
+
+test("压缩标记和会话坐标同生共死：会话还在就一直留（--redo 还要用），会话坐标删了才删", () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const db = e.store.workDb;
+  addTopicMark(db, "claude", "s1", new Date(T0));
+  addTopicMark(db, "claude", "gone", new Date(T0));
+  pruneTopicMarks(db, new Date(T0 + 400 * 86_400_000));
+  assert.equal(topicMarks(db, "claude", "s1").length, 1);
+  assert.equal(topicMarks(db, "claude", "gone").length, 0);
+});
+
+test("没有时间戳的转录：压缩标记第一次定在当时最后一轮，之后追加内容不会被同一个旧标记再切", async () => {
+  const e = env();
+  const noTs = (o: any) => {
+    const { timestamp: _t, ...rest } = o;
+    return rest;
+  };
+  const first = [noTs(user("u1", "以后改了前端 UI 先重启 dev server 再跑 e2e", 0)), noTs(asst("a1", "好的", 0))];
+  const f = e.transcript("s1", first);
+  e.register("s1", f);
+  addTopicMark(e.store.workDb, "claude", "s1", new Date(T0 + 110 * MIN));
+  const chat = fakeChat(() => ({ items: [] }));
+  const r1 = await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
+  assert.deepEqual(r1.topic!.windows.map((w) => [w.to, w.trigger]), [["a1", "compact"]]);
+  assert.equal(topicMarks(e.store.workDb, "claude", "s1")[0].anchor, "a1", "边界定在当时最后一轮");
+  e.transcript("s1", [...first, noTs(user("u2", "数据库迁移脚本要先在副本上跑一遍", 0)), noTs(asst("a2", "明白", 0))]);
+  const r2 = await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
+  assert.equal(r2.topic!.windows.length, 0, "还在聊的话题不切");
+  assert.equal(chat.calls.length, 1);
+});
+
+test("预览（--dry-run）不改处理进度：旧压缩摘要进度只在内存里换", async () => {
+  const e = env();
+  const lines = [user("u1", "以后改了前端 UI 先重启 dev server 再跑 e2e", 0), asst("a1", "好的", 1), { ...user("cs", "Summary: ……", 2), isCompactSummary: true }, user("u2", "数据库迁移脚本要先在副本上跑一遍", 3), asst("a2", "明白", 4)];
+  e.register("s1", e.transcript("s1", lines, 60), true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='cs' WHERE session_id='s1'").run();
+  const r = await runWork(e.deps(topicDeps(fakeChat(() => ({ items: [] })))), { sweep: false, dryRun: true });
+  assert.deepEqual(r.dry.map((d) => d.windows), [1]);
+  const row = e.store.workDb.prepare("SELECT processed_anchor FROM capture_sessions WHERE session_id='s1'").get() as { processed_anchor: string };
+  assert.equal(row.processed_anchor, "cs");
+});
+
+test("并发交错：撤销的检查拿着写锁时，另一个连接的确认进不来（检查和写入之间没有空档）", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const t = topicDeps(fakeChat(() => ({ items: [ITEM] })));
+  const r = await runWork(e.deps(t), { sweep: false, dryRun: false });
+  const id = r.topic!.windows[0].created[0].id;
+  const other = new Store(join(e.dir, "store.db"), join(e.dir, "index.db"));
+  other.workDb.exec("PRAGMA busy_timeout=0");
+  let blocked = false;
+  try {
+    const res = e.store.lifecycleIf("archive", id, null, { reason: "topic_undo", run: t.run }, () => {
+      try {
+        other.lifecycle("confirm", id, null, {});
+      } catch (err) {
+        blocked = /locked|busy/i.test(String(err));
+      }
+      return null;
+    });
+    assert.ok("id" in res);
+  } finally {
+    other.close();
+  }
+  assert.ok(blocked, "检查期间别的连接写不进来");
+  assert.equal(e.store.project().props.get(id)!.state, "archived");
+  assert.equal(e.store.project().props.get(id)!.confirmed_by, null);
+});
+
+test("并发交错：压缩标记读改写拿写锁——别的连接正在写时，记标记等锁而不是读旧值覆盖", () => {
+  const e = env();
+  const a = e.store.workDb;
+  const other = new Store(join(e.dir, "store.db"), join(e.dir, "index.db"));
+  const b = other.workDb;
+  b.exec("PRAGMA busy_timeout=0");
+  try {
+    addTopicMark(a, "claude", "s1", new Date(T0));
+    a.exec("BEGIN IMMEDIATE");
+    addTopicMark(a, "claude", "s1", new Date(T0 + MIN)); // 写锁在 a 手里、还没提交
+    assert.throws(() => addTopicMark(b, "claude", "s1", new Date(T0 + 2 * MIN)), /locked|busy/i);
+    a.exec("COMMIT");
+    addTopicMark(b, "claude", "s1", new Date(T0 + 2 * MIN));
+    assert.deepEqual(topicMarks(a, "claude", "s1").map((m) => m.cut_at), [at(0), at(1), at(2)], "三个都在，没有互相覆盖");
+  } finally {
+    other.close();
+  }
 });
