@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
-import { brief, BriefError, BRIEF_MAX_CHARS } from "./brief.ts";
+import { brief, BriefError, BRIEF_MAX_CHARS, SEARCH_HINT } from "./brief.ts";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-brief-")));
 const repos = join(dir, "pm/repos");
@@ -63,4 +63,19 @@ test("超出预算：整条跳过并提示 ab search，总长不超上限", () =
   assert.ok(out.length <= BRIEF_MAX_CHARS);
   assert.match(out, /还有 \d+ 条放不下，用 ab search 查。/);
   assert.ok(out.endsWith("</agentbrain>\n"));
+});
+
+test("§11.5 (i)：主会话和子代理的 brief 都点出该先 ab search 的几类情况；条目超预算时先截条目，这行不截", () => {
+  const s = seeded();
+  const pid = s.ensureProject("alpha");
+  for (const kind of ["main", "worker"] as const) {
+    const out = brief(seeded(), alpha, undefined, kind === "worker");
+    assert.ok(out.includes(SEARCH_HINT), kind);
+    assert.match(out, /用户提到"上次\/之前\/我们定过"；要改不熟悉的模块或配置；报错看不出原因；要做设计取舍。看一条的来龙去脉用 ab get。/);
+  }
+  for (let i = 0; i < 80; i++) s.remember(pid, "s", false, { kind: "pitfall", text: `alpha 很长的坑 ${i} ${"细节".repeat(20)}`, confirmed: true, source: src });
+  const full = brief(s, alpha, undefined, false);
+  assert.ok(full.length <= BRIEF_MAX_CHARS);
+  assert.match(full, /还有 \d+ 条放不下/);
+  assert.ok(full.includes(SEARCH_HINT), "超预算时提示行仍在");
 });

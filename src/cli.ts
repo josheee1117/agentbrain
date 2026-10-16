@@ -27,11 +27,12 @@ import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
+import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor, topicEnabled, TOPIC_IDLE_MS, topicReportDir, undoTopicRun } from "./topic.ts";
 import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "./review.ts";
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
-import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
+import { disputed, KIND_LABEL, projectIdByName, searchDetail, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
 const RECALL_EMBED_TIMEOUT_MS = 3000;
@@ -379,7 +380,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p ? marks(p) : "";
       const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : p?.state === "candidate" ? "（候选）" : "";
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${h.text.split("\n")[0]}`);
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${searchDetail(h.text, p)}`);
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
   } finally {
@@ -792,22 +793,33 @@ async function captureHook(host: Host): Promise<void> {
     transcript = found ? allowedTranscript(host, found) : null;
   }
   const cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null;
-  const ended = raw.hook_event_name === "SessionEnd";
+  const event = raw.hook_event_name;
+  const ended = event === "SessionEnd";
+  // 话题结束触发（§8.6）只在开关打开时生效；关着时压缩事件什么都不做，下一轮也不判断静置
+  const topic = topicEnabled(home());
+  const compact = event === "PreCompact";
+  if (compact && !topic) return;
+  const now = new Date();
   const store = open();
   let project: string | null = null;
+  let idle = false;
   try {
+    const before = intake.sessions(store.workDb, { host, session_id: sessionId })[0];
+    // 候选 B：下一轮进来时距上次登记已超过 20 分钟，上一个话题多半结束了，拉起 ab work 去看（真正的边界由 transcript 里的时间差决定）
+    if (topic && !ended && !compact && before && now.getTime() - Date.parse(before.last_touch) >= TOPIC_IDLE_MS) idle = true;
     intake.upsertSession(store.workDb, { host, session_id: sessionId, transcript, cwd, ended, ephemeral, via: "hook" }, () => {
       project = cwd ? (resolveProject(cwd)?.name ?? null) : null;
       return project;
-    }, new Date());
-    if (ended) {
+    }, now);
+    if (compact && !ephemeral) addTopicMark(store.workDb, host, sessionId, now);
+    if (ended || compact || idle) {
       const row = intake.sessions(store.workDb, { host, session_id: sessionId })[0];
       project = row?.project ?? null;
     }
   } finally {
     store.close();
   }
-  if (ended && project && !ephemeral) spawnWork(`${host}:${sessionId}`);
+  if ((ended || compact || idle) && project && !ephemeral) spawnWork(`${host}:${sessionId}`);
 }
 
 async function cmdCapture(argv: string[]): Promise<void> {
@@ -868,6 +880,8 @@ function workDeps(store: Store): WorkDeps {
     resolveProject: (cwd) => resolveProject(cwd),
     projectId: (name) => projectIdByName(store, name),
     debugDir: process.env.AB_DEBUG === "1" ? join(home(), "debug") : undefined,
+    // 话题结束时一步式沉淀（§8.6）：extract.json "topic": true 才开（默认关）
+    ...(topicEnabled(home()) ? { topic: { run: newTopicRun(new Date()), chatFor: topicChatFor(home()), save: (r) => void saveTopicReport(home(), r) } } : {}),
   };
 }
 
@@ -879,10 +893,29 @@ async function cmdWork(argv: string[]): Promise<void> {
       sweep: { type: "boolean", default: false },
       "dry-run": { type: "boolean", default: false },
       redo: { type: "boolean", default: false },
+      undo: { type: "string" },
+      runs: { type: "boolean", default: false },
     },
     strict: true,
   });
   if (values.redo && !values.session) die("--redo 必须和 --session 一起用");
+  if (values.runs) {
+    const runs = listTopicRuns(home());
+    console.log(runs.length ? runs.join("\n") : `没有话题沉淀运行记录（${topicReportDir(home())}）。`);
+    return;
+  }
+  if (values.undo) {
+    const store = open();
+    try {
+      const r = undoTopicRun(store, values.undo.replace(/\.json$/, ""));
+      console.log(`已归档 ${r.archived.length} 条（可 ab archive --reactivate <id> 逐条恢复）${r.archived.length ? "：" + r.archived.map(short).join("、") : ""}`);
+      for (const k of r.kept) console.log(`  未动 [${short(k.id)}]：${k.why}`);
+      if (!r.archived.length && !r.kept.length) console.log(`L1 里没有 ${values.undo} 写的条目。`);
+    } finally {
+      store.close();
+    }
+    return;
+  }
   const store = open();
   try {
     const r = await runWork(workDeps(store), {
@@ -908,6 +941,9 @@ async function cmdWork(argv: string[]): Promise<void> {
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
         Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
         values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}` : "",
+        r.topic && r.topic.windows.length
+          ? `话题沉淀: 运行 ${r.topic.run}，话题窗口 ${r.topic.windows.length}，写入正式库 ${r.topic.windows.reduce((n, w) => n + w.created.length, 0)} 条（未确认），并入建议 ${r.topic.windows.reduce((n, w) => n + w.merges.length, 0)} 条（只进报告）；报告 ${join(topicReportDir(home()), `${r.topic.run}.json`)}；整次撤销 ab work --undo ${r.topic.run}`
+          : "",
       ].filter(Boolean).join("\n"),
     );
   } finally {
@@ -1037,6 +1073,7 @@ const USAGE = `用法:
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab capture --hook --host <claude|codex|pi>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
+                                    话题沉淀开着时：PreCompact 记话题边界并拉起 ab work；距上一轮超过 20 分钟也拉起
   ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
                                     手动登记一个会话（hook 没生效时）
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
@@ -1050,6 +1087,10 @@ const USAGE = `用法:
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
+                                    extract.json 写 "topic": true 时改为话题结束时一步式沉淀（§8.6，默认关）：静置 20 分钟、上下文压缩、会话结束
+                                    算话题结束，由该宿主的命令行子模型一次决定记不记，直接写进正式库（未确认）
+  ab work --runs | ab work --undo <run>
+                                    话题沉淀的运行记录（~/.agentbrain/topic/）；--undo 整次撤销（归档该次写入、之后没被动过的条目）
                                     --sweep 另扫描漏登记的会话、按代码核验未确认的坑（到期条目不再自动归档，见 ab review）（launchd 每 30 分钟）`;
 
 async function cmdCurate(argv: string[]): Promise<void> {

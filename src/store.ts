@@ -190,6 +190,14 @@ export class Store {
     return rows.map((r) => ({ ...r, body: JSON.parse(r.body) }));
   }
 
+  /** 某次话题沉淀（ab work，§8.6）写进库的 remember 事件（body.topic.run 等于 run），按写入顺序。 */
+  topicRunEvents(run: string): { id: string; body: RememberBody }[] {
+    const rows = this.db
+      .prepare("SELECT id, body FROM events WHERE kind='remember' AND body IS NOT NULL AND json_extract(body,'$.topic.run')=? ORDER BY seq")
+      .all(run) as { id: string; body: string }[];
+    return rows.map((r) => ({ id: r.id, body: JSON.parse(r.body) as RememberBody }));
+  }
+
   /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */
   rememberEventsSince(since: string): { id: string; body: RememberBody }[] {
     const rows = this.db

@@ -1,5 +1,6 @@
 /**
- * Pi 接线：每轮召回（before_agent_start）+ 切片 3 会话登记（before_agent_start / session_shutdown）。
+ * Pi 接线：每轮召回（before_agent_start）+ 切片 3 会话登记（before_agent_start / session_shutdown）
+ * + 话题结束触发（§8.6）：session_before_compact 时登记一个话题边界（ab 的开关关着时 ab 什么都不做）。
  * 只调用 ab，不读记忆库。文件名沿用切片 2，已有的符号链接不用改。
  */
 import { execFile } from "node:child_process";
@@ -25,7 +26,7 @@ function ab(args: string[], input: object, timeout: number): Promise<string> {
   });
 }
 
-function capture(event: "UserPromptSubmit" | "SessionEnd", ctx: unknown, timeout: number): Promise<string> {
+function capture(event: "UserPromptSubmit" | "SessionEnd" | "PreCompact", ctx: unknown, timeout: number): Promise<string> {
   const sm = (ctx as SessionCtx | undefined)?.sessionManager;
   const file = sm?.getSessionFile?.();
   return ab(["capture", "--hook", "--host", "pi"], {
@@ -55,5 +56,10 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", async (_e, ctx) => {
     await capture("SessionEnd", ctx, SHUTDOWN_TIMEOUT_MS);
+  });
+  // 只登记、拉起分离的 ab work，不等它，也不返回任何东西（不取消、不改压缩）
+  pi.on("session_before_compact", async (_e, ctx) => {
+    void capture("PreCompact", ctx, TIMEOUT_MS);
+    return undefined;
   });
 }

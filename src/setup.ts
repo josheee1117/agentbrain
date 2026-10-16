@@ -83,6 +83,8 @@ export function mergeHooks(settings: any, host: "claude" | "codex", abCmd: strin
       { command: `${abCmd} capture --hook --host ${host}`, timeout: 5 },
     ],
     SessionEnd: [{ command: `${abCmd} capture --hook --host ${host}`, timeout: host === "claude" ? 1 : 3 }],
+    // 话题结束触发（§8.6）：压缩前记一个话题边界并拉起 ab work，立即返回、不挡压缩。开关（extract.json "topic"）关着时这条什么都不做
+    PreCompact: [{ command: `${abCmd} capture --hook --host ${host}`, timeout: 5 }],
   };
   const added: string[] = [];
   for (const [ev, cmds] of Object.entries(want)) {
