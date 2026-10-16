@@ -146,3 +146,29 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
   - 丢弃 → 归档（reason=curate，带理由）。
   - 用户确认过的条目一律跳过。`ab curate --undo <run>` 整次撤销。
 - 离线评测：`AB_HOME=<库副本> node scripts/curate-eval.ts <items.json> <out.json>`，只读。
+
+## 话题结束时一步式沉淀（设计 §8.6，2026-10-16 实现，**默认关闭**）
+
+打开前提：`docs/eval/07`（一步式 vs 两步式）补跑完，且 `docs/eval/11`（话题窗口 vs 48000 字窗口）验收显示话题窗口更好。打开由用户决定。
+
+**开关**：`~/.agentbrain/extract.json` 里加一个键 `"topic": true`（其他字段不变）。删掉这个键或改成别的值就是关。关着时下面新加的 hook 什么都不做，`ab work` 行为和以前一样。
+
+**每个宿主要加的事件**（`ab setup` 的宿主一步会把这条一起合进去，写前备份、给 diff、确认后才写；不跑 setup 就手动合并样例）：
+
+| 宿主 | 新增 | 作用 |
+|---|---|---|
+| Claude Code | `PreCompact`：`ab capture --hook --host claude`（超时 5 秒） | 压缩前记一个话题边界，拉起分离的 `ab work --session`，立即返回，不挡压缩 |
+| Codex | `PreCompact`：`ab capture --hook --host codex`（超时 5 秒；改完要在 `/hooks` 里重新信任） | 同上 |
+| Pi | 扩展的 `session_before_compact`（`pi/agentbrain-recall.ts` 已带） | 同上；不取消、不改压缩 |
+
+已有的 `UserPromptSubmit` / `SessionEnd`（Pi：`before_agent_start` / `session_shutdown`）不用改：开关打开后，`UserPromptSubmit` 时如果距这个会话上次登记已超过 20 分钟，就顺便拉起 `ab work --session`（候选 B，不加闹钟进程）。
+
+**话题怎么切**：transcript 里相邻两轮相隔 ≥ 20 分钟、压缩标记、会话结束，三者都是边界；还在聊的最后一段不处理。每个话题窗口附前面最多 8 轮、6000 字当背景；超过 120000 字按轮次拆成 k/n。
+
+**谁来判断**：该会话所在宿主自己的命令行子模型和额度——`review.json` 的 `hostReviewers[宿主]` 配了就用它，否则用 `ab setup` 的宿主默认（Claude `claude -p` haiku max；Codex `codex exec` review_model 或 gpt-6-astra max；Pi reviewer 子代理模型 max）。子进程带 `AGENTBRAIN_REVIEWER=1`，它的会话不登记、不召回、不再触发抽取。额度用完时窗口延后到恢复时间，不算失败，不借别的宿主额度。
+
+**写进库的**：一步式判为"新记"的直接写进正式库，未确认、`origin: extract`、依据记为 agent 推断（一步式输出没有逐字引文）；每条带 `topic`（运行、窗口、触发方式、定位点起止、拆分序号、提示词版本、模型）。判为"并入已有某条"的不改目标、不写库，只记在运行报告里给你看。
+
+**审计和撤销**：每次运行一份报告 `~/.agentbrain/topic/<run>.json`；`ab work --runs` 列出运行，`ab work --undo <run>` 整次撤销（只归档本次写入、之后没被动过的条目；你确认过的、已自动转正的、后来被移进候选区/归档过的不动）。单条用 `ab archive <id>` 或 `ab stage <id>`。
+
+**没有实测的**：三个宿主的压缩事件真的会来（需要在你的机器上装 hook 才能测，本 PR 没装）。已离线核对本机 transcript：Claude（`compact_boundary` + `isCompactSummary` 摘要）、Codex（`compacted`）、Pi（`compaction` 条目）压缩后都保留压缩前的原文，从会话文件补读话题的前提成立；Claude 的压缩摘要不当成用户的一轮。
