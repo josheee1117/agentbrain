@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
-import { runWork, type TopicDeps, type WorkDeps } from "./work.ts";
+import { relateTodo, runWork, type TopicDeps, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import type { Turn } from "./transcript.ts";
 import {
@@ -232,7 +232,7 @@ test("压缩标记：压缩前的内容立刻成为一个话题；之后会话�
   assert.equal(r.windows.done, 1);
   assert.equal(r.topic!.windows[0].trigger, "compact");
   assert.equal(r.topic!.windows[0].to, "a1");
-  assert.deepEqual(topicMarks(e.store.workDb, "claude", "s1"), [], "处理完的标记删掉");
+  assert.equal(topicMarks(e.store.workDb, "claude", "s1").length, 1, "处理完的标记留着（--redo 重切要用），只按保留期清理");
   e.register("s1", f, true);
   const r2 = await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
   assert.deepEqual(r2.topic!.windows.map((w) => [w.from, w.to, w.trigger]), [["a1", "a2", "session_end"]]);
@@ -375,4 +375,104 @@ test("子模型：按宿主选命令行和模型（review.json hostReviewers 优
     if (prevHome === undefined) delete process.env.AB_HOST_HOME;
     else process.env.AB_HOST_HOME = prevHome;
   }
+});
+
+// ---------- 审查（PR #59 第 1 轮）修复的回归测试 ----------
+
+test("重做：压缩切过的会话 --redo 后切出同样的窗口（标记还在），模型输出相同就不重复写", async () => {
+  const e = env();
+  const lines = [user("u1", "以后改了前端 UI 先重启 dev server 再跑 e2e", 100), asst("a1", "好的", 101), user("u2", "数据库迁移脚本要先在副本上跑一遍", 103), asst("a2", "明白", 104)];
+  const f = e.transcript("s1", lines);
+  e.register("s1", f, true);
+  addTopicMark(e.store.workDb, "claude", "s1", new Date(T0 + 102 * MIN));
+  // 按转录原文判断是哪个话题（近邻里也会出现"迁移脚本"，不能只看有没有这几个字）
+  const chat = fakeChat((m) => (/迁移脚本要先/.test(m[1].content!.replace(/<context_only[\s\S]*?<\/context_only>/, "")) ? { items: [{ ...ITEM, text: "数据库迁移脚本先在副本上跑一遍", scenario: "当要跑数据库迁移时" }] } : { items: [ITEM] }));
+  const r1 = await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
+  assert.deepEqual(r1.topic!.windows.map((w) => [w.to, w.trigger]), [["a1", "compact"], ["a2", "session_end"]]);
+  const ids1 = r1.topic!.windows.map((w) => w.window_id);
+  assert.equal(e.store.project().props.size, 2);
+  const r2 = await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false, redo: true, session: { host: "claude", session_id: "s1" } });
+  assert.deepEqual(r2.topic!.windows.map((w) => w.window_id), ids1, "window_id 和第一次一样");
+  assert.deepEqual(r2.topic!.windows.map((w) => w.skipped_known), [1, 1], "候选键已登记，不再写");
+  assert.equal(e.store.project().props.size, 2);
+});
+
+test("旧版把 Claude 压缩摘要存成了处理进度：换成它前面那一轮接着处理，不报 source_unavailable（开关开/关都一样）", async () => {
+  const lines = [
+    user("u1", "以后改了前端 UI 先重启 dev server 再跑 e2e", 0),
+    asst("a1", "好的", 1),
+    { ...user("cs", "This session is being continued from a previous conversation. Summary: ……", 2), isCompactSummary: true },
+    user("u2", "数据库迁移脚本要先在副本上跑一遍", 3),
+    asst("a2", "明白", 4),
+  ];
+  for (const mode of ["topic", "legacy"] as const) {
+    const e = env();
+    const f = e.transcript("s1", lines, 60);
+    e.register("s1", f, true);
+    e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='cs' WHERE session_id='s1'").run();
+    const seen: string[] = [];
+    const chat = (async (msgs: ChatMessage[]) => {
+      seen.push(msgs[1]?.content ?? "");
+      return { message: { role: "assistant", content: JSON.stringify({ items: [], candidates: [], results: [] }) }, tokens: 1 };
+    }) as Chat;
+    const r = await runWork(mode === "topic" ? e.deps(topicDeps(chat)) : e.deps(undefined, { chat: { chat, model: "fake" } }), { sweep: false, dryRun: false });
+    const row = e.store.workDb.prepare("SELECT processed_anchor, error_code AS last_error FROM capture_sessions WHERE session_id='s1'").get() as { processed_anchor: string; last_error: string | null };
+    assert.equal(row.last_error ?? null, null, mode);
+    assert.equal(row.processed_anchor, "a2", mode);
+    assert.equal(r.windows.done, 1, mode);
+    const body = seen[0].replace(/<context_only[\s\S]*?<\/context_only>/, "");
+    assert.match(body, /数据库迁移/, mode);
+    assert.doesNotMatch(body, /先重启 dev server/, `${mode}：进度之前的不重抽`);
+  }
+});
+
+test("关系判定不碰话题沉淀写的条目（判成重复会给旧条目追加来源，整次撤销撤不回）", async () => {
+  const e = env();
+  // 库里先有一条同义的自动抽取条目（未确认，会进关系判定）
+  e.store.remember(e.pid, "old", false, { kind: "rule", text: ITEM.text, source: { host: "claude", session_id: "old", transcript: null, anchor: null, summary: "旧" }, confirmed: false, origin: "extract", basis: "agent_inference", evidence: [] } as any);
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const r = await runWork(e.deps(topicDeps(fakeChat(() => ({ items: [ITEM] })))), { sweep: false, dryRun: false });
+  const id = r.topic!.windows[0].created[0].id;
+  assert.equal(e.store.project().props.get(id)!.topic_run !== undefined, true);
+  await e.store.syncVectors(fakeEmbed, fakeEmbed.model!);
+  assert.ok(!relateTodo(e.store).some((x) => x.prop.id === id), "话题条目不进关系判定");
+});
+
+test("整次撤销：检查和归档同一个事务——另一个连接刚确认的条目不归档", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const t = topicDeps(fakeChat(() => ({ items: [ITEM] })));
+  const r = await runWork(e.deps(t), { sweep: false, dryRun: false });
+  const id = r.topic!.windows[0].created[0].id;
+  e.store.project(); // 本连接先缓存一份投影
+  const other = new Store(join(e.dir, "store.db"), join(e.dir, "index.db"));
+  try {
+    other.lifecycle("confirm", id, null, {});
+  } finally {
+    other.close();
+  }
+  const u = undoTopicRun(e.store, t.run);
+  assert.deepEqual(u.archived, []);
+  assert.equal(u.kept[0].why, "用户已确认");
+  assert.equal(e.store.project().props.get(id)!.state, "active");
+});
+
+test("子模型：hostReviewers 配成 API 的不用于话题沉淀（只用宿主命令行），报 no_config", () => {
+  const d = join(base, `api${n++}`);
+  mkdirSync(d);
+  writeFileSync(join(d, "review.json"), JSON.stringify({ mode: "primary", primary: "p", panel: [{ name: "p", type: "cli", host: "pi" }], hostReviewers: { claude: { name: "cpa", type: "api", model: "gpt-6-astra", baseUrl: "http://127.0.0.1:8317/v1", keyService: "k" } } }));
+  const c = topicChatFor(d)("claude");
+  assert.ok("error" in c && c.error === "no_config");
+  assert.match(c.message, /hostReviewers\.claude/);
+});
+
+test("压缩标记：已在事务里也能记（hook 和 ab work 分属不同进程，读改写在写事务里）", () => {
+  const e = env();
+  const db = e.store.workDb;
+  addTopicMark(db, "claude", "s1", new Date(T0));
+  db.exec("BEGIN IMMEDIATE");
+  addTopicMark(db, "claude", "s1", new Date(T0 + MIN));
+  db.exec("COMMIT");
+  addTopicMark(db, "claude", "s1", new Date(T0 + MIN));
+  assert.deepEqual(topicMarks(db, "claude", "s1").map((m) => m.cut_at), [at(0), at(1)]);
 });

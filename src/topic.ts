@@ -19,11 +19,10 @@ import type { Host } from "./l2.ts";
 import type { Turn } from "./transcript.ts";
 import type { Store } from "./store.ts";
 import { ONE_PASS_SYSTEM, ONE_PASS_WORKER_NOTE } from "./onepass.ts";
-import { chatClient, type Chat, type WorkError } from "./llm.ts";
+import type { Chat, WorkError } from "./llm.ts";
 import { cliChat, type CliHost, type Runner } from "./clireviewer.ts";
-import { loadReviewConfig, memberChatConfig, REVIEW_FILE, type ReviewConfig } from "./review.ts";
+import { loadReviewConfig, REVIEW_FILE, type ReviewConfig } from "./review.ts";
 import { hostReviewerDefault } from "./setup.ts";
-import { readKey } from "./embed.ts";
 
 /** 静置多久算话题结束（用户 2026-10-16 定 20 分钟）。代码常量，不加配置键（§2.2）。 */
 export const TOPIC_IDLE_MS = 20 * 60_000;
@@ -81,41 +80,52 @@ export function topicMarks(db: DatabaseSync, host: Host, sessionId: string): Top
   }
 }
 
-/** 记一个压缩边界。同一时刻重复记只留一个。 */
-export function addTopicMark(db: DatabaseSync, host: Host, sessionId: string, cutAt: Date): void {
-  const marks = topicMarks(db, host, sessionId);
-  const iso = cutAt.toISOString();
-  if (marks.some((m) => m.cut_at === iso)) return;
-  marks.push({ cut_at: iso, trigger: "compact" });
-  marks.sort((a, b) => a.cut_at.localeCompare(b.cut_at));
-  db.prepare("INSERT OR REPLACE INTO work_meta(key,value) VALUES(?,?)").run(markKey(host, sessionId), JSON.stringify(marks));
+/** 读改写放在一个写事务里（hook 和 ab work 是不同进程，防止互相覆盖丢标记）；已在事务里就直接跑。 */
+function inWriteTx(db: DatabaseSync, f: () => void): void {
+  if (db.isTransaction) return f();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    f();
+    db.exec("COMMIT");
+  } catch (e) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw e;
+  }
 }
 
-/** 去掉已处理完（或已落在处理进度之前）的标记。 */
-export function dropTopicMarks(db: DatabaseSync, host: Host, sessionId: string, cutAts: readonly string[]): void {
-  if (!cutAts.length) return;
-  const drop = new Set(cutAts);
-  const left = topicMarks(db, host, sessionId).filter((m) => !drop.has(m.cut_at));
-  if (left.length) db.prepare("INSERT OR REPLACE INTO work_meta(key,value) VALUES(?,?)").run(markKey(host, sessionId), JSON.stringify(left));
-  else db.prepare("DELETE FROM work_meta WHERE key=?").run(markKey(host, sessionId));
+/**
+ * 记一个压缩边界。同一时刻重复记只留一个。
+ * 标记处理完也不删（只按保留期清理）：ab work --session --redo 清掉进度重切时还要用它，切出来的窗口和 window_id 才和第一次一样。
+ */
+export function addTopicMark(db: DatabaseSync, host: Host, sessionId: string, cutAt: Date): void {
+  inWriteTx(db, () => {
+    const marks = topicMarks(db, host, sessionId);
+    const iso = cutAt.toISOString();
+    if (marks.some((m) => m.cut_at === iso)) return;
+    marks.push({ cut_at: iso, trigger: "compact" });
+    marks.sort((a, b) => a.cut_at.localeCompare(b.cut_at));
+    db.prepare("INSERT OR REPLACE INTO work_meta(key,value) VALUES(?,?)").run(markKey(host, sessionId), JSON.stringify(marks));
+  });
 }
 
 /** 有界保留：会话坐标已删的、或最新标记早于保留期的，整组删掉。 */
 export function pruneTopicMarks(db: DatabaseSync, now: Date): void {
   const cutoff = new Date(now.getTime() - MARK_RETENTION_DAYS * 86_400_000).toISOString();
-  const rows = db.prepare("SELECT key,value FROM work_meta WHERE key LIKE 'topic_marks:%'").all() as { key: string; value: string }[];
-  for (const r of rows) {
-    const [, host, ...rest] = r.key.split(":");
-    const sid = rest.join(":");
-    const known = db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(host, sid);
-    let latest = "";
-    try {
-      latest = (JSON.parse(r.value) as TopicMark[]).reduce((a, m) => (m.cut_at > a ? m.cut_at : a), "");
-    } catch {
-      /* 坏数据直接删 */
+  inWriteTx(db, () => {
+    const rows = db.prepare("SELECT key,value FROM work_meta WHERE key LIKE 'topic_marks:%'").all() as { key: string; value: string }[];
+    for (const r of rows) {
+      const [, host, ...rest] = r.key.split(":");
+      const sid = rest.join(":");
+      const known = db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(host, sid);
+      let latest = "";
+      try {
+        latest = (JSON.parse(r.value) as TopicMark[]).reduce((a, m) => (m.cut_at > a ? m.cut_at : a), "");
+      } catch {
+        /* 坏数据直接删 */
+      }
+      if (!known || latest < cutoff) db.prepare("DELETE FROM work_meta WHERE key=?").run(r.key);
     }
-    if (!known || latest < cutoff) db.prepare("DELETE FROM work_meta WHERE key=?").run(r.key);
-  }
+  });
 }
 
 // ---------- 按话题切窗口 ----------
@@ -321,23 +331,20 @@ export function newTopicRun(now: Date): string {
  * 只动"自写入后没人动过"的条目：用户确认过的、之后被归档/恢复/移进候选区过的一律不动。
  */
 export function undoTopicRun(store: Store, run: string): { archived: string[]; kept: { id: string; why: string }[] } {
-  const props = store.project().props;
   const archived: string[] = [];
   const kept: { id: string; why: string }[] = [];
   for (const e of store.topicRunEvents(run)) {
-    const p = props.get(e.id);
-    if (!p) {
-      kept.push({ id: e.id, why: "已不在库里" });
-      continue;
-    }
-    if (p.confirmed_by === "user") kept.push({ id: p.id, why: "用户已确认" });
-    else if (p.confirmed) kept.push({ id: p.id, why: `已自动转正（${p.confirmed_by}），请手动看` });
-    else if (p.state !== "active") kept.push({ id: p.id, why: `状态已是 ${p.state}` });
-    else if (store.lastStateEvent(p.id) !== null) kept.push({ id: p.id, why: "写入后被改过状态" });
-    else {
-      store.lifecycle("archive", p.id, null, { reason: "topic_undo", run, note: `undo ${run}` });
-      archived.push(p.id);
-    }
+    // 检查和归档在同一个写事务里：检查完到写入之间别的进程（如 ab confirm）改不了它
+    const r = store.lifecycleIf("archive", e.id, null, { reason: "topic_undo", run, note: `undo ${run}` }, (p) => {
+      if (p.confirmed_by === "user") return "用户已确认";
+      if (p.confirmed) return `已自动转正（${p.confirmed_by}），请手动看`;
+      if (p.state !== "active") return `状态已是 ${p.state}`;
+      if (store.lastStateEvent(p.id) !== null) return "写入后被改过状态";
+      if (p.extra_sources.length || p.related) return "写入后被关系判定动过（并入了别的来源或已判关系），请手动看";
+      return null;
+    });
+    if ("skipped" in r) kept.push({ id: e.id, why: r.skipped });
+    else archived.push(e.id);
   }
   return { archived, kept };
 }
@@ -349,7 +356,7 @@ export function undoTopicRun(store: Store, run: string): { archived: string[]; k
  * 没配用 ab setup 的宿主默认（Claude haiku max；Codex review_model 或 gpt-6-astra max；Pi reviewer 子代理模型 max）。
  * review.json 存在但写错了：报 no_config（窗口延后），不悄悄换别的模型。
  */
-export function topicChatFor(home: string, deps: { runner?: Runner; keys?: (service: string) => string | { error: string } } = {}): (host: Host) => { chat: Chat; model: string } | { error: WorkError; message: string } {
+export function topicChatFor(home: string, deps: { runner?: Runner } = {}): (host: Host) => { chat: Chat; model: string } | { error: WorkError; message: string } {
   let cfg: ReviewConfig | null = null;
   let cfgError: string | null = null;
   if (existsSync(join(home, REVIEW_FILE))) {
@@ -360,11 +367,9 @@ export function topicChatFor(home: string, deps: { runner?: Runner; keys?: (serv
   return (host) => {
     if (cfgError) return { error: "no_config", message: `一步式子模型配置有误：${cfgError}` };
     const m = cfg?.hostReviewers[host as CliHost];
-    if (m && m.type === "api") {
-      const k = (deps.keys ?? readKey)(m.keyService);
-      if (typeof k !== "string") return { error: "no_key", message: `${m.name}: ${k.error}` };
-      return { chat: chatClient(memberChatConfig(m), k, TOPIC_CALL_TIMEOUT_MS), model: `${host}:api:${m.model}` };
-    }
+    // §8.6 第 6 点：话题沉淀只用宿主自己的命令行子模型和它自己的额度。审稿配成 API 的不拿来用（数据会发给别的服务、用别的额度），
+    // 也不悄悄换成宿主默认：报 no_config，窗口延后，等用户改配置或决定放开。
+    if (m && m.type === "api") return { error: "no_config", message: `话题沉淀只用宿主命令行子模型；review.json 的 hostReviewers.${host} 是 API（${m.name}），请改成 cli 或删掉这一项用默认` };
     const spec = m ? { model: m.model || undefined, effort: m.effort, bin: m.bin } : (() => {
       const d = hostReviewerDefault(host as CliHost);
       return { model: d.model || undefined, effort: d.effort, bin: undefined };

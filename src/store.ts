@@ -166,6 +166,33 @@ export class Store {
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
   }
 
+  /**
+   * 先检查再写去留事件，检查和写入在同一个写事务里（防止检查之后、写入之前被别的进程改了状态）。
+   * check 返回 null 才写；返回原因字符串就不写，原样返回。目标不在投影里也不写。
+   */
+  lifecycleIf(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object, check: (p: Proposition) => string | null): { id: string } | { skipped: string } {
+    const id = randomUUID();
+    const json = JSON.stringify(body);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const p = this.project().props.get(targetId);
+      const why = p ? check(p) : "已不在库里";
+      if (why !== null || !p) {
+        this.db.exec("ROLLBACK");
+        return { skipped: why ?? "已不在库里" };
+      }
+      this.assertSessionOpen(sessionId);
+      this.db
+        .prepare("INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(id, new Date().toISOString(), kind, p.project_id, sessionId, 0, targetId, json, createHash("sha256").update(json).digest("hex"));
+      this.db.exec("COMMIT");
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+    return { id };
+  }
+
   /** 目标条目最近一条去留类事件（archive/reactivate/curate/stage）的 id；没有为 null。ab curate --undo 据此确认这一步没被后来的操作取代。 */
   lastStateEvent(targetId: string): string | null {
     const r = this.db

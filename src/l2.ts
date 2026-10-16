@@ -231,6 +231,8 @@ export interface Proposition {
   import_ref: ImportRef | null;
   /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
   guidance: boolean;
+  /** 话题沉淀（§8.6）写入的条目：所属运行 id（ab work --undo 用）。 */
+  topic_run?: string;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
   demoted: UnconfirmBody["reason"] | null;
   /** 进过候选区（归档后再恢复也回到候选区，不会被恢复成正式条目）。 */
@@ -313,6 +315,7 @@ export function fold(rows: EventRow[]): Projection {
         merged_into: null,
         conflicts_with: null,
         import_ref: b.import_ref ?? null,
+        ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         demoted: null,
         candidate: b.candidate === true,

@@ -19,7 +19,7 @@ import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
 import { buildOnePassMessages, parseOnePass } from "./onepass.ts";
-import { dropTopicMarks, PROMPT_VERSION, pruneTopicMarks, TOPIC_HEARTBEAT_MS, TOPIC_IDLE_MS, topicChunks, topicMarks, type TopicChunk, type TopicRunReport, type TopicWindowReport } from "./topic.ts";
+import { PROMPT_VERSION, pruneTopicMarks, TOPIC_HEARTBEAT_MS, TOPIC_IDLE_MS, topicChunks, topicMarks, type TopicChunk, type TopicRunReport, type TopicWindowReport } from "./topic.ts";
 
 export const SETTLE_IDLE_MS = 30 * 60_000;
 export const WINDOW_MAX_CHARS = 48_000;
@@ -638,6 +638,13 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     turns = cleaned.turns;
     stripped = cleaned.stripped;
     worker = cleaned.worker;
+    // 旧版把 Claude 压缩摘要当成一轮，处理进度可能停在它上面；现在它被跳过，进度换成它前面那一轮（两种模式都适用）
+    const a = s.processed_anchor;
+    if (a !== null && cleaned.aliases?.has(a) && !turns.some((t) => t.anchor === a)) {
+      const to = cleaned.aliases.get(a) ?? null;
+      if (!intake.remapCheckpoint(db, s, a, to)) return; // 别的进程刚推进过，下次再说
+      s = { ...s, processed_anchor: to };
+    }
   } catch {
     intake.setSessionError(db, s, "source_unavailable");
     return;
@@ -658,7 +665,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     report.dry.push({ session: `${s.host}:${s.session_id}`, windows: chunks.length, chars: chunks.reduce((n, c) => n + c.chars, 0) });
     return;
   }
-  const projectId = deps.projectId(s.project);
+  const projectId = deps.projectId(s.project!);
   let row = s;
   const capped = opts.sweep && isBacklog(s);
   if (capped && chunks.length && backlog.left <= 0) {
@@ -750,7 +757,6 @@ async function processTopicSession(
     report.dry.push({ session: `${s.host}:${s.session_id}`, windows: cut.chunks.length, chars: cut.chunks.reduce((n, c) => n + c.chars, 0) });
     return;
   }
-  dropTopicMarks(db, s.host, s.session_id, cut.staleMarks);
   const projectId = deps.projectId(s.project!);
   let row = s;
   const capped = opts.sweep && isBacklog(s);
@@ -828,10 +834,7 @@ async function processTopicSession(
       wr.outcome = terminal ? "failed" : "deferred";
       saveReport();
       if (terminal) {
-        deps.store.commit([], (tx) => {
-          intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now());
-          dropTopicMarks(tx, s.host, s.session_id, c.marks);
-        });
+        deps.store.commit([], (tx) => intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now()));
         report.windows.failed++;
         row = { ...row, processed_anchor: c.to };
         continue;
@@ -847,7 +850,6 @@ async function processTopicSession(
     const ids = deps.store.commit(appends, (tx, ids) => {
       intake.recordCandidates(tx, keys.map((key, i) => ({ key, event_id: ids[i], window_id: c.id })));
       intake.finishWindow(tx, row, c, "done", null, receipt, deps.now());
-      dropTopicMarks(tx, s.host, s.session_id, c.marks);
     });
     keys.forEach((k, i) => {
       const m = adm.meta.get(k);
@@ -970,7 +972,8 @@ async function onePassWindow(
  */
 export function relateTodo(store: Store): RelateItem[] {
   const props = [...store.project().props.values()]
-    .filter((p) => p.state === "active" && p.origin === "extract" && !p.confirmed && !p.related)
+    // 话题沉淀写的条目不进关系判定：判成重复会给旧条目追加来源并归档本条，这一步整次撤销撤不回（§8.6 第 12 点）；它们和库里高相似时已标"关系未判定"交给用户
+    .filter((p) => p.state === "active" && p.origin === "extract" && !p.confirmed && !p.related && !p.topic_run)
     .sort((a, b) => a.seq - b.seq);
   const items: RelateItem[] = [];
   for (const p of props) {

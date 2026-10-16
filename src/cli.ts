@@ -906,12 +906,19 @@ async function cmdWork(argv: string[]): Promise<void> {
   }
   if (values.undo) {
     const store = open();
+    // 拿工作租约：后台 ab work 还在跑（可能正往这次运行里写）时不撤，免得撤一半、后面又写进来
+    const holder = intake.acquireLease(store.workDb, new Date());
+    if (!holder) {
+      store.close();
+      die("后台 ab work 正在跑，等它跑完再撤（ab status 看进度）。");
+    }
     try {
       const r = undoTopicRun(store, values.undo.replace(/\.json$/, ""));
       console.log(`已归档 ${r.archived.length} 条（可 ab archive --reactivate <id> 逐条恢复）${r.archived.length ? "：" + r.archived.map(short).join("、") : ""}`);
       for (const k of r.kept) console.log(`  未动 [${short(k.id)}]：${k.why}`);
       if (!r.archived.length && !r.kept.length) console.log(`L1 里没有 ${values.undo} 写的条目。`);
     } finally {
+      intake.releaseLease(store.workDb, holder!);
       store.close();
     }
     return;

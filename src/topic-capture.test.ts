@@ -146,6 +146,30 @@ test("PreCompact：记边界并拉起 ab work，压缩前的话题立刻沉淀�
   assert.doesNotMatch(calls[1].transcript, /话题一/, "第一个话题不重抽");
   const runs = (await ab(["work", "--runs"])).out.trim().split("\n");
   assert.equal(runs.length, 2);
+  // 后台 ab work 还拿着租约（可能还在往这次运行里写）时不撤
+  const d = db();
+  try {
+    d.prepare("INSERT OR REPLACE INTO work_lease(name,holder,pid,expires_at) VALUES('work','test',?,?)").run(process.pid, new Date(Date.now() + 3_600_000).toISOString());
+  } finally {
+    d.close();
+  }
+  const busy = await ab(["work", "--undo", runs[1]]);
+  assert.notEqual(busy.code, 0);
+  assert.match(busy.err, /正在跑/);
+  const d2 = db();
+  try {
+    d2.prepare("DELETE FROM work_lease WHERE holder='test'").run();
+  } finally {
+    d2.close();
+  }
+  await waitFor(async () => {
+    const x = db();
+    try {
+      return !x.prepare("SELECT 1 AS x FROM work_lease WHERE name='work'").get();
+    } finally {
+      x.close();
+    }
+  }, "后台 ab work 跑完放掉租约");
   const u = await ab(["work", "--undo", runs[1]]);
   assert.equal(u.code, 0, u.err);
   assert.match(u.out, /已归档 1 条/);
