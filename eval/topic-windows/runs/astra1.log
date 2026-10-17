@@ -1,0 +1,61 @@
+sessions=33 windows=38 done=0 todo=1 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+09:16:15 01a12e2d-e wins=1 topics=1/1 
+DONE
+sessions=33 windows=38 done=1 todo=32 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+ERR 01a13334-b pi 审稿失败：fetch failed
+ERR 01a132fb-d pi 审稿失败：fetch failed
+ERR c2a12c97-8 pi 审稿失败：fetch failed
+ERR 01a1248c-7 pi 审稿失败：fetch failed
+ERR e4b7f63f-1 pi 审稿失败：fetch failed
+ERR becac0af-3 pi 审稿失败：fetch failed
+ERR 01a1341f-d pi 审稿失败：fetch failed
+ERR de34203f-8 pi 审稿失败：fetch failed
+sessions=33 windows=38 done=1 todo=32 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=33 windows=38 done=1 todo=32 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+13:09:23 01a13334-b wins=2 topics=3/32 
+13:16:09 01a132fb-d wins=2 topics=1/1 
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=33 windows=38 done=3 todo=30 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+sessions=33 windows=38 done=3 todo=30 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=33 windows=38 done=3 todo=30 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+17:10:36 c2a12c97-8 wins=1 topics=2/2 
+17:13:03 01a1248c-7 wins=1 topics=1/1 
+17:30:00 e4b7f63f-1 wins=2 topics=8/8 
+17:38:19 becac0af-3 wins=1 topics=7/7 
+17:44:22 01a1341f-d wins=1 topics=1/1 
+17:56:18 de34203f-8 wins=2 topics=3/3 
+18:06:50 01a12ec1-6 wins=1 topics=1/1 
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=0 windows=0 done=10 todo=0 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+DONE
+sessions=33 windows=38 done=10 todo=23 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+00:40:54 01a124be-1 wins=1 topics=1/1 
+00:44:49 01a124d9-3 wins=1 topics=1/1 
+00:48:10 01a12f1b-4 wins=1 topics=1/1 
+00:51:03 01a12e22-1 wins=1 topics=1/1 
+00:55:13 01a12dc9-8 wins=1 topics=1/1 
+01:02:19 01a12f29-d wins=1 topics=1/1 
+01:05:50 01a12526-0 wins=1 topics=1/1 
+01:11:39 01a12e20-c wins=1 topics=1/1 
+01:17:22 01a132dc-2 wins=1 topics=1/1 
+01:26:39 01a124da-d wins=2 topics=2/2 
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=33 windows=38 done=20 todo=13 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+07:35:25 01a12517-3 wins=1 topics=1/1 
+07:37:48 01a12f7d-1 wins=1 topics=1/1 
+07:44:45 69ae6ce1-0 wins=1 topics=12/18 
+07:49:11 01a124c0-f wins=1 topics=1/1 
+07:52:39 01a12379-e wins=1 topics=1/1 
+07:58:26 01a0fa2c-a wins=1 topics=4/28 
+08:04:03 01a12e01-d wins=1 topics=1/1 
+08:06:17 01a12f09-e wins=1 topics=1/1 
+08:11:06 01a12e47-e wins=1 topics=1/1 
+08:17:02 01a11fea-b wins=1 topics=1/1 
+QUOTA_EXHAUSTED pi 审稿失败：Codex error: The usage limit has been reached
+sessions=33 windows=38 done=30 todo=3 model=pi:openai-codex/gpt-6-astra@max matcher=pi:openai-codex/gpt-6-astra@high prompt=fb22239d2794
+14:12:40 01a12ee9-5 wins=1 topics=1/1 
+14:22:56 01a0fa2b-e wins=1 topics=8/12 
+14:29:11 01a1387b-3 wins=1 topics=2/3 
+DONE
