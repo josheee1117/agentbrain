@@ -166,6 +166,33 @@ export class Store {
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
   }
 
+  /**
+   * 先检查再写去留事件，检查和写入在同一个写事务里（防止检查之后、写入之前被别的进程改了状态）。
+   * check 返回 null 才写；返回原因字符串就不写，原样返回。目标不在投影里也不写。
+   */
+  lifecycleIf(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object, check: (p: Proposition) => string | null): { id: string } | { skipped: string } {
+    const id = randomUUID();
+    const json = JSON.stringify(body);
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const p = this.project().props.get(targetId);
+      const why = p ? check(p) : "已不在库里";
+      if (why !== null || !p) {
+        this.db.exec("ROLLBACK");
+        return { skipped: why ?? "已不在库里" };
+      }
+      this.assertSessionOpen(sessionId);
+      this.db
+        .prepare("INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(id, new Date().toISOString(), kind, p.project_id, sessionId, 0, targetId, json, createHash("sha256").update(json).digest("hex"));
+      this.db.exec("COMMIT");
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+    return { id };
+  }
+
   /** 目标条目最近一条去留类事件（archive/reactivate/curate/stage）的 id；没有为 null。ab curate --undo 据此确认这一步没被后来的操作取代。 */
   lastStateEvent(targetId: string): string | null {
     const r = this.db
@@ -188,6 +215,14 @@ export class Store {
       .prepare("SELECT id, kind, target_id, body FROM events WHERE body IS NOT NULL AND (json_extract(body,'$.run')=? OR json_extract(body,'$.curate.run')=?) ORDER BY seq")
       .all(run, run) as { id: string; kind: EventKind; target_id: string | null; body: string }[];
     return rows.map((r) => ({ ...r, body: JSON.parse(r.body) }));
+  }
+
+  /** 某次话题沉淀（ab work，§8.6）写进库的 remember 事件（body.topic.run 等于 run），按写入顺序。 */
+  topicRunEvents(run: string): { id: string; body: RememberBody }[] {
+    const rows = this.db
+      .prepare("SELECT id, body FROM events WHERE kind='remember' AND body IS NOT NULL AND json_extract(body,'$.topic.run')=? ORDER BY seq")
+      .all(run) as { id: string; body: string }[];
+    return rows.map((r) => ({ id: r.id, body: JSON.parse(r.body) as RememberBody }));
   }
 
   /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */

@@ -113,3 +113,15 @@ test("轮次带上宿主记录的时间戳（到期复审起算用）", () => {
   assert.equal(t[0].ts, "2026-09-01T08:00:00.000Z");
   assert.equal(t[1].ts, undefined);
 });
+
+test("Claude：上下文压缩后写进来的摘要（isCompactSummary）不当成用户的一轮", () => {
+  const p = file("compact.jsonl", [
+    { type: "user", uuid: "u1", timestamp: "2026-10-16T01:00:00Z", message: { role: "user", content: "改完 UI 先重启 dev server" } },
+    { type: "system", subtype: "compact_boundary", uuid: "b1", timestamp: "2026-10-16T01:10:00Z" },
+    { type: "user", uuid: "s1", isCompactSummary: true, timestamp: "2026-10-16T01:10:01Z", message: { role: "user", content: "This session is being continued from a previous conversation. 改完 UI 先重启 dev server" } },
+    { type: "user", uuid: "u2", timestamp: "2026-10-16T01:11:00Z", message: { role: "user", content: "下一个问题" } },
+  ]);
+  const r = cleanTranscript("claude", p);
+  assert.deepEqual(r.turns.map((t) => t.anchor), ["u1", "u2"]);
+  assert.equal(r.stripped, 1);
+});

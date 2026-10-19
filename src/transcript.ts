@@ -31,6 +31,11 @@ export interface Cleaned {
    * 不能当用户原话证据（§21 2026-10-14 价值审计 B）。
    */
   worker: boolean;
+  /**
+   * 被跳过、但旧版可能已经存成处理进度的锚点 → 它前面最近一个保留下来的轮次（没有为 null）。
+   * 目前只有 Claude 压缩摘要（isCompactSummary）：旧版会把它当一轮，处理进度可能正好停在它上面。
+   */
+  aliases?: Map<string, string | null>;
 }
 
 /** worker 派活提示的约定标记：父 agent 让子代理先跑 `ab brief --worker`。 */
@@ -136,6 +141,7 @@ function blockText(c: unknown): string {
 class Builder {
   turns: Turn[] = [];
   stripped = 0;
+  aliases = new Map<string, string | null>();
   abCalls = new Set<string>();
   push(anchor: string, role: TurnRole, parts: string[], ts?: unknown): void {
     const joined = parts.filter(Boolean).join("\n");
@@ -174,6 +180,12 @@ function cwdOf(e: any): string | null {
 function readClaude(lines: any[], b: Builder): void {
   for (const e of lines) {
     if ((e.type !== "user" && e.type !== "assistant") || !e.uuid || e.isMeta || e.isSidechain) continue;
+    // 上下文压缩后宿主写进来的摘要（以 user 身份出现，但不是用户的话，内容是前面话题的复述）：不当成新一轮，免得压缩后把前一个话题再抽一遍（§8.6）
+    if (e.isCompactSummary === true) {
+      b.stripped++;
+      b.aliases.set(e.uuid, b.turns.length ? b.turns[b.turns.length - 1].anchor : null);
+      continue;
+    }
     const content = e.message?.content;
     if (typeof content === "string") {
       b.push(e.uuid, e.type, [content], e.timestamp);
@@ -266,7 +278,7 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
     host === "claude" ? lines.some((e) => e?.isSidechain === true)
     : host === "codex" ? isCodexWorkerMeta(lines.find((e) => e?.type === "session_meta")?.payload)
     : isPiWorker(lines);
-  return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines), worker };
+  return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines), worker, ...(b.aliases.size ? { aliases: b.aliases } : {}) };
 }
 
 /**

@@ -20,3 +20,20 @@ export function projectIdByName(store: Store, name: string): string {
   const hit = store.listProjects().find((p) => p.name === name);
   return hit ? hit.id : store.ensureProject(name);
 }
+
+/** "为什么"在搜索结果里最多显示多少字（§11.5 (ii)）。 */
+export const SEARCH_WHY_MAX_CHARS = 200;
+
+/**
+ * 搜索结果显示全文（§11.5 (ii)，2026-10-16 用户批准）：正文全部打印（多行时后续行缩进），
+ * 有"为什么"打一行（最多 200 字，超出加"…"），有场景（value.scenario 或 trigger）打一行。来源和近邻仍用 ab get。
+ */
+export function searchDetail(text: string, p: Partial<Pick<Proposition, "why" | "trigger" | "value">> | undefined): string {
+  const [first, ...rest] = text.split("\n");
+  const out = [first, ...rest.map((l) => `  ${l}`)];
+  const why = p?.why?.replace(/\s+/g, " ").trim();
+  if (why) out.push(`  为什么: ${why.length > SEARCH_WHY_MAX_CHARS ? why.slice(0, SEARCH_WHY_MAX_CHARS) + "…" : why}`);
+  const scene = (p?.value?.scenario ?? p?.trigger)?.replace(/\s+/g, " ").trim();
+  if (scene) out.push(`  场景: ${scene}`);
+  return out.join("\n");
+}

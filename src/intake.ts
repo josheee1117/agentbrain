@@ -138,6 +138,11 @@ export function finishWindow(db: DatabaseSync, s: SessionRow, w: { id: string; f
   if (moved.changes !== 1) throw new Error("checkpoint 已被别的进程推进"); // 回滚整个事务，不会重复写 L1
 }
 
+/** 把处理进度从 from 换成 to（只在进度仍是 from 时换；别的进程推进过就不动）。用于旧锚点在新版转录里被跳过的情形。 */
+export function remapCheckpoint(db: DatabaseSync, s: SessionRow, from: string, to: string | null): boolean {
+  return db.prepare("UPDATE capture_sessions SET processed_anchor=? WHERE host=? AND session_id=? AND processed_anchor IS ?").run(to, s.host, s.session_id, from).changes === 1;
+}
+
 /** 失败或延后。attempts 用完转 failed（终态，checkpoint 跳过这个窗口），返回是否终态。 */
 export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, code: WorkError, now: Date, countAttempt: boolean, until?: Date): boolean {
   const prev = getWindow(db, w.id);

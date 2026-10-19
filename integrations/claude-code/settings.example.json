@@ -26,6 +26,17 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ab capture --hook --host claude",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }

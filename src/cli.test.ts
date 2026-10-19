@@ -522,11 +522,11 @@ test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPrompt
   chmodSync(join(shim, "ab"), 0o755);
   for (const file of ["claude-code/settings.example.json", "codex/hooks.example.json"]) {
     const config = JSON.parse(readFileSync(join(import.meta.dirname, "../integrations", file), "utf8")) as {
-      hooks: Record<"UserPromptSubmit" | "SessionEnd", { hooks: { type: string; command: string }[] }[]>;
+      hooks: Record<"UserPromptSubmit" | "SessionEnd" | "PreCompact", { hooks: { type: string; command: string }[] }[]>;
     };
     const [handler, capture] = config.hooks.UserPromptSubmit[0].hooks;
     const host = file.startsWith("claude") ? "claude" : "codex";
-    for (const [h, event] of [[capture, "UserPromptSubmit"], [config.hooks.SessionEnd[0].hooks[0], "SessionEnd"]] as const) {
+    for (const [h, event] of [[capture, "UserPromptSubmit"], [config.hooks.SessionEnd[0].hooks[0], "SessionEnd"], [config.hooks.PreCompact[0].hooks[0], "PreCompact"]] as const) {
       assert.equal(h.command, `ab capture --hook --host ${host}`, file);
       const c = spawnSync("sh", ["-c", h.command], {
         cwd: alpha,

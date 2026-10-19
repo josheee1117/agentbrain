@@ -33,6 +33,9 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
 
 const CLOSE = "\n</agentbrain>\n";
 
+/** 什么时候该先搜（§11.5 (i)，2026-10-16 用户批准）。算在固定部分里：超预算时先截条目，不截这行。主会话和子代理都给。 */
+export const SEARCH_HINT = "遇到这几类情况先 ab search <关键词> 再动手：用户提到\"上次/之前/我们定过\"；要改不熟悉的模块或配置；报错看不出原因；要做设计取舍。看一条的来龙去脉用 ab get。";
+
 /** 正文预算 = 上限减掉开头、各段标题、结尾提示。各段再按原比例（均分）分。 */
 function contentBudgets(fixed: string[], titles: string[]): number[] {
   const n = fixed.length + titles.length;
@@ -120,8 +123,8 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
 
   const tails = [
     worker
-      ? "你是被派活的子代理：不写记忆，后台会从会话里自动抽取。搜索用 ab search，看一条用 ab get。"
-      : "干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。搜索用 ab search，看一条用 ab get。",
+      ? `你是被派活的子代理：不写记忆，后台会从会话里自动抽取。\n${SEARCH_HINT}`
+      : `干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。\n${SEARCH_HINT}`,
   ];
   const auto = pending.filter((p) => p.origin === "extract").length;
   if (pending.length && !worker)

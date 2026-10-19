@@ -6,12 +6,13 @@ import { keyServiceFor, mergeHooks, probe } from "./setup.ts";
 test("mergeHooks：补齐缺的命令、保留原有内容、重复运行不再改；路径写法不同视为同一条", () => {
   const orig = { model: "x", hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "/opt/homebrew/bin/node /Users/u/.local/bin/ab recall --hook", timeout: 5 }] }], Stop: [{ hooks: [{ type: "command", command: "other" }] }] } };
   const { next, added } = mergeHooks(orig, "claude", "/n/node /a/ab");
-  assert.deepEqual(added, ["UserPromptSubmit: /n/node /a/ab capture --hook --host claude", "SessionEnd: /n/node /a/ab capture --hook --host claude"]);
+  assert.deepEqual(added, ["UserPromptSubmit: /n/node /a/ab capture --hook --host claude", "SessionEnd: /n/node /a/ab capture --hook --host claude", "PreCompact: /n/node /a/ab capture --hook --host claude"]);
   assert.equal(next.model, "x");
   assert.deepEqual(next.hooks.Stop, orig.hooks.Stop);
   assert.equal(orig.hooks.UserPromptSubmit.length, 1, "不改入参");
   assert.deepEqual(mergeHooks(next, "claude", "ab").added, []);
   assert.equal(mergeHooks({}, "codex", "ab").next.hooks.SessionEnd[0].hooks[0].timeout, 3);
+  assert.equal(mergeHooks({}, "codex", "ab").next.hooks.PreCompact[0].hooks[0].command, "ab capture --hook --host codex", "话题结束触发（§8.6）：压缩前登记边界");
 });
 
 test("keyServiceFor", () => {

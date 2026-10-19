@@ -3,21 +3,24 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
+import type { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./store.ts";
-import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, VerifyBody } from "./l2.ts";
+import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
-import { buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
+import { buildOnePassMessages, parseOnePass } from "./onepass.ts";
+import { bindTopicMarks, PROMPT_VERSION, pruneTopicMarks, TOPIC_HEARTBEAT_MS, TOPIC_IDLE_MS, topicChunks, topicMarks, type TopicChunk, type TopicRunReport, type TopicWindowReport } from "./topic.ts";
 
 export const SETTLE_IDLE_MS = 30 * 60_000;
 export const WINDOW_MAX_CHARS = 48_000;
@@ -65,6 +68,16 @@ export interface WorkDeps {
   projectId: (name: string) => string;
   /** 设了就把每个窗口送模型的轮次与模型原始回复（脱敏后）写到这里，排查证据对不上用；默认不设（AB_DEBUG=1 时 cli 设为 ~/.agentbrain/debug）。 */
   debugDir?: string;
+  /** 设了就走话题结束时一步式沉淀（§8.6，开关 extract.json "topic": true）；不设是原来的 48000 字窗口 + 抽取器。 */
+  topic?: TopicDeps;
+}
+
+/** 话题模式的依赖：每个宿主用它自己的命令行子模型和额度（§8.6 第 6 点），不跨宿主借额度。 */
+export interface TopicDeps {
+  run: string;
+  chatFor: (host: Host) => { chat: Chat; model: string } | { error: WorkError; message: string };
+  /** 每处理完一个窗口落盘一次运行报告（审计记录）。 */
+  save?: (r: TopicRunReport) => void;
 }
 
 export interface WorkOptions {
@@ -85,6 +98,8 @@ export interface WorkReport {
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
   relate: Record<RelateOutcome | "corroborated" | "errors", number>;
   dry: { session: string; windows: number; chars: number }[];
+  /** 话题模式的运行报告（审计记录，可 ab work --undo <run> 整次撤销）。 */
+  topic?: TopicRunReport;
 }
 
 // ---------- 会话登记 ----------
@@ -624,6 +639,13 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     turns = cleaned.turns;
     stripped = cleaned.stripped;
     worker = cleaned.worker;
+    // 旧版把 Claude 压缩摘要当成一轮，处理进度可能停在它上面；现在它被跳过，进度换成它前面那一轮（两种模式都适用）
+    const a = s.processed_anchor;
+    if (a !== null && cleaned.aliases?.has(a) && !turns.some((t) => t.anchor === a)) {
+      const to = cleaned.aliases.get(a) ?? null;
+      if (!opts.dryRun && !intake.remapCheckpoint(db, s, a, to)) return; // 别的进程刚推进过，下次再说；预览只在内存里换
+      s = { ...s, processed_anchor: to };
+    }
   } catch {
     intake.setSessionError(db, s, "source_unavailable");
     return;
@@ -634,6 +656,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
+  if (deps.topic) return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
   if (chunks === "anchor_missing") {
     intake.setSessionError(db, s, "source_unavailable");
@@ -643,7 +666,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     report.dry.push({ session: `${s.host}:${s.session_id}`, windows: chunks.length, chars: chunks.reduce((n, c) => n + c.chars, 0) });
     return;
   }
-  const projectId = deps.projectId(s.project);
+  const projectId = deps.projectId(s.project!);
   let row = s;
   const capped = opts.sweep && isBacklog(s);
   if (capped && chunks.length && backlog.left <= 0) {
@@ -697,13 +720,274 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   }
 }
 
+// ---------- 话题结束时一步式沉淀（§8.6） ----------
+
+const emptyAdmission = (): Admission => ({ appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } });
+
+/**
+ * 写库事务里确认租约还在自己手里（顺便续期）。租约过期被别人接管（如 ab work --undo、另一个 ab work）后，
+ * 暂停后恢复的旧进程不能再往库里写：抛错回滚整个窗口的写入。
+ */
+function holdsLease(tx: DatabaseSync, holder: string, now: Date): void {
+  if (!intake.renewLease(tx, holder, now)) throw new Error("工作租约已被接管，本窗口不写库");
+}
+
+/** 本次运行里已经撞上额度/限流的宿主：同一次运行不再给它发请求（窗口照常延后，到时再跑）。 */
+const hostCooldown = new WeakMap<TopicDeps, Map<Host, string>>();
+
+async function processTopicSession(
+  deps: WorkDeps,
+  t: TopicDeps,
+  s: intake.SessionRow,
+  turns: Turn[],
+  stripped: number,
+  hitsByAnchor: Map<string, Record<string, number>>,
+  worker: boolean,
+  opts: WorkOptions,
+  report: WorkReport,
+  holder: string,
+  backlog: Backlog,
+): Promise<void> {
+  const db = deps.store.workDb;
+  const now = deps.now();
+  const ended = !!(s.ended_at && s.ended_at >= s.last_touch); // 结束后又有新 prompt（resume）就不算结束
+  let idleTail = false;
+  try {
+    idleTail = now.getTime() - statSync(s.transcript!).mtimeMs >= TOPIC_IDLE_MS;
+  } catch {
+    idleTail = false;
+  }
+  const cut = topicChunks(s.host, s.session_id, turns, s.processed_anchor, { marks: topicMarks(db, s.host, s.session_id), ended, idleTail });
+  if (cut === "anchor_missing") {
+    intake.setSessionError(db, s, "source_unavailable");
+    return;
+  }
+  if (opts.dryRun) {
+    report.dry.push({ session: `${s.host}:${s.session_id}`, windows: cut.chunks.length, chars: cut.chunks.reduce((n, c) => n + c.chars, 0) });
+    return;
+  }
+  bindTopicMarks(db, s.host, s.session_id, cut.bindings);
+  const projectId = deps.projectId(s.project!);
+  let row = s;
+  const capped = opts.sweep && isBacklog(s);
+  if (capped && cut.chunks.length && backlog.left <= 0) {
+    report.backlogLeft++;
+    return;
+  }
+  let cooldown = hostCooldown.get(t);
+  if (!cooldown) hostCooldown.set(t, (cooldown = new Map()));
+  for (const c of cut.chunks.slice(0, MAX_WINDOWS_PER_SESSION_RUN)) {
+    const prev = intake.getWindow(db, c.id);
+    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
+    const cool = cooldown.get(s.host) ?? intake.meta(db, `topic_cooldown:${s.host}`);
+    if (cool && cool > deps.now().toISOString()) {
+      report.windows.deferred++;
+      break;
+    }
+    if (capped && backlog.left <= 0) {
+      report.backlogLeft++;
+      break;
+    }
+    if (capped) backlog.left--;
+    const receipt = intake.emptyReceipt();
+    receipt.turns = c.turns.length;
+    receipt.chars = c.chars;
+    receipt.truncated = c.truncated;
+    receipt.stripped = row.processed_anchor === null ? stripped : 0;
+    for (const x of c.turns) addHits(receipt.sanitizer, hitsByAnchor.get(x.anchor) ?? {});
+    const wr: TopicWindowReport = {
+      window_id: c.id,
+      session: `${s.host}:${s.session_id}`,
+      trigger: c.trigger,
+      part: c.part,
+      from: c.from,
+      to: c.to,
+      turns: c.turns.length,
+      chars: c.chars,
+      model: "",
+      prompt_version: PROMPT_VERSION,
+      ms: 0,
+      outcome: "done",
+      created: [],
+      merges: [],
+      skipped_known: 0,
+    };
+    const saveReport = () => {
+      if (!report.topic) return;
+      const i = report.topic.windows.findIndex((w) => w.window_id === wr.window_id);
+      if (i >= 0) report.topic.windows[i] = wr;
+      else report.topic.windows.push(wr);
+      try {
+        t.save?.(report.topic);
+      } catch {
+        /* 报告写不了不影响写库；撤销以 L1 为准（body.topic.run） */
+      }
+    };
+    let adm: Admission & { meta: Map<string, TopicWindowReport["created"][number]> };
+    try {
+      adm = await onePassWindow(deps, t, c, row, projectId, receipt, worker, holder, wr);
+    } catch (e) {
+      const code: WorkError = e instanceof WorkFailure ? e.code : "network";
+      const config = code === "no_config" || code === "no_key";
+      // 额度/限流不算一次失败尝试：额度用完要等几小时，不能因此把话题判成终态失败丢掉（§8.6 第 6 点）
+      const limited = code === "http_429";
+      const after = e instanceof WorkFailure ? e.retryAfterMs : undefined;
+      const until = limited && typeof after === "number" ? new Date(deps.now().getTime() + after) : undefined;
+      if (limited) {
+        // 记到 work_meta：之后几次 ab work（别的会话、下一轮 hook 拉起的）在恢复前也不再给这个宿主发请求
+        const iso = (until ?? new Date(deps.now().getTime() + 60_000)).toISOString();
+        cooldown.set(s.host, iso);
+        intake.setMeta(db, `topic_cooldown:${s.host}`, iso);
+      }
+      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until);
+      wr.error = sanitize(`${code}: ${(e as Error).message ?? ""}`).text.slice(0, 300);
+      wr.outcome = terminal ? "failed" : "deferred";
+      saveReport();
+      if (terminal) {
+        deps.store.commit([], (tx) => {
+          holdsLease(tx, holder, deps.now());
+          intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now());
+        });
+        report.windows.failed++;
+        row = { ...row, processed_anchor: c.to };
+        continue;
+      }
+      report.windows.deferred++;
+      break;
+    }
+    const known = intake.knownCandidates(db, adm.keys);
+    const appends = adm.appends.filter((_, i) => !known.has(adm.keys[i]));
+    const keys = adm.keys.filter((k) => !known.has(k));
+    wr.skipped_known = adm.keys.length - keys.length;
+    Object.assign(receipt, adm.receipt);
+    const ids = deps.store.commit(appends, (tx, ids) => {
+      holdsLease(tx, holder, deps.now());
+      intake.recordCandidates(tx, keys.map((key, i) => ({ key, event_id: ids[i], window_id: c.id })));
+      intake.finishWindow(tx, row, c, "done", null, receipt, deps.now());
+    });
+    keys.forEach((k, i) => {
+      const m = adm.meta.get(k);
+      if (m) wr.created.push({ ...m, id: ids[i] });
+    });
+    saveReport();
+    intake.addReceipt(report.receipt, receipt);
+    intake.setMeta(db, "last_success", deps.now().toISOString());
+    report.windows.done++;
+    row = { ...row, processed_anchor: c.to };
+    intake.renewLease(db, holder, deps.now());
+  }
+}
+
+/**
+ * 一个话题窗口：宿主子模型读话题 + 背景 + 《好记忆的标准》 + 附近已有记忆，一次给出 new / merge / 不记。
+ * new 直接写正式库（未确认、origin=extract、可撤销）；merge 不改目标、不写库，只进运行报告（见 §8.6 实现说明）。
+ */
+async function onePassWindow(
+  deps: WorkDeps,
+  t: TopicDeps,
+  c: TopicChunk,
+  s: intake.SessionRow,
+  projectId: string,
+  receipt: intake.Receipt,
+  worker: boolean,
+  holder: string,
+  wr: TopicWindowReport,
+): Promise<Admission & { meta: Map<string, TopicWindowReport["created"][number]> }> {
+  const meta = new Map<string, TopicWindowReport["created"][number]>();
+  if (!hasExtractableSignal(c.turns)) {
+    receipt.no_signal += 1;
+    wr.outcome = "no_signal";
+    return { ...emptyAdmission(), meta };
+  }
+  const chat = t.chatFor(s.host);
+  if ("error" in chat) throw new WorkFailure(chat.error, chat.message);
+  wr.model = chat.model;
+  const neighbors = await prefetchNeighbors(deps, c.turns, projectId);
+  const win: ExtractWindow = { turns: c.turns, context: c.context, ...(worker ? { worker: true } : {}) };
+  const messages = buildOnePassMessages(win, projectContext(deps, s.project, projectId), neighbors);
+  const db = deps.store.workDb;
+  const beat = setInterval(() => intake.renewLease(db, holder, deps.now()), TOPIC_HEARTBEAT_MS);
+  beat.unref?.();
+  const t0 = Date.now();
+  let r;
+  try {
+    r = await chat.chat(messages, { json: true });
+  } finally {
+    clearInterval(beat);
+    wr.ms = Date.now() - t0;
+  }
+  intake.spend(db, deps.now(), 1, r.tokens);
+  receipt.tokens += r.tokens;
+  const parsed = parseOnePass(r.message.content, neighbors);
+  if (!parsed) throw new WorkFailure("invalid_output", "一步式输出不是合法 JSON（缺 items 数组）");
+  const invalidN = Object.values(parsed.invalid).reduce((a, b) => a + (b ?? 0), 0);
+  receipt.candidates += parsed.items.length + invalidN;
+  for (const [k, n] of Object.entries(parsed.invalid)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
+  if (invalidN) wr.invalid = parsed.invalid as Record<string, number>;
+  const props = deps.store.project().props;
+  for (const it of parsed.items.filter((x) => x.action === "merge")) {
+    const target = props.get(it.into!);
+    wr.merges.push({ into: it.into!, into_confirmed_by_user: target?.confirmed_by === "user", text: sanitize(it.text).text, reason: sanitize(it.reason).text });
+  }
+  const news = parsed.items.filter((x) => x.action === "new").map((it) => ({ ...it, text: sanitize(it.text).text, scenario: sanitize(it.scenario).text, why: it.why ? sanitize(it.why).text : null, reason: sanitize(it.reason).text }));
+  const vecs = news.length ? await embedOrDefer(deps.embedder, news.map((x) => x.text)) : [];
+  const out = emptyAdmission();
+  const kept: Float32Array[] = [];
+  const lastTs = [...c.turns].reverse().find((x) => x.ts)?.ts;
+  const prov: Omit<TopicProvenance, "class"> = { run: t.run, window_id: c.id, trigger: c.trigger, from: c.from, to: c.to, part: c.part, prompt_version: PROMPT_VERSION, model: chat.model };
+  news.forEach((it, i) => {
+    // 同一窗口两条讲同一件事只留第一条
+    if (kept.some((v) => cosine(v, vecs[i]) >= SAME_WINDOW_DUP_SIM)) {
+      receipt.merged++;
+      return;
+    }
+    kept.push(vecs[i]);
+    // 模型说 new，但库里有高相似条目（不论模型看没看过）：不由向量自动合并，标关系未判定交给用户（§9.4.4，与抽取器同规则）
+    const hits = deps.store.nearestByVector(vecs[i], projectId, RECHECK_TOP, DUP_CHECK_SIM);
+    const unreconciled = hits.length > 0;
+    const body: RememberBody = {
+      kind: it.kind,
+      text: it.text,
+      ...(it.why ? { why: it.why } : {}),
+      trigger: it.scenario,
+      source: {
+        host: s.host,
+        session_id: s.session_id,
+        transcript: s.transcript,
+        anchor: c.to,
+        summary: `话题沉淀（ab work，${c.trigger}）：${it.scenario}`.slice(0, 120),
+      },
+      confirmed: false,
+      origin: "extract",
+      // 一步式输出没有逐字引文（eval 07 的原提示词和 §8.7 的 V1 都不要引文），不能声称"用户原话"：一律记 agent 推断
+      basis: "agent_inference",
+      evidence: [],
+      window_id: c.id,
+      relation: { type: "new", target: null },
+      ...(lastTs ? { said_at: lastTs } : {}),
+      ...(it.guidance ? { guidance: true } : {}),
+      value: { scenario: it.scenario, flags: [] },
+      topic: { ...prov, class: it.class },
+      ...(unreconciled ? { unreconciled: true } : {}),
+    };
+    const key = sha256(`${c.id}|${it.kind}|${it.text.replace(/\s+/g, " ").trim()}`);
+    out.appends.push({ kind: "remember", project_id: projectId, session_id: s.session_id, target_id: null, body });
+    out.keys.push(key);
+    meta.set(key, { id: "", kind: it.kind, text: it.text, scenario: it.scenario, reason: it.reason, unreconciled });
+    if (unreconciled) out.receipt.unreconciled++;
+    else out.receipt.proposals++;
+  });
+  return { ...out, meta };
+}
+
 /**
  * 待判关系的条目：自动沉淀、未确认、active、还没判过，且有余弦 ≥ RELATE_SIM 的近邻。
  * 每对只从一侧判：近邻须比它早，或是已确认 / 非自动沉淀（这些自己不会被判）。
  */
 export function relateTodo(store: Store): RelateItem[] {
   const props = [...store.project().props.values()]
-    .filter((p) => p.state === "active" && p.origin === "extract" && !p.confirmed && !p.related)
+    // 话题沉淀写的条目不进关系判定：判成重复会给旧条目追加来源并归档本条，这一步整次撤销撤不回（§8.6 第 12 点）；它们和库里高相似时已标"关系未判定"交给用户
+    .filter((p) => p.state === "active" && p.origin === "extract" && !p.confirmed && !p.related && !p.topic_run)
     .sort((a, b) => a.seq - b.seq);
   const items: RelateItem[] = [];
   for (const p of props) {
@@ -835,6 +1119,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
     relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
+    ...(deps.topic ? { topic: { run: deps.topic.run, at: deps.now().toISOString(), windows: [] } } : {}),
   };
   const db = deps.store.workDb;
   const holder = opts.dryRun ? "dry-run" : intake.acquireLease(db, deps.now());
@@ -857,6 +1142,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);
       intake.prune(db, deps.now());
+      pruneTopicMarks(db, deps.now());
     }
     if (!opts.dryRun) intake.setMeta(db, "last_run", deps.now().toISOString());
   } finally {

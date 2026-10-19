@@ -83,8 +83,27 @@ export interface RememberBody {
   direct?: boolean;
   /** ab curate 改写生成的新条目：哪次运行、改写的是哪条（--undo 在报告没落盘时从 L1 找回）。 */
   curate?: { run: string; of: string };
+  /** 话题结束时一步式沉淀写的条目（§8.6）：哪次运行、哪个话题窗口、怎么触发的、窗口定位点起止、提示词版本、模型。ab work --undo 据 run 从 L1 找回。 */
+  topic?: TopicProvenance;
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
+}
+
+export interface TopicProvenance {
+  run: string;
+  window_id: string;
+  trigger: "idle" | "compact" | "session_end";
+  /** 窗口起点（不含，上一个处理进度）与终点定位点：Claude 消息 uuid、Codex 行序号、Pi 条目 id。 */
+  from: string | null;
+  to: string;
+  /** 话题太长拆开时为 "k/n"。 */
+  part: string | null;
+  /** ONE_PASS_SYSTEM 等提示词全文的短哈希。 */
+  prompt_version: string;
+  /** 宿主:模型@推理强度。 */
+  model: string;
+  /** 模型给的价值类别 A/B/C。 */
+  class: "A" | "B" | "C";
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
@@ -111,7 +130,7 @@ export interface ConfirmBody {
 
 /** archive 事件体。ab work 归档过期提议、或判定为重复后并入 into 时带 reason。用 reactivate 可撤销。 */
 export interface ArchiveBody {
-  reason?: "expired" | "duplicate" | "value-audit" | "curate";
+  reason?: "expired" | "duplicate" | "value-audit" | "curate" | "topic_undo";
   into?: string;
   /** 归档说明（value-audit 写不合格的原因）。 */
   note?: string;
@@ -212,6 +231,8 @@ export interface Proposition {
   import_ref: ImportRef | null;
   /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
   guidance: boolean;
+  /** 话题沉淀（§8.6）写入的条目：所属运行 id（ab work --undo 用）。 */
+  topic_run?: string;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
   demoted: UnconfirmBody["reason"] | null;
   /** 进过候选区（归档后再恢复也回到候选区，不会被恢复成正式条目）。 */
@@ -294,6 +315,7 @@ export function fold(rows: EventRow[]): Projection {
         merged_into: null,
         conflicts_with: null,
         import_ref: b.import_ref ?? null,
+        ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         demoted: null,
         candidate: b.candidate === true,
