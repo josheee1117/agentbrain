@@ -1,0 +1,535 @@
+[
+ {
+  "id": "L01",
+  "type": "history",
+  "project": "ai-data",
+  "query": "ai-data 的 e2e 现在谁来跑？之前不是说不让 agent 跑吗，后来怎么变的",
+  "slots": [
+   [
+    "d01b442c"
+   ],
+   [
+    "2f1d4b8c",
+    "ab0ea66d",
+    "0b1d6769",
+    "3dbf13ad"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L02",
+  "type": "history",
+  "project": "pstack-pi",
+  "query": "派子代理到底用 Herdr 还是 pi-subagents，之前为什么改过",
+  "slots": [
+   [
+    "94cf1473",
+    "42830c38",
+    "ba779e7d"
+   ],
+   [
+    "958c1303",
+    "db1d71c3"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L03",
+  "type": "pitfall_decision",
+  "project": "insuranceagent",
+  "query": "标签表 object_id 改成字符串类型以后，Java 和 SQL 那边要注意什么，当初为什么要改",
+  "slots": [
+   [
+    "3d8eeb42"
+   ],
+   [
+    "cfaa9328"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L04",
+  "type": "reason",
+  "project": "ai-data",
+  "query": "为什么结果表查询的 WHERE 里要带原子 id，polar 那张结果表到底有哪些列",
+  "slots": [
+   [
+    "7ffa9ffb"
+   ],
+   [
+    "e94466ea",
+    "f24e2daf"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L05",
+  "type": "history",
+  "project": "ai-data",
+  "query": "之前说 polar 测试库的结果数据不准，后来核实的结论是什么",
+  "slots": [
+   [
+    "e94466ea"
+   ],
+   [
+    "ae29b9e0"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L06",
+  "type": "scene",
+  "project": "data-asset",
+  "query": "我要在 worktree 里用 java -jar 把 data-asset 跑起来，有哪些坑",
+  "slots": [
+   [
+    "a49f7dbe",
+    "f2264b96"
+   ],
+   [
+    "d52745be"
+   ],
+   [
+    "0b8e0844"
+   ],
+   [
+    "0677a9da",
+    "19ab0b74",
+    "d7b6d2ad"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L07",
+  "type": "pitfall_decision",
+  "project": "data-asset",
+  "query": "data-asset 用 maven 编译报 Lombok TypeTag UNKNOWN，怎么办",
+  "slots": [
+   [
+    "bc2da617"
+   ],
+   [
+    "f5d66945",
+    "4aed6cb4"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L08",
+  "type": "history",
+  "project": "data-asset",
+  "query": "派生维度槽位规则以前端为准还是后端为准？之前是怎么定的，为什么变了",
+  "slots": [
+   [
+    "8b6bf402"
+   ],
+   [
+    "ea278497",
+    "79dfe66c"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L09",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "目录归一化遇到重复的周期编码怎么处理，测试里造重复数据要注意什么",
+  "slots": [
+   [
+    "580993ad"
+   ],
+   [
+    "c66d4f13"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L10",
+  "type": "reason",
+  "project": "ai-data",
+  "query": "结果契约升级后历史结果读不出来，这是 bug 吗，要不要加兼容层",
+  "slots": [
+   [
+    "40dc384f"
+   ],
+   [
+    "6d29108f"
+   ]
+  ],
+  "need_why": true,
+  "split": "test"
+ },
+ {
+  "id": "L11",
+  "type": "reason",
+  "project": "pstack-pi",
+  "query": "pstack 输入框上方的流程面板应该显示什么，这个方案是怎么定下来的",
+  "slots": [
+   [
+    "737cb364"
+   ],
+   [
+    "9598cd8e",
+    "dbcc2177",
+    "e22648ac"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L12",
+  "type": "reason",
+  "project": "pstack-pi",
+  "query": "pstack-pi 为什么采用上游原文快照加适配层的结构，改结构时要注意什么",
+  "slots": [
+   [
+    "88e46975",
+    "64b75f69",
+    "934a9254"
+   ],
+   [
+    "25946296"
+   ]
+  ],
+  "need_why": true,
+  "split": "test"
+ },
+ {
+  "id": "L13",
+  "type": "reason",
+  "project": "pstack-pi",
+  "query": "/pstack 模式为什么只注入一段短提醒，而不是每轮都发完整的入口技能",
+  "slots": [
+   [
+    "38bcc5fe"
+   ]
+  ],
+  "need_why": true,
+  "split": "tune"
+ },
+ {
+  "id": "L14",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "ai-data 换 embedding 模型之后为什么要全部重算，补算是怎么判定的",
+  "slots": [
+   [
+    "c0cb27ed",
+    "efd78296"
+   ]
+  ],
+  "need_why": true,
+  "split": "test"
+ },
+ {
+  "id": "L15",
+  "type": "history",
+  "project": "data-asset",
+  "query": "MaxCompute 表责任人匹配不上字典时怎么办，以前是怎么处理的",
+  "slots": [
+   [
+    "e8d8c189"
+   ],
+   [
+    "60e29b0e"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L16",
+  "type": "scene",
+  "project": "pi-ops",
+  "query": "pi-ops 要能监控到 OOM 和 StackOverflowError，方案是什么，踩过哪些坑",
+  "slots": [
+   [
+    "159b866f",
+    "3cd3961e"
+   ],
+   [
+    "d8178a08"
+   ],
+   [
+    "f44b86a6",
+    "78e4a0d3"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L17",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "长问数被 stream idle timeout 打断怎么处理，任务超时该设多少",
+  "slots": [
+   [
+    "cf8541cb"
+   ],
+   [
+    "daf9929a"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L18",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "模型把查询参数 JSON 当成最终回复、不调工具，该怎么处理",
+  "slots": [
+   [
+    "c1685ba4"
+   ],
+   [
+    "8b435bdc"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L19",
+  "type": "reason",
+  "project": null,
+  "query": "Pensieve 现在还用吗？什么时候、为什么退役的",
+  "slots": [
+   [
+    "2b0371b4"
+   ]
+  ],
+  "need_why": true,
+  "split": "tune"
+ },
+ {
+  "id": "L20",
+  "type": "history",
+  "project": "ai-data",
+  "query": "ai-data 提交代码时进度记在哪里，之前是怎么记的",
+  "slots": [
+   [
+    "3b1da41c"
+   ],
+   [
+    "ac3c8386"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L21",
+  "type": "history",
+  "project": "ai-data",
+  "query": "Polar 上的 data-asset 库是生产资产平台的完整副本吗",
+  "slots": [
+   [
+    "e8e0ed03"
+   ],
+   [
+    "9d8430cc"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L22",
+  "type": "reason",
+  "project": null,
+  "query": "委派 Codex 写代码用哪个模型，为什么不用 gpt-6-sol",
+  "slots": [
+   [
+    "dd6a4fdc"
+   ]
+  ],
+  "need_why": true,
+  "split": "test"
+ },
+ {
+  "id": "L23",
+  "type": "pitfall_decision",
+  "project": "data-asset",
+  "query": "新的开放接口鉴权怎么做，能不能复用数据质量开放接口那套",
+  "slots": [
+   [
+    "b3293221"
+   ],
+   [
+    "79ca63d2"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L24",
+  "type": "pitfall_decision",
+  "project": "data-asset",
+  "query": "新加一个返回很大响应体的接口，HttpLogInterceptor 那边要注意什么",
+  "slots": [
+   [
+    "bffd4ab7"
+   ],
+   [
+    "83bf02e8"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L25",
+  "type": "history",
+  "project": "data-asset",
+  "query": "槽位纯函数要不要补单元测试？不是说 data-asset 不加测试吗",
+  "slots": [
+   [
+    "0647a455"
+   ],
+   [
+    "8aad6f9c"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L26",
+  "type": "scene",
+  "project": "ai-data",
+  "query": "在 ai-data 做只读 review，可以跑哪些命令，报告该怎么写",
+  "slots": [
+   [
+    "ae239f43",
+    "d01da0ed"
+   ],
+   [
+    "c3403fb0"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L27",
+  "type": "reason",
+  "project": "agentbrain",
+  "query": "agentbrain 为什么从只支持 Pi 改成支持全部宿主，当时是怎么讨论的",
+  "slots": [
+   [
+    "a10580ee"
+   ]
+  ],
+  "need_why": true,
+  "split": "tune"
+ },
+ {
+  "id": "L28",
+  "type": "scene",
+  "project": "data-asset",
+  "query": "数仓资产批量接入的通知怎么展示，发企微群有什么限制",
+  "slots": [
+   [
+    "7d8aa4df"
+   ],
+   [
+    "2b11076b"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L29",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "ai-data 跑 e2e 时容器找不到，docker 应该用哪个上下文",
+  "slots": [
+   [
+    "7841c93d"
+   ],
+   [
+    "a5ef9db4"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L30",
+  "type": "pitfall_decision",
+  "project": null,
+  "query": "升级了 pi-subagents 之后为什么新版本没生效",
+  "slots": [
+   [
+    "32063f5e"
+   ],
+   [
+    "fb6ea8c4"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L31",
+  "type": "pitfall_decision",
+  "project": null,
+  "query": "给 pi 某个角色配了 modelThinkingLevels 却不生效，为什么",
+  "slots": [
+   [
+    "d58555b5",
+    "2e6359f8"
+   ],
+   [
+    "c7afa685"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L32",
+  "type": "pitfall_decision",
+  "project": "ai-data",
+  "query": "目录同步后怎么重载内存目录，代码里能不能把目录缓存起来",
+  "slots": [
+   [
+    "ea7315e8"
+   ],
+   [
+    "7456bcfe"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "L33",
+  "type": "history",
+  "project": "ai-data",
+  "query": "ai-data 的测试能不能用 mock？之前不是说 e2e 不能调付费接口吗",
+  "slots": [
+   [
+    "ddc7579e",
+    "7575ee53"
+   ],
+   [
+    "cdeaa002"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "L34",
+  "type": "pitfall_decision",
+  "project": "pstack-pi",
+  "query": "要验证 pi-subagents 的面板和 steer 怎么测",
+  "slots": [
+   [
+    "b9f0d27a"
+   ],
+   [
+    "a23fd25a"
+   ]
+  ],
+  "split": "test"
+ }
+]
