@@ -649,7 +649,7 @@ test("关联双向显示：被补充、合并自（对方已归档，标状态�
   assert.ok(relA, `a 后面应有关联行：\n${s.out}`);
   assert.match(relA!, new RegExp(`被 \\[${id8(b)}\\] 补充`), "反向：a 能看到补充它的 b");
   assert.match(relA!, new RegExp(`合并自 \\[${id8(c)}\\]（已归档）`), "反向：a 能看到并入它的已归档 c，并标状态");
-  assert.doesNotMatch(s.out, new RegExp(`^\\[${id8(c)}\\]`, "m"), "已归档的 c 不变成结果行");
+  assert.doesNotMatch(s.out, new RegExp(`^\\s*\\[${id8(c)}\\]`, "m"), "已归档的 c 不变成结果行（全文行和第 9–16 名一行版都不算）");
   assert.match(s.out, new RegExp(`补充了 \\[${id8(a)}\\]`), "正向：b 的行显示补充了 a");
 
   const g = ab(["get", id8(a)], alpha, own);
@@ -661,6 +661,22 @@ test("关联双向显示：被补充、合并自（对方已归档，标状态�
   const gc = ab(["get", id8(c)], alpha, own);
   assert.equal(gc.code, 0, gc.err);
   assert.match(gc.out, new RegExp(`  已并入 \\[${id8(a)}\\] alpha 决定: 缓存层采用 Redis 方案甲`));
+  assert.match(gc.out, new RegExp(`撤销用 ab archive --reactivate ${id8(c)}`));
+});
+
+test("搜索结果的关联行最多列 3 个，多的提示用 ab get；ab get 全部列出", async () => {
+  const { own, store, put, relate } = await linkFixtureStore("links-overflow");
+  const a = put("日志采样率总决定");
+  const subs = [1, 2, 3, 4].map((i) => put(`日志采样第${i}条细则`));
+  for (const x of subs) relate(x, "refines", a);
+  store.close();
+  const s = ab(["search", "日志采样率总决定"], alpha, own);
+  assert.equal(s.code, 0, s.err);
+  const lines = s.out.split("\n");
+  const rel = lines[lines.findIndex((l) => l.startsWith(`[${a.slice(0, 8)}]`)) + 1];
+  assert.match(rel, /^  关联: (被 \[[0-9a-f]{8}\] 补充；){3}另有 1 个，ab get 看$/, s.out);
+  const g = ab(["get", a.slice(0, 8)], alpha, own).out;
+  for (const x of subs) assert.match(g, new RegExp(`  被它补充 \\[${x.slice(0, 8)}\\]`));
 });
 
 test("冲突两边都显示；被确认的纠正替代后，新条和旧条（已被替代）互相看得到", async () => {
@@ -684,10 +700,14 @@ test("冲突两边都显示；被确认的纠正替代后，新条和旧条（�
 
 test("search 里 why 只打一遍（回归：之前正文用了索引文本，why 出现两次）", async () => {
   const own = join(dir, "search-why-once");
+  mkdirSync(own, { recursive: true });
+  // 配上假 embedding，走混合检索（向量命中的 text 同样是正文 + why）
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "fake-one" }));
   const r = ab(["remember", "--confirmed", "--kind", "decision", "--text", "发布流程改为周四冻结", "--why", "周五上线出过两次事故", "--summary", "发布"], alpha, own);
   assert.equal(r.code, 0, r.err);
   const s = ab(["search", "发布流程"], alpha, own);
   assert.equal(s.code, 0, s.err);
+  assert.doesNotMatch(s.out, /仅全文检索/, "确实走了混合检索");
   assert.equal(s.out.split("周五上线出过两次事故").length - 1, 1, s.out);
   assert.match(s.out, /alpha 决定: 发布流程改为周四冻结\n  为什么: 周五上线出过两次事故/);
 });
@@ -715,6 +735,12 @@ test("search 前 8 条全文，第 9–16 名每条一行，再往后不出", as
     assert.ok([...body].length <= 61, `一行版正文应截断：${l}`);
   }
   assert.ok(full.every((l) => l.includes(long.slice(0, 20))), "前 8 条是全文");
+  // 排序不变（§11.4）：前 8 条与检索默认 8 条的结果、顺序一致
+  const { Store } = await import("./store.ts");
+  const s8 = new Store(join(own, "store.db"), join(own, "index.db"));
+  const top8 = (await s8.searchHybrid("灰度开关", { projects: [s8.ensureProject("alpha")], includeGlobal: true }, null)).hits.map((h) => h.id.slice(0, 8));
+  s8.close();
+  assert.deepEqual(shown.slice(0, 8), top8);
 });
 
 test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说明）；文件没了或路径不在 .pensieve 下给出原因", async () => {
@@ -748,6 +774,35 @@ test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说�
   const b = ab(["get", id8(bad), "--expand"], alpha, own);
   assert.match(b.out, /原文件不可用：.*不是 \.pensieve 目录下的 \.md 文件，拒绝读取/);
   assert.doesNotMatch(b.out, /不该被读出来的笔记/);
+
+  // 符号链接逃逸：.pensieve 里的 md 指向外面
+  const { symlinkSync, chmodSync: chm } = await import("node:fs");
+  const escapeLink = join(pdir, "escape.md");
+  const outsideMd = join(dir, "pens-repo/secret.md");
+  writeFileSync(outsideMd, "外面的秘密笔记\n");
+  symlinkSync(outsideMd, escapeLink);
+  const s2 = new (await import("./store.ts")).Store(join(own, "store.db"), join(own, "index.db"));
+  const mk2 = (text: string, path: string) =>
+    s2.remember(pid, null, false, { kind: "decision", text, confirmed: true, origin: "import", source: src, import_ref: { system: "pensieve", id: text, path, sha256: sha } } as never);
+  const esc = mk2("导入决定丁", escapeLink);
+  const bigMd = join(pdir, "big.md");
+  writeFileSync(bigMd, "长".repeat(5000));
+  const big = mk2("导入决定戊", bigMd);
+  const locked = join(pdir, "locked.md");
+  writeFileSync(locked, "锁住的\n");
+  chm(locked, 0o000);
+  const lock = mk2("导入决定己", locked);
+  s2.close();
+  const eo = ab(["get", id8(esc), "--expand"], alpha, own).out;
+  assert.match(eo, /原文件不可用：.*指向 \.pensieve 目录之外/);
+  assert.doesNotMatch(eo, /外面的秘密笔记/);
+  const bo = ab(["get", id8(big), "--expand"], alpha, own).out;
+  assert.match(bo, /（已截断，完整内容看原文件）/);
+  assert.equal(bo.split("长").length - 1, 4000);
+  const lo = ab(["get", id8(lock), "--expand"], alpha, own);
+  assert.equal(lo.code, 0, "读不了也不崩");
+  if (process.getuid?.() !== 0) assert.match(lo.out, /原文件不可用：.*没有读取权限/);
+  chm(locked, 0o644);
 
   writeFileSync(md, content + "后来补了一行\n");
   assert.match(ab(["get", id8(ok), "--expand"], alpha, own).out, /导入后改过/);

@@ -431,9 +431,8 @@ function cmdGet(argv: string[]): void {
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
-      p.merged_into ? `判定与 [${short(p.merged_into)}] 重复，已并入并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
-      p.conflicts_with ? `与 [${short(p.conflicts_with)}] 说法冲突（关系判定），两条不能同时成立` : "",
-      p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
+      // 并入、冲突、替代的对方在下面"关联"里列（带状态和正文第一行）；这里只留撤销提示
+      p.merged_into ? `已判定为重复并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       ...p.pending_corrections.map((id) => {
         const c = store.project().props.get(id)!;
         if (c.conflicts_with === p.id && !c.supersedes) return `与 [${short(id)}] 说法冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;

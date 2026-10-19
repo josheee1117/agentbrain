@@ -3,7 +3,7 @@
  * 从记忆时的定位点回溯，还原"当时是怎么讨论出来的"。
  * agentbrain 自身不存对话原文。
  */
-import { readFileSync, existsSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { extname, isAbsolute, sep } from "node:path";
 import { sanitize } from "./sanitize.ts";
@@ -200,16 +200,38 @@ export function expandImport(ref: { path: string; sha256: string; also?: string[
 
 function readImportFile(p: string): { src: string; real: string } | { reason: string } {
   if (!isAbsolute(p)) return { reason: "不是绝对路径" };
-  if (!existsSync(p)) return { reason: "文件不存在" };
+  const parts = p.split(sep);
+  const k = parts.lastIndexOf(".pensieve");
+  if (k < 0 || extname(p).toLowerCase() !== ".md") return { reason: "记下的路径不是 .pensieve 目录下的 .md 文件，拒绝读取" };
   let real: string;
+  let root: string;
   try {
     real = realpathSync(p);
-  } catch {
-    return { reason: "无法解析路径" };
+    root = realpathSync(parts.slice(0, k + 1).join(sep));
+  } catch (e) {
+    return { reason: fsReason(e) };
   }
-  if (!real.split(sep).includes(".pensieve") || extname(real).toLowerCase() !== ".md") return { reason: "不是 .pensieve 目录下的 .md 文件，拒绝读取" };
-  const st = statSync(real);
-  if (!st.isFile()) return { reason: "不是普通文件" };
-  if (st.size > IMPORT_EXPAND_MAX_BYTES) return { reason: `文件过大（${st.size} 字节）` };
-  return { src: readFileSync(real, "utf8"), real };
+  // 真实路径必须还在记下的那个 .pensieve 目录里：防止 md 是指向别处的符号链接
+  if (!real.startsWith(root + sep) || extname(real).toLowerCase() !== ".md") return { reason: "文件实际指向 .pensieve 目录之外（符号链接），拒绝读取" };
+  let fd: number | undefined;
+  try {
+    // 校验之后用同一个文件描述符读，不跟随末级符号链接，免得校验和读取之间被换掉
+    fd = openSync(real, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { reason: "不是普通文件" };
+    if (st.size > IMPORT_EXPAND_MAX_BYTES) return { reason: `文件过大（${st.size} 字节）` };
+    return { src: readFileSync(fd, "utf8"), real };
+  } catch (e) {
+    return { reason: fsReason(e) };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function fsReason(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException).code;
+  if (code === "ENOENT" || code === "ENOTDIR") return "文件不存在";
+  if (code === "EACCES" || code === "EPERM") return "没有读取权限";
+  if (code === "ELOOP") return "是符号链接，拒绝读取";
+  return `无法读取（${code ?? "未知错误"}）`;
 }
