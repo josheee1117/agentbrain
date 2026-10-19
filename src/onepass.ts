@@ -68,6 +68,7 @@ export interface OnePassItem {
   text: string;
   scenario: string;
   why: string | null;
+  /** A 类一律 true（与审稿链路 review.ts normalize 同口径：标准写明 A 类"确认后每轮常驻注入"，不靠模型记得标）。 */
   guidance: boolean;
   reason: string;
 }
@@ -83,10 +84,6 @@ export function parseOnePass(raw: string | null, neighbors: Proposition[]): { it
   const bad = (k: OnePassInvalid) => (invalid[k] = (invalid[k] ?? 0) + 1);
   const items: OnePassItem[] = [];
   for (const v of o.items as any[]) {
-    if (items.length >= ONE_PASS_MAX_ITEMS) {
-      bad("too_many");
-      continue;
-    }
     if (v?.action !== "new" && v?.action !== "merge") { bad("bad_action"); continue; }
     if (!["rule", "decision", "pitfall"].includes(v.kind)) { bad("bad_kind"); continue; }
     if (!["A", "B", "C"].includes(v.class)) { bad("bad_class"); continue; }
@@ -99,7 +96,9 @@ export function parseOnePass(raw: string | null, neighbors: Proposition[]): { it
       into = byLabel.get(String(v.into)) ?? null;
       if (!into) { bad("merge_bad_target"); continue; }
     }
-    items.push({ action: v.action, into, kind: v.kind, class: v.class, text, scenario, why: typeof v.why === "string" && v.why.trim() ? v.why.trim() : null, guidance: v.guidance === true, reason: typeof v.reason === "string" ? v.reason : "" });
+    // 先校验再数上限：超限之后的坏条按真实原因计数，too_many 只数"合格但超出上限"的（上限只数合格条）
+    if (items.length >= ONE_PASS_MAX_ITEMS) { bad("too_many"); continue; }
+    items.push({ action: v.action, into, kind: v.kind, class: v.class, text, scenario, why: typeof v.why === "string" && v.why.trim() ? v.why.trim() : null, guidance: v.guidance === true || v.class === "A", reason: typeof v.reason === "string" ? v.reason : "" });
   }
   return { items, invalid };
 }
