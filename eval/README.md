@@ -13,6 +13,7 @@
 | `graph-1hop/` | 08 | 模拟脚本、关系边（只有 id）、输出 |
 | `scene-sim/` | 09 | 模拟脚本与输出 |
 | `scene-directory/` | 10 | 出题与评测脚本、46 道题、结果（去掉了 brief 全文） |
+| `recall-misses/` | 12 | 42 条标签的元数据与各做法结果（`items.json`，无正文）、同窗口追问与召回版提示词试跑的结果（去掉原始输出，产出正文已脱敏）、新条目人工复核、`probe.ts`、`analyze.py` |
 | `lib/` | — | `scrub.py`（脱敏）、`collect.py`（从本地工作目录收集并脱敏，记录了数据来源） |
 | `linked-recall-impl/` | 14 | 真实 CLI 前后对比脚本、答案层打分规则（先提交）与驱动、结果（只有 id 和打分，无正文） |
 

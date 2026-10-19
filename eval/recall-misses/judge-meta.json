@@ -1,0 +1,1065 @@
+[
+{
+"window_id": "34975417c59bb932fca01ebef067b59b06116bdfb5524e5338f688d4034a1888",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "9888aac0-9e62-4c75-9c65-03f0cc26ccfa",
+"set": "s30",
+"n": 1,
+"label": "有用"
+}
+],
+"chars": 22922,
+"turns": 73,
+"worker": true,
+"neighbors": 4,
+"ms": 21635,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"9888aac0-9e62-4c75-9c65-03f0cc26ccfa": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类跨前后端的隐含契约差异，核对派生指标导出与复制 SQL 时可避免误判槽位一致性，已有记忆未覆盖。"
+}
+}
+},
+{
+"window_id": "e6629b1b5444fdad470fb0aa14db9e2cc70c8575c2f98997018941b074f76733",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "25fc47d4-44bc-4a57-b2b0-eb0d90664266",
+"set": "s30",
+"n": 2,
+"label": "没用"
+}
+],
+"chars": 47699,
+"turns": 190,
+"worker": true,
+"neighbors": 5,
+"ms": 37837,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"25fc47d4-44bc-4a57-b2b0-eb0d90664266": {
+"verdict": "skip",
+"into": null,
+"why_skip": "findable",
+"reason": "新增端口需加入白名单是代码和拒绝报错直接说明的约束，而通配监听必须强制回环的原则已有确认记忆，无需另记。"
+}
+}
+},
+{
+"window_id": "b01f50444989b1fc6511d6253432f85a3824f4d7ca31a575313c5362224608ec",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f",
+"set": "s30",
+"n": 3,
+"label": "没用"
+}
+],
+"chars": 16100,
+"turns": 75,
+"worker": true,
+"neighbors": 0,
+"ms": 30286,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"2486e7a7-7eb0-4c47-80b6-afdf0ff8e76f": {
+"verdict": "skip",
+"into": null,
+"why_skip": "one_off",
+"reason": "这是一次已修复的提示词冲突，未体现持续存在的隐含契约；问题由独立复核发现，两轮真实 e2e 是修复后的验收。"
+}
+}
+},
+{
+"window_id": "57779ed19fbf8d3a02aace659077b9063139f2d9317b7a29b1b83a6c527d51bb",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "c09b0151-0b7e-4912-9975-31fc955158a1",
+"set": "s30",
+"n": 6,
+"label": "没用"
+}
+],
+"chars": 20910,
+"turns": 82,
+"worker": false,
+"neighbors": 5,
+"ms": 18009,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"c09b0151-0b7e-4912-9975-31fc955158a1": {
+"verdict": "skip",
+"into": null,
+"why_skip": "common_knowledge",
+"reason": "pnpm 注入 NODE 属于通用工具行为，具体变量改名和启发式回退只是一次性修复，不值得长期记忆。"
+}
+}
+},
+{
+"window_id": "f4fcc38e9482867dfdc4c346c318e197108595061e414dff981aaaab827fe1c4",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "dd03a351-6ce6-4077-95e6-da08b7cf99c4",
+"set": "s30",
+"n": 8,
+"label": "有用"
+}
+],
+"chars": 25503,
+"turns": 40,
+"worker": false,
+"neighbors": 11,
+"ms": 30685,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"dd03a351-6ce6-4077-95e6-da08b7cf99c4": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 A 类偏好，应改写为：当给用户看的输出涉及数据库原始字段时，要转成完整易懂的业务说明，不要原样堆砌内部字段；合并单列不固化为长期要求。"
+}
+}
+},
+{
+"window_id": "f524aa27291ef8979416d8fe68017819038f43d614110f29007cca9ac46d4fa4",
+"error": "chunk_not_found"
+},
+{
+"window_id": "e059568d2ef0e896ddeecbe2794aa28cd607812dae765c702f46a1adba3a25cf",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "dda5bdf3-09bc-49fe-b380-7866d97d017b",
+"set": "s30",
+"n": 11,
+"label": "有用"
+}
+],
+"chars": 35763,
+"turns": 206,
+"worker": false,
+"neighbors": 12,
+"ms": 97690,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"dda5bdf3-09bc-49fe-b380-7866d97d017b": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "用户明确要求“给我一个用人话的版本，你现在说的我看不懂”，属于可复用的 A 类汇报偏好，但不把助手采用的“一句话开头”记成硬性要求。"
+}
+}
+},
+{
+"window_id": "ba0c61a46e14b8f9f78a725b353e175edea3b9c18c417495d5679c8adbbf6fcf",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "94cf1473-8cb8-4e57-8ba5-ce0a43a8827c",
+"set": "s30",
+"n": 9,
+"label": "部分有用"
+}
+],
+"chars": 47717,
+"turns": 218,
+"worker": false,
+"neighbors": 12,
+"ms": 153124,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"94cf1473-8cb8-4e57-8ba5-ce0a43a8827c": {
+"verdict": "skip",
+"into": null,
+"why_skip": "already_known",
+"reason": "统一使用 pi-subagents、不另造编排的架构边界已写入仓库文档；保留 Herdr 长期工作者的说法则是阶段性建议，不是最终确定的默认方案。"
+}
+}
+},
+{
+"window_id": "c15ac59689805db5e983a2e4dc8419b508918798272061311ed929415b6b3990",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "e6aa6726-e1ec-436d-b37c-3ae838181434",
+"set": "s30",
+"n": 12,
+"label": "没用"
+},
+{
+"id": "ecc935fa-4662-43f2-88ee-ff89f9ee008b",
+"set": "s60",
+"n": 15,
+"label": "没用"
+}
+],
+"chars": 25945,
+"turns": 124,
+"worker": false,
+"neighbors": 12,
+"ms": 51311,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"e6aa6726-e1ec-436d-b37c-3ae838181434": {
+"verdict": "skip",
+"into": null,
+"why_skip": "one_off",
+"reason": "这是对单次测试耗时口径的纠正，用户未要求作为长期汇报规则。"
+},
+"ecc935fa-4662-43f2-88ee-ff89f9ee008b": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类本地环境选择：用户明确选定该模型并验证成功，后续启动核验时可沿用，但应去掉永久禁用旧型号的表述。"
+}
+}
+},
+{
+"window_id": "8b3ff122b7e454c3c2aae9f1f670a4e594cbb7e32545b5a4baef47cc33904dbb",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "77cbf3ea-fdbe-4e83-94bd-b166ee8f077e",
+"set": "s30",
+"n": 13,
+"label": "有用"
+}
+],
+"chars": 47274,
+"turns": 205,
+"worker": true,
+"neighbors": 9,
+"ms": 43034,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"77cbf3ea-fdbe-4e83-94bd-b166ee8f077e": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 A 类可复用验证流程：先本地 Docker 验证再推测试机；虽来自派活提示，仍是通用验证方法，m5 仅覆盖模拟验收的证明边界。"
+}
+}
+},
+{
+"window_id": "2c77f5859fa1e8866ada2a87e284c715ab59c2e7d35b49e5ca6f9855acb3a14a",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "ed9f5e6c-b8f9-4d0c-979d-5deda3de7e58",
+"set": "s30",
+"n": 16,
+"label": "没用"
+}
+],
+"chars": 27253,
+"turns": 93,
+"worker": true,
+"neighbors": 4,
+"ms": 12576,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"ed9f5e6c-b8f9-4d0c-979d-5deda3de7e58": {
+"verdict": "skip",
+"into": null,
+"why_skip": "dispatch_only",
+"reason": "这是父 agent 为保护该 worktree 未提交成果设定的一次性任务边界，不能据此认定为用户长期偏好。"
+}
+}
+},
+{
+"window_id": "0564baccfea36477d037c4f3842bf274832683184946e3daa5cbe549e4151419",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "8d281513-643e-4cc0-a544-e6d7a3ab43bf",
+"set": "s30",
+"n": 14,
+"label": "没用"
+}
+],
+"chars": 22115,
+"turns": 117,
+"worker": false,
+"neighbors": 0,
+"ms": 41008,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"8d281513-643e-4cc0-a544-e6d7a3ab43bf": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "作为 B 类项目设计知识保留：查询企微标签组时复用既有场景查询，避免重复扩展；但应将候选误写的 listByScene 纠正为 groupsByScene。"
+}
+}
+},
+{
+"window_id": "ee161afcdb5f4ac808d186a68099b2f22f930826216d4b25904d7b16b9a73045",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "8279061f-89d6-4e91-946f-367f3625e663",
+"set": "s30",
+"n": 23,
+"label": "没用"
+}
+],
+"chars": 47536,
+"turns": 189,
+"worker": true,
+"neighbors": 4,
+"ms": 76483,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"8279061f-89d6-4e91-946f-367f3625e663": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于项目测试的跨用例共享状态约束；改写为新增批量记忆夹具时使用独立 AB_HOME 或将用例置末，避免污染后续断言，不要求两者同时执行。"
+}
+}
+},
+{
+"window_id": "a5b3d5fbd1976534315784a6b8e6aff75c1133cc7b96c1289eb2a574a37fd337",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "0f00e247-0f53-4c56-bf41-527e88f1b4d4",
+"set": "s30",
+"n": 22,
+"label": "没用"
+}
+],
+"chars": 47823,
+"turns": 246,
+"worker": true,
+"neighbors": 4,
+"ms": 93169,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"0f00e247-0f53-4c56-bf41-527e88f1b4d4": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "改写为 B 类跨模块契约：模型自纠依赖 code/message/details 完整透传，保留这一设计理由；背景应归因于派活说明和工具输出，而非用户原话。"
+}
+}
+},
+{
+"window_id": "635bf878cf068db27b5a6fcd7627ec78e8072fc7b7632c9834f3154f7d4d5f98",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "aa1c4bf4-446f-4214-9cb6-2a680a5f1ccf",
+"set": "s30",
+"n": 24,
+"label": "没用"
+}
+],
+"chars": 24781,
+"turns": 139,
+"worker": true,
+"neighbors": 4,
+"ms": 19540,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"aa1c4bf4-446f-4214-9cb6-2a680a5f1ccf": {
+"verdict": "skip",
+"into": null,
+"why_skip": "findable",
+"reason": "这是页面和组件代码中可直接确认的条件文案差异，不构成跨模块隐含契约或长期干活偏好。"
+}
+}
+},
+{
+"window_id": "2791000007109b3d695ac7c57153da68d0d7e3c9e97ddd47d581910067215c82",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "65506fcd-ab21-4a19-97ae-c3f7bd01338a",
+"set": "s60",
+"n": 8,
+"label": "部分有用"
+}
+],
+"chars": 8599,
+"turns": 26,
+"worker": true,
+"neighbors": 4,
+"ms": 63982,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"65506fcd-ab21-4a19-97ae-c3f7bd01338a": {
+"verdict": "skip",
+"into": null,
+"why_skip": "common_knowledge",
+"reason": "核心是“不回显连接串”的凭据保管套话，按标准不记，附带一次验收命令也不足以成为长期偏好。"
+}
+}
+},
+{
+"window_id": "193570d1e63c1b03289f8d9963957aedb7843bf0a3a6575407d3c02c44319e9c",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "312398a1-6e95-41ff-8478-f22e81e7d1c8",
+"set": "s60",
+"n": 1,
+"label": "部分有用"
+}
+],
+"chars": 47769,
+"turns": 159,
+"worker": true,
+"neighbors": 4,
+"ms": 95199,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"312398a1-6e95-41ff-8478-f22e81e7d1c8": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 A 类通用测试与汇报方法，补充了已确认真实链路规则未覆盖的故障／延迟注入边界和逐用例说明要求。"
+}
+}
+},
+{
+"window_id": "20ecf5418a54f3b993ea5b439d0f126fff7902a565c655580503d3485b2b505d",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "a49f7dbe-ba96-4551-a074-25c0f3ba8c6c",
+"set": "s60",
+"n": 10,
+"label": "有用"
+}
+],
+"chars": 26067,
+"turns": 110,
+"worker": true,
+"neighbors": 4,
+"ms": 25391,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"a49f7dbe-ba96-4551-a074-25c0f3ba8c6c": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于本地启动时可复用的项目环境约束（B 类），保留关闭注册以免测试网关引流的要求，但删去“用户明确要求”和无依据的“线上”表述。"
+}
+}
+},
+{
+"window_id": "1b49873cd4471b9618e14126d0a3f971dcdca886dc70220a8b0781496bbbddf2",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "450cb4db-a5d4-4dda-8fb5-141712a2c691",
+"set": "s60",
+"n": 11,
+"label": "有用"
+}
+],
+"chars": 36426,
+"turns": 119,
+"worker": true,
+"neighbors": 4,
+"ms": 18864,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"450cb4db-a5d4-4dda-8fb5-141712a2c691": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 A 类可复用审查方法：核实未完成的阻断原因而非强求通过，虽来自派活提示，但不是一次性任务限制。"
+}
+}
+},
+{
+"window_id": "692361e54e245c36a76ece2e9bd98ca38684f835715c84e95e239294bc2c8abd",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "d34b1db7-6e80-4b4f-9a6b-51140f81975d",
+"set": "s60",
+"n": 14,
+"label": "部分有用"
+},
+{
+"id": "78c6ac10-dc33-462c-8a10-1283cfc6faf9",
+"set": "s60",
+"n": 50,
+"label": "有用"
+}
+],
+"chars": 11424,
+"turns": 39,
+"worker": true,
+"neighbors": 4,
+"ms": 44881,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"d34b1db7-6e80-4b4f-9a6b-51140f81975d": {
+"verdict": "skip",
+"into": null,
+"why_skip": "one_off",
+"reason": "这是两处漏设超时的具体缺陷，修复即消失，不能据此升格为所有 hook 的长期规则。"
+},
+"78c6ac10-dc33-462c-8a10-1283cfc6faf9": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类宿主集成知识：Pi 会话目录可能不同于进程目录，后续编写涉及项目范围的扩展时应使用 ctx.cwd。"
+}
+}
+},
+{
+"window_id": "e9cc22799fb73411bb30ae19ca82d4d2685027f0a3b6d32d503720e6f0fb908b",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "d3446315-2438-4605-9c81-7a04561deecd",
+"set": "s60",
+"n": 17,
+"label": "有用"
+}
+],
+"chars": 35376,
+"turns": 311,
+"worker": false,
+"neighbors": 11,
+"ms": 58856,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"d3446315-2438-4605-9c81-7a04561deecd": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "改写为 B 类项目知识：当同步 pstack-pi 上游时，用 tools/sync-upstream.mjs 从 cursor/plugins 导入快照，不以本机 Codex 插件缓存为更新基准；去掉一次性目标纠正和易过期的版本比较。"
+}
+}
+},
+{
+"window_id": "c1adedb866a347fb20f09e0efa0e1864918f786904c63560f9cd4f1f026f7ab0",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "80099904-56ba-4bbd-be37-7d46a9c79602",
+"set": "s60",
+"n": 18,
+"label": "有用"
+}
+],
+"chars": 14033,
+"turns": 66,
+"worker": false,
+"neighbors": 12,
+"ms": 43580,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"80099904-56ba-4bbd-be37-7d46a9c79602": {
+"verdict": "skip",
+"into": null,
+"why_skip": "one_off",
+"reason": "这是一次已补合的分支差异，核对分支属于通用排查方法，且会话未证实报错实例确实从 master 构建。"
+}
+}
+},
+{
+"window_id": "615935d4af6f709b4e86077159446d162d438e44546eb55529406ae92ac62cb5",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "6302549e-bdd2-4393-a45a-54fc43cc22c6",
+"set": "s60",
+"n": 26,
+"label": "部分有用"
+}
+],
+"chars": 47989,
+"turns": 200,
+"worker": true,
+"neighbors": 4,
+"ms": 42440,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"6302549e-bdd2-4393-a45a-54fc43cc22c6": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类跨模块展示契约：生成 Worker 图表规格时，spec.type 固定为 bar，实际图形通过 presentation/preferredChart 交给展示层决定，不只是一个类型报错。"
+}
+}
+},
+{
+"window_id": "de3e2119894fb60cfb071f6c7e5bfec112e92accab10afdd94dc865f25ee7186",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "86f13522-8c76-4132-849e-6dc5c06035e5",
+"set": "s60",
+"n": 29,
+"label": "没用"
+}
+],
+"chars": 47997,
+"turns": 241,
+"worker": false,
+"neighbors": 0,
+"ms": 43926,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"86f13522-8c76-4132-849e-6dc5c06035e5": {
+"verdict": "skip",
+"into": null,
+"why_skip": "already_known",
+"reason": "仓库已规定 JDK 11 基线及编译测试前核验本机工具链，这次切换 JAVA_HOME 的修复无需另记或固化路径。"
+}
+}
+},
+{
+"window_id": "62d88889473333a8385b8168481ed7a605b04eba631eacb950dfbf2e34f40dba",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "61a2e78c-063e-46da-89d4-4e21655c9fa0",
+"set": "s60",
+"n": 35,
+"label": "部分有用"
+}
+],
+"chars": 46111,
+"turns": 98,
+"worker": true,
+"neighbors": 4,
+"ms": 20159,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"61a2e78c-063e-46da-89d4-4e21655c9fa0": {
+"verdict": "skip",
+"into": null,
+"why_skip": "common_knowledge",
+"reason": "未捕获异常打印栈并非零退出是 Node.js 通用行为，一次坏 JSON 修复不足以确立所有 hook 必须静默成功的长期原则。"
+}
+}
+},
+{
+"window_id": "956f0f78d276624628cdd32cd9d515834fea6f202745b74b66c98112999742dd",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "25946296-4f7e-4619-8c19-87047a81383b",
+"set": "s60",
+"n": 38,
+"label": "有用"
+}
+],
+"chars": 47911,
+"turns": 508,
+"worker": false,
+"neighbors": 6,
+"ms": 40331,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"25946296-4f7e-4619-8c19-87047a81383b": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "用户明确要求安装可移植性，值得保留结构改造后用全新空配置实测安装的验证要求，但应限定兼容性结论于实测范围，不承诺任意 Pi 版本均可用。"
+}
+}
+},
+{
+"window_id": "56a0af78c6089a3a8e14521be93ffc37cb1463b620c8c694e90e709b357199a7",
+"mode": "judge",
+"model": "pi:openai-codex/gpt-6-astra@max",
+"refs": [
+{
+"id": "f466f9e0-7a5c-4ffa-bcb8-40a0023e4bb7",
+"set": "s60",
+"n": 36,
+"label": "有用"
+},
+{
+"id": "71cefbfd-e755-4824-b250-13d0eb6880f9",
+"set": "s60",
+"n": 45,
+"label": "部分有用"
+},
+{
+"id": "bec87117-5197-48e4-91c3-6c1b130f9f35",
+"set": "s60",
+"n": 54,
+"label": "有用"
+}
+],
+"chars": 10862,
+"turns": 40,
+"worker": true,
+"neighbors": 4,
+"ms": 93151,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"f466f9e0-7a5c-4ffa-bcb8-40a0023e4bb7": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "保留用变异实测证明新断言会失败并说明验证方法的 A 类偏好，内存拦截作为可选手段，不固化本次文件定稿限制。"
+},
+"71cefbfd-e755-4824-b250-13d0eb6880f9": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "测试临时产物放 /tmp、不污染仓库并清理残留，是可复用的 A 类工作流偏好。"
+},
+"bec87117-5197-48e4-91c3-6c1b130f9f35": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "保留补回归测试时优先最小接缝、复用现有测试方式的 A 类取向，不将本次 CLI fixture 或未新增解析 API 固化成长期禁令。"
+}
+}
+},
+{
+"QUOTA": "pi 审稿失败：Codex error: The usage limit has been reached",
+"at": "2026-10-19T01:47:04.567Z"
+},
+{
+"QUOTA": "pi 审稿失败：Codex error: The usage limit has been reached",
+"at": "2026-10-19T01:47:55.252Z"
+},
+{
+"window_id": "f524aa27291ef8979416d8fe68017819038f43d614110f29007cca9ac46d4fa4",
+"error": "chunk_not_found"
+},
+{
+"window_id": "6e3e28a959c009883b62acb98743e469fcb586f01e14fb267c7f9617c7a6629f",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "ea98638a-3a6a-4771-97f0-8f8610f9a75b",
+"set": "s60",
+"n": 39,
+"label": "部分有用"
+}
+],
+"chars": 47889,
+"turns": 274,
+"worker": true,
+"neighbors": 0,
+"ms": 41341,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"ea98638a-3a6a-4771-97f0-8f8610f9a75b": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "应提炼为 B 类跨模块契约：修改图表结果结构时，结果列名须与 UI spec 的 yFields 映射一致，否则可能只表现为图表缺失；保留这一排障知识，不把 page.route 造数据升格为 e2e 规范。"
+}
+}
+},
+{
+"window_id": "2bd333f890b27d7574a00a16b5c77caa35236344b90ac1be0da880d78aa2e65a",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "5cb51d77-18e0-4322-81bc-4c2d4ae8a16e",
+"set": "s60",
+"n": 40,
+"label": "有用"
+}
+],
+"chars": 11095,
+"turns": 52,
+"worker": true,
+"neighbors": 4,
+"ms": 22993,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"5cb51d77-18e0-4322-81bc-4c2d4ae8a16e": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类跨系统契约：当维护语义目录导出或处理已删除的维度字段时，需保留关联 ID 占位以避免 ai-data 整批校验失败，不能与原子字段允许为 null 的规则混用。"
+}
+}
+},
+{
+"window_id": "52a47450281857f48a18c15ae6fb4a18decc4d5f559b41ba4309761febb0bd52",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "e0632cdd-5621-4b62-a25e-33a0c5089bd8",
+"set": "s60",
+"n": 41,
+"label": "有用"
+}
+],
+"chars": 7394,
+"turns": 39,
+"worker": true,
+"neighbors": 4,
+"ms": 20813,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"e0632cdd-5621-4b62-a25e-33a0c5089bd8": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 A 类干活偏好：派活中明确要求“并发用两个 Store 实例或两个 DatabaseSync 连接手动交错，不要用 sleep 赌时序”，这是编写竞态复现测试时可复用的方法要求，不是一次性任务限制。"
+}
+}
+},
+{
+"window_id": "5bd3db90ab6060a426bf948bda518e9d338c420f31eff12c15e9d944157b5932",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "4b58efb7-9b58-4c96-899d-ee3e11b9649c",
+"set": "s60",
+"n": 42,
+"label": "部分有用"
+}
+],
+"chars": 47753,
+"turns": 238,
+"worker": false,
+"neighbors": 4,
+"ms": 49750,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"4b58efb7-9b58-4c96-899d-ee3e11b9649c": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "应收窄为 B 类探索性环境知识：本机 OrbStack 已测试的隔离网络存在容器访问宿主 loopback 超时、DataAsset 启动预检退出的实证，后续同类接入应据此验证路由和选择拓扑，但不能泛化为 loopback 与容器访问必然不可兼得。"
+}
+}
+},
+{
+"window_id": "5f3d06844a9cc59bdbfa1a7af94e654cac6446b81e13dac4e321e2b23eec8770",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "28004e7d-78df-4491-b6d5-71a1c44bc691",
+"set": "s60",
+"n": 43,
+"label": "没用"
+}
+],
+"chars": 3729,
+"turns": 1,
+"worker": true,
+"neighbors": 1,
+"ms": 12739,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"28004e7d-78df-4491-b6d5-71a1c44bc691": {
+"verdict": "skip",
+"into": null,
+"why_skip": "common_knowledge",
+"reason": "这是标准明确排除的凭据保管套话，临时文件传参也只是通用操作方式，不构成值得长期记忆的项目知识或干活偏好。"
+}
+}
+},
+{
+"window_id": "1a14bc0147938ba446de9ac8cc7c84db733453fd2a9ec7b347fbb3f3d136d897",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "bf88f699-7839-4bba-a56c-f80350c40c28",
+"set": "s60",
+"n": 44,
+"label": "没用"
+}
+],
+"chars": 12628,
+"turns": 50,
+"worker": true,
+"neighbors": 3,
+"ms": 30738,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"bf88f699-7839-4bba-a56c-f80350c40c28": {
+"verdict": "skip",
+"into": null,
+"why_skip": "one_off",
+"reason": "这只是临时实验快照与现场容器数量不符造成的一次断言失败，不是长期环境契约或反复性坑，且记录中只是请求确认继续，不能据此记成保留差异即可放行的规则。"
+}
+}
+},
+{
+"window_id": "b1fd5d549a68638d9dc3ddf5ca7ee7389b0145d0a393e0b68e591dcad4d72da3",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "ece7cf9c-f76c-43bf-a089-a46d2e53dbd6",
+"set": "s60",
+"n": 46,
+"label": "有用"
+}
+],
+"chars": 3461,
+"turns": 1,
+"worker": true,
+"neighbors": 4,
+"ms": 35327,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"ece7cf9c-f76c-43bf-a089-a46d2e53dbd6": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类已定设计：当修改指标定义或历史结果校验时，需用口径指纹避免派生 version 未变造成漏判，并区分历史读取与导出的失效规则；现有记忆未覆盖这一跨模块契约。"
+}
+}
+},
+{
+"window_id": "738c669837bd87adb5932f122000af8d95890da8e5bca5af388d9c181311586e",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "7345c5a1-eb2c-481f-9649-fa19cf47bdc5",
+"set": "s60",
+"n": 52,
+"label": "没用"
+}
+],
+"chars": 45537,
+"turns": 79,
+"worker": true,
+"neighbors": 4,
+"ms": 13348,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"7345c5a1-eb2c-481f-9649-fa19cf47bdc5": {
+"verdict": "skip",
+"into": null,
+"why_skip": "common_knowledge",
+"reason": "macOS 符号链接及用 realpath 归一化路径属于通用技术常识，不是 agentbrain 特有的项目知识或工作偏好。"
+}
+}
+},
+{
+"window_id": "0b57433e1cf666723fef8c46559c4554b1152c445a4a1c3d86f68c73948324cd",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "92cf280a-d65b-4495-9ea2-239839d74687",
+"set": "s60",
+"n": 53,
+"label": "没用"
+}
+],
+"chars": 4885,
+"turns": 27,
+"worker": true,
+"neighbors": 4,
+"ms": 36902,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"92cf280a-d65b-4495-9ea2-239839d74687": {
+"verdict": "skip",
+"into": null,
+"why_skip": "other",
+"reason": "这是标准明确排除的凭据保管套话，source 注入也只是父 agent 对本轮授权的执行约束，不能据此升格为用户的长期偏好。"
+}
+}
+},
+{
+"window_id": "afa968d5f3f26cac946100e28c466e1ef61136bd985ead472e50902128375aa6",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "fa54f784-4ec4-4726-8db0-b54db282c4a3",
+"set": "s60",
+"n": 55,
+"label": "有用"
+}
+],
+"chars": 47789,
+"turns": 242,
+"worker": false,
+"neighbors": 12,
+"ms": 47897,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"fa54f784-4ec4-4726-8db0-b54db282c4a3": {
+"verdict": "new",
+"into": null,
+"why_skip": null,
+"reason": "属于 B 类跨层规则冲突知识，可在同步上游或排查回复泄漏时指导对照技能正文与适配层、在适配层消解冲突，但不能据此断言已排除模型执行偏离。"
+}
+}
+},
+{
+"window_id": "cda49d41bc1fd308e2c8e872157d4614eff16fa3a2a244cdf6a9857ba75049f3",
+"mode": "judge",
+"model": "pi:cpa/gpt-6-astra@max",
+"refs": [
+{
+"id": "0eac35cb-69a2-4b31-8a0c-35cde6eea632",
+"set": "s60",
+"n": 58,
+"label": "有用"
+}
+],
+"chars": 47800,
+"turns": 311,
+"worker": false,
+"neighbors": 12,
+"ms": 26733,
+"prompt_version": "b1067fc1e85a",
+"judge": {
+"0eac35cb-69a2-4b31-8a0c-35cde6eea632": {
+"verdict": "skip",
+"into": null,
+"why_skip": "already_known",
+"reason": "属于有用户原话支持的 A 类干活偏好，但 repo_docs 的「先探索，再提问」已要求自行核查配置与外部运行状态、给出具体做法，不把可查事实交给用户确认，无需重复记忆。"
+}
+}
+}
+]
