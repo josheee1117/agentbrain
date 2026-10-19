@@ -1,0 +1,302 @@
+[
+ {
+  "n": 0,
+  "window_id": "34975417c59b",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "data-asset 与 ai-data 的语义目录交换以共享的《语义目录导出契约》为准，字段、类型、可空性及互斥联合变更先改契约，再同步导出实现和消费端的 Zod 校验及 fixture。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 1,
+  "window_id": "34975417c59b",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "语义目录的 /open/semantic/* 鉴权须与既有 open-api 凭据及 SSO 隔离，使用可独立吊销的凭据，并对缺失或错误凭据返回 401。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 2,
+  "window_id": "e6629b1b5444",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "真实诊断由 `apps/pi-runtime` 调用模型，`apps/agent` 保持 `fake` reasoner 并通过运行时 URL、token 和 callback 接通外部 Runtime，不要在控制面恢复直接模型调用。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 3,
+  "window_id": "e6629b1b5444",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "排查 DataAsset 业务事件时，沿自定义 JFR→RecordingStream→Starter HTTP 批次→中央 Event/Incident/Evidence 追踪，并检查 `pi-ops.jfr.enabled` 与 `business-error-enabled`，因为 `BusinessErrorRecorder` 在事件未启用时会直接返回。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 4,
+  "window_id": "e6629b1b5444",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "在 `real-dataasset-lab` 接入真实模型时，保留离线 `central/lab.env`，通过 `RDL_MODEL_APPROVED=yes` 合并 `central/lab-model.env`，再由 `central/start-runtime.sh` 用 `PI_CODING_AGENT_DIR` 加载 `central/pi-agent/models.json`，不必改全局模型目录或删除离线守卫。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 5,
+  "window_id": "e6629b1b5444",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "复用 `real-dataasset-lab` 已退出的应用容器前，要检查 `central/start-lab.sh` 的 Node 启动分支，因为它也调用仅接受 `created` 状态的 `verify-container.mjs`，不能只处理 `start-app` 的门禁，也不能因容器身份正确就跳过阶段适配检查。",
+  "reviewer_verdict": "maybe",
+  "note": "很具体，像一次性排障细节"
+ },
+ {
+  "n": 6,
+  "window_id": "57779ed19fbf",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "推进 pi-ops 里程碑时遵循 PLAN-0002 的执行规则，一次只做一个里程碑，并为每个里程碑使用独立分支和独立 PR。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 7,
+  "window_id": "57779ed19fbf",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "对 Pi-Ops 真实主机运行 smoke 时使用 `deploy/local/smoke.sh` 的 `REMOTE=1` 模式并配置远端端点，不能只替换 URL 后沿用本地模式，因为本地模式会重建或重启本机 Compose，并直接访问远端未发布端口的 pi-runtime。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 8,
+  "window_id": "57779ed19fbf",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "Pi-Ops 的应用代码、镜像推送和 smoke 脚本归 `~/code_me/pi-ops`，双主机 Compose、部署环境示例和 Ansible 编排归 `~/code_me/test-infra`，不要误用同名的 `~/code/test-infra`。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 9,
+  "window_id": "57779ed19fbf",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "从本机通过 `ssh [REDACTED:host]`（`[REDACTED:ip]`）和 `ssh test-ai-01`（`[REDACTED:ip]`）访问 Pi-Ops 的两台测试主机，端口与认证沿用 `~/.ssh/config`。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 10,
+  "window_id": "ba0c61a46e14",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "多代理方案要让用户能逐个查看运行细节和状态、在运行中单独调整任务，并在满足这些能力的方案中优先选择架构简单、容易使用的实现。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 11,
+  "window_id": "ba0c61a46e14",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "仓库的 upstream 分支是同步工具维护的长期上游快照，不属于可清理的临时分支，导入快照后仍须在干净的集成分支审查差异再合入主线。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 12,
+  "window_id": "ba0c61a46e14",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "保留 tests/helpers.js 手工维护的预期技能清单，上游增删技能时人工核对并更新，不要从当前 skills 目录自动生成测试期望而失去独立对照。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 13,
+  "window_id": "e059568d2ef0",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "agentbrain 的功能取舍围绕避免重复踩坑、还原决策讨论过程、快速定位记忆和主子代理协作四个核心场景，不以复刻 abrain 的全部能力为目标。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 14,
+  "window_id": "e059568d2ef0",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "agentbrain 的来源追溯采用会话定位指针而不是复制讨论正文，记忆保留结论摘要，需要了解决策来由时再展开原始会话。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 15,
+  "window_id": "e059568d2ef0",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "agentbrain 以小简报和按需检索控制默认上下文，但相关坑必须随当前请求主动召回，不能依赖 Agent 预先知道要搜什么。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 16,
+  "window_id": "e059568d2ef0",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "在 Pi 接入中按会话是否持久化处理来源可追溯性，不要把 `getSessionFile()` 返回 `undefined` 当成子代理身份证明，因为临时主会话也可能没有会话文件。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 17,
+  "window_id": "c15ac5968980",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "以 source_map.py 的无损原文单元及其位置引用维护原文身份，sourceTexts 由代码解引用而 checkItem 只是模型归纳，一条主张可以引用多段原文，不能用归纳文本或首次字符串匹配替代原文定位。",
+  "reviewer_verdict": "maybe",
+  "note": "太长、太密，几件事拼在一起"
+ },
+ {
+  "n": 18,
+  "window_id": "c15ac5968980",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "从通过推荐校验的结果派生 recommendedTexts，与 sourceTexts 等长同序，无需修改返回原文、可靠修正返回改写、无法可靠对应或历史未保存返回 null，编辑映射仅由服务端持有，数据库回读、流式终态和 MQ 都不得通过片段字段暴露被拒绝的推荐草稿。",
+  "reviewer_verdict": "maybe",
+  "note": "太长，几件事拼在一起"
+ },
+ {
+  "n": 19,
+  "window_id": "8b3ff122b7e4",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "HTTP 目标健康由 Node Agent 负责判定，中心 Pi-Ops 到 Node Agent 的传输失败应保留为可重试取证失败，不能据此把目标服务标成不健康。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 20,
+  "window_id": "8b3ff122b7e4",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "Pi-Ops 测试治理的 `plan --strict` 返回 `READY` 只表示所选变更的治理计划就绪，判断整体可转测还需单独运行 `node tools/test-governance/src/cli.mjs gaps` 检查全局证据下限，并核对用例实际执行结果。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 21,
+  "window_id": "8b3ff122b7e4",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "引用 JDK17 本地真实模型演练的通过记录时，要注明其 runtime 执行超时被放宽到 300000ms，并按目标环境配置复验，不能直接推断 runtime 默认 30000ms 时限下也能通过。",
+  "reviewer_verdict": "maybe",
+  "note": "偏一次性：只对这次演练的超时设置成立"
+ },
+ {
+  "n": 22,
+  "window_id": "8b3ff122b7e4",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "Pi-Ops 调查达到 `completed` 或通知达到 `DELIVERED` 不代表动态补证全部成功，验收取证能力时还需逐项核对取证审计中的状态与错误以及报告实际引用的证据。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 23,
+  "window_id": "0564baccfea3",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "企微标签组查询复用 groupsByScene 的通用场景链路，为企微配置独立场景并传 sceneKey=企微场景、object=WEWORK、objectId=weworkId 获取标签组及已打标状态，不要仅因它未经过 listByScene 就另加 WEWORK 分支。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 24,
+  "window_id": "0564baccfea3",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "企微标签组的自动打标规则应将 idColumn 指向源表的 external_userid 列，使用 DB 类型实时规则时还必须让 DTS 订阅该源表。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 25,
+  "window_id": "cda49d41bc1f",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "修复缺陷时保留原来接受的输入格式和请求范围外的行为，除非当前修复必需不收紧解析或改变输出，旁发现且不阻塞当前步骤的问题只给一行带证据的后续建议，未经用户要求不顺手修。",
+  "reviewer_verdict": "maybe",
+  "note": "偏泛，和已确认的\"只修挡住当前任务的问题\"类规则重叠"
+ },
+ {
+  "n": 26,
+  "window_id": "cda49d41bc1f",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "范围明确、方法已知且能做真实检查的任务由主代理直接完成并做最小验证，只有确有并行或独立性收益或用户明确要求时才派子代理，独立审查使用新上下文和固定产物而非作者会话或自评。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 27,
+  "window_id": "cda49d41bc1f",
+  "action": "merge",
+  "kind": "rule",
+  "class": "A",
+  "text": "执行多步任务时按项推进、做完一项继续下一项，采用 playbook 时用 pstack_plan 更新步骤而不在回复中复述计划，默认回复只讲变化、用户影响和证据，不列原则、技能或检查点，全部验证跑完后统一汇报，用户明确问过程时再补细节。",
+  "reviewer_verdict": "maybe",
+  "note": "通用干活方式，很长，merge 进近邻"
+ },
+ {
+  "n": 28,
+  "window_id": "cda49d41bc1f",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "数仓通知要分开核查事件生成和发群两段：字段减少只根据已提交的字段下线日志按表生成且要求表当时已接入，整表下线但字段仍正常不编造字段减少，同步只写待发记录，自动发群另依赖 data-asset.warehouse-notification.enabled 和 warehouseNotificationSendJob 调度。",
+  "reviewer_verdict": "maybe",
+  "note": "太长，两段链路拼在一起"
+ },
+ {
+  "n": 29,
+  "window_id": "cda49d41bc1f",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "查询 data-asset 测试环境数据时，先从 ~/code/data-asset/.e2e/.env 读取连接参数并以 .e2e/.env.local 覆盖，业务库使用 data_asset_dev、Polar 源库使用 mbkj_ads_test，不必重新向用户索取已有的连接信息。",
+  "reviewer_verdict": "good",
+  "note": null
+ }
+]
