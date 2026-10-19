@@ -298,5 +298,325 @@
   "text": "查询 data-asset 测试环境数据时，先从 ~/code/data-asset/.e2e/.env 读取连接参数并以 .e2e/.env.local 覆盖，业务库使用 data_asset_dev、Polar 源库使用 mbkj_ads_test，不必重新向用户索取已有的连接信息。",
   "reviewer_verdict": "good",
   "note": null
+ },
+ {
+  "n": 30,
+  "window_id": "a5b3d5fbd197",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "迁移 ai-data 内部契约时，在同一批改动中接通全部调用方并删除旧契约和旧实现，不保留并行兼容分支或旧名字的别名。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 31,
+  "window_id": "a5b3d5fbd197",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 的查询与下钻统一进入 packages/business/src/index.ts 的 QueryService，由 catalog/locate.ts 选择派生组合、catalog/compile.ts 编译 SQL、注入的执行器返回行，随后统一审计和保存结果，下钻只增加原查询维度后重走 execute。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 32,
+  "window_id": "a5b3d5fbd197",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 目录按 kind+code 处理重复编码：原子（atomic）和衍生（composite）同码必须全部标记 DUPLICATE_CODE 并使 atomic()/composite() 返回 undefined，字段、周期和术语同码则只写同步告警，不能由索引静默选择最后一条指标。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 33,
+  "window_id": "2c77f5859fa1",
+  "action": "merge",
+  "kind": "rule",
+  "class": "A",
+  "text": "忽略 Pensieve 的启动预检（P0、init、doctor、marker），不运行 init 或 doctor、不写任何标记文件，也不要因此暂停工作或询问用户。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 34,
+  "window_id": "2c77f5859fa1",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "临时验证结束后要停止自己启动的服务及其全部子进程，并检查对应监听端口确实已释放。",
+  "reviewer_verdict": "good",
+  "note": "内容合格；与 [21]（另一窗口）基本同一条，跨窗口重复，靠合并处理"
+ },
+ {
+  "n": 35,
+  "window_id": "2c77f5859fa1",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 每次 execute 都先固定 catalog、today 和 targets，定位、SQL 编译与 semanticOf 必须共用这份快照，不能在执行器 await 后重新读取它们。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 36,
+  "window_id": "2c77f5859fa1",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 结果需保存覆盖影响 SQL 和口径卡的依赖定义及存储/target 的口径指纹（排除 dt、catalogSyncId 和数据批次），以当前目录对同指标重算后的指纹而非仅派生 version 判定 VERSION_CHANGED，口径变化只拒绝导出、不阻止读取历史快照。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 37,
+  "window_id": "2c77f5859fa1",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 指标页和字段页的初始 URL 深链选择不受首屏分页列表限制，只有后续筛选或翻页才校验选择是否仍在新列表中，失效时同时清空详情与 URL 选择参数。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 38,
+  "window_id": "2c77f5859fa1",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "ai-data 的 Web/Worker 共享契约改动后，跑本地 e2e 前要同时停止并重启 Next Web 与独立 Worker，不能只依赖 Web 热更新，以免一端仍按旧 schema 解析新结果。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 39,
+  "window_id": "ee161afcdb5f",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "补回归测试时要验证恢复原缺陷后测试确实失败、修复后通过，临时反向验证结束后须精确恢复验证前的代码状态，保留已有未提交改动。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 40,
+  "window_id": "635bf878cf06",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "在既定边界内持续推进到全部验收通过或触发约定阻断，不要仅因任务较长或完成了中间阶段就停下来询问是否继续。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 41,
+  "window_id": "635bf878cf06",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "交付编码子任务时列明实际修改的文件、执行过的验证及其结果，不要只给出完成或通过的结论。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 42,
+  "window_id": "635bf878cf06",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "配置本机 ai-data 测试数据库连接时，使用 pgvector 容器 `aidata-pgvector-test` 暴露的 PostgreSQL 55432 端口，基础连接信息从 `/tmp/w-aidata-pg-url` 读取。",
+  "reviewer_verdict": "maybe",
+  "note": "本机环境事实，但依赖 /tmp 下的文件，可能是临时的"
+ },
+ {
+  "n": 43,
+  "window_id": "635bf878cf06",
+  "action": "merge",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "ai-data 默认 e2e 共用专用端口且每次重建 `askdata_e2e`，多个 worktree 不能并行运行，但用户确认其他 agent 不会跑 e2e 后可直接执行 `pnpm test:e2e`，不把 worktree 禁跑当作绝对限制。",
+  "reviewer_verdict": "maybe",
+  "note": "带着用户当时的一次性口头确认，偏一次性"
+ },
+ {
+  "n": 44,
+  "window_id": "193570d1e63c",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 语义查询返回 0 行时，工具必须明确返回无数据及所选派生最新的 period_date，Harness 据此澄清请求区间无数据和最新数据日期，不能把空结果当作“查询完成”。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 45,
+  "window_id": "193570d1e63c",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 的结果 API 每页最多返回 100 行，`packages/ui/src/result.tsx` 必须按 total 和 offset/limit 补齐全部页后再供图表与表格共用，不能把 API 首批 rows 当成完整结果。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 46,
+  "window_id": "193570d1e63c",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "ai-data 本机真实 e2e 用 `/tmp/w-aidata-local/e2e-env.sh pnpm test:e2e` 注入真实依赖及 OrbStack 配置并依赖 18089 的真实 data-asset，`aidata-e2e-pg`（宿主端口 48432）只存应用数据，业务结果查询和独立 SQL 对照都应连接专用 `aidata-e2e-trino`（宿主端口 48080），不要继承用户通用 Trino 地址。",
+  "reviewer_verdict": "maybe",
+  "note": "太长，几件环境事实拼成一条"
+ },
+ {
+  "n": 47,
+  "window_id": "193570d1e63c",
+  "action": "merge",
+  "kind": "rule",
+  "class": "B",
+  "text": "在 ai-data 运行 storage 测试时，用 `TEST_DATABASE_URL=$(cat /tmp/w-aidata-pg-url) pnpm test:storage` 从本机仓库外文件注入专用测试数据库连接。",
+  "reviewer_verdict": "maybe",
+  "note": "依赖 /tmp 下的文件，可能是临时的"
+ },
+ {
+  "n": 48,
+  "window_id": "279100000710",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "向主会话交付编码结果时，用「文件:行号＋一句话」列明改动、汇总验证命令与结果，并在末尾单列「新坑 / 决定」且逐条附证据。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 49,
+  "window_id": "279100000710",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "ai-data 的存储与目录同步统一由首次 API 请求的 ensureStorage() 初始化（初始化阶段等待 storage.open() 和库内目录载入，远程同步后台执行），不要从 Next instrumentation 导入 runtime，以免两份模块图共享 globalThis.smartData 后令 instanceof 失效。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 50,
+  "window_id": "20ecf5418a54",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "公司元数据导出文件及配套临时校验脚本只放在 `/tmp` 的任务专用目录，不复制到其他仓库或 pm。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 51,
+  "window_id": "20ecf5418a54",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "临时服务验证结束后，停止自己为测试启动的进程，并确认对应监听端口已经释放。",
+  "reviewer_verdict": "maybe",
+  "note": "与 [4] 重复（跨窗口），单看合格"
+ },
+ {
+  "n": 52,
+  "window_id": "20ecf5418a54",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "命令行运行 data-asset worktree 时，以主仓库 `~/code/data-asset/.idea/workspace.xml` 中的 IDEA 配置为启动依据，入口使用 `data-asset-starter` 的 `com.mbkj.dap.DataAssetApplication`，并复用其中的 dev profile、SSL 参数和外部依赖环境变量。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 53,
+  "window_id": "20ecf5418a54",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "data-asset 的 RocketMQ 使用本机不可达的 VPC 地址，验证不依赖消息队列的只读 Web 接口时可将其连接报错视为已知环境限制，但仍须真实确认 Web 服务和目标接口可用。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 54,
+  "window_id": "20ecf5418a54",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "派生指标的维度槽位映射应使用语义目录导出的 `slot` 和 `slotRule`，不能把 `sortOrder` 直接当作槽位，因为实际同时存在 `NAME` 与 `SORT_ORDER` 两种规则。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 55,
+  "window_id": "1b49873cd447",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "pi-ops 的真实模型调用只能由 apps/pi-runtime 执行，不能仅凭中央本地 reasonerType=fake 判定诊断为假，应沿 runtime 调用日志、回调生成的 InvestigationReport 和 delegated_analysis 落库记录核对真实性与用量。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 56,
+  "window_id": "1b49873cd447",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "校验 pi-ops 的 DataAsset business.error 链路时，应从 Event.attributes 校验 errorCode／operation、在 Incident.fingerprint 校验聚合指纹，不能要求 Event.fingerprint 非空或套用 Incident 的指纹格式。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 57,
+  "window_id": "692361e54e24",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "agentbrain 的离线评测只能使用隔离的临时记忆库和索引，不能访问 ~/.agentbrain 下的真实 store.db 和 index.db。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 58,
+  "window_id": "692361e54e24",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "searchHybrid 的 skipSync 只跳过向量补齐，不保证索引只读，FTS 水位失效仍可能触发 writeIndex 并竞争写锁，因此低延迟 hook 不能仅靠 skipSync 避免重建和阻塞。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 59,
+  "window_id": "e9cc22799fb7",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "校验 pstack 入口的 playbook 覆盖时，优先采用条目中的显式 File: 路径，否则由标题转为 kebab-case 推导文件名，并在 tests/discovery.test.js 中与 skills/poteto-mode/playbooks/ 双向核对，不能只提取正文里出现的路径。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 60,
+  "window_id": "c1adedb866a3",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "MaxCompute 源责任人未命中 table_owner 字典时应写空字符串并告警、继续同步，补齐字典后用全量 reconcile 恢复责任人映射。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 61,
+  "window_id": "c1adedb866a3",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "MaxCompute 增量同步在表投影阶段失败不会推进检查点，已提交的单表可幂等重跑，因此排除故障并确认修复在实际 XXL-Job 执行器生效后，按原参数重触发即可，无需手工修改检查点。",
+  "reviewer_verdict": "good",
+  "note": null
  }
 ]
