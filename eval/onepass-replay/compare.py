@@ -12,9 +12,10 @@ run, rem, labp, astp, haip = sys.argv[1:6]
 rows = {}
 _txt = open(run).read()
 _recs = json.loads(_txt) if _txt.lstrip().startswith('[') else [json.loads(l) for l in _txt.splitlines() if l.strip()]
-errored = [r['window_id'] for r in _recs if r.get('error')]
 for r in _recs:
     if r.get('window_id') and not r.get('error'): rows[r['window_id']] = r
+# 出错后补跑成功的窗口不算出错（run.jsonl 是追加写，同一窗口可能先有 error 行、后有成功行）
+errored = sorted({r['window_id'] for r in _recs if r.get('error') and r.get('window_id')} - set(rows))
 RM = json.load(open(rem))
 missing_rm = [w for w in rows if w not in RM]
 for w, r in rows.items():

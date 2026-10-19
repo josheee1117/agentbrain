@@ -177,6 +177,26 @@ test("一步式：提示词含标准与新记/并入/不记；输出校验丢掉
   assert.equal(parseOnePass("不是 JSON", []), null);
 });
 
+test("一步式召回修法 §8.7：去掉偏少倾向、含按类清单（含工具输出里的坑）、上限 8 条、标准一字不改", async () => {
+  const { ONE_PASS_SYSTEM, ONE_PASS_CHECKLIST, ONE_PASS_MAX_ITEMS, parseOnePass } = await import("./onepass.ts");
+  const { GOOD_MEMORY_STANDARD } = await import("./standard.ts");
+  for (const lean of ["宁缺毋滥", "大多数会话没有值得记", "没有第二个审稿人", "这是正常结论"]) assert.ok(!ONE_PASS_SYSTEM.includes(lean), `仍含偏少措辞：${lean}`);
+  assert.match(ONE_PASS_SYSTEM, /漏记和错记一样有代价/);
+  assert.match(ONE_PASS_SYSTEM, /不要只给最显眼的一两条/);
+  assert.match(ONE_PASS_SYSTEM, /不要为了有产出硬凑/, "仍然允许给空、不许硬凑");
+  assert.ok(ONE_PASS_SYSTEM.includes(ONE_PASS_CHECKLIST));
+  assert.ok(ONE_PASS_SYSTEM.indexOf(ONE_PASS_CHECKLIST) < ONE_PASS_SYSTEM.indexOf("## 你的任务"), "清单在任务说明之前");
+  for (const cat of ["用户对干活方式的要求和纠正", "设计决定和理由", "工具输出里的失败或意外", "排查陷阱", "用户机器和测试环境的具体事实"]) assert.ok(ONE_PASS_CHECKLIST.includes(cat), `清单缺：${cat}`);
+  assert.ok(ONE_PASS_SYSTEM.includes(GOOD_MEMORY_STANDARD), "《好记忆的标准》原文照搬");
+  assert.equal(ONE_PASS_MAX_ITEMS, 8);
+  assert.match(ONE_PASS_SYSTEM, /0 到 8 条结论/);
+  const item = (i: number) => ({ action: "new", kind: "pitfall", class: "C", text: `坑${i}`, scenario: "当排查构建时", why: "工具报错" });
+  const r = parseOnePass(JSON.stringify({ items: Array.from({ length: 10 }, (_, i) => item(i)) }), []);
+  assert.equal(r!.items.length, 8);
+  assert.deepEqual(r!.invalid, { too_many: 2 });
+  assert.equal(parseOnePass(JSON.stringify({ items: Array.from({ length: 8 }, (_, i) => item(i)) }), [])!.items.length, 8);
+});
+
 test("限流识别：Claude 新格式 weekly limit 带重置时间（时区）→ http_429 + 等待时长", () => {
   const now = Date.parse("2026-10-15T09:08:00Z"); // 新加坡 17:08
   const ms = parseClaudeResetMs("You've hit your weekly limit · resets Oct 17 at 1am (Asia/Singapore)", now);
