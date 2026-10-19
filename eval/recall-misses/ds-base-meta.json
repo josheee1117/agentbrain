@@ -1,0 +1,808 @@
+[
+ {
+  "window_id": "f524aa27291ef8979416d8fe68017819038f43d614110f29007cca9ac46d4fa4",
+  "error": "chunk_not_found"
+ },
+ {
+  "window_id": "615935d4af6f709b4e86077159446d162d438e44546eb55529406ae92ac62cb5",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "6302549e-bdd2-4393-a45a-54fc43cc22c6",
+    "set": "s60",
+    "n": 26,
+    "label": "部分有用"
+   }
+  ],
+  "chars": 47989,
+  "turns": 200,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 98125,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "当功能迁移或重构导致既有测试失败时，把旧断言改写成验证新行为中的等价约束，不要删断言、不要放宽断言来凑通过。",
+    "scenario": "当迁移或重构后旧测试对应不上新契约，需要修复测试时。",
+    "why": "父 agent 派活时明确要求：\"测试原本验证的是被删掉的演示行为时，改写成验证新行为里的等价约束，不要删断言、不要放宽断言来凑通过。\"这是通用测试纪律，与项目里 e2e 必须走真实链路的既有偏好一脉相承。",
+    "guidance": true,
+    "reason": "防止 agent 为让测试变绿而删弱断言，属于 A 类干活偏好，值得常驻注入。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "当功能迁移或重构导致既有测试失败时，把旧断言改写成验证新行为中的等价约束，不要删断言、不要放宽断言来凑通过。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "6302549e-bdd2-4393-a45a-54fc43cc22c6": null,
+   "f1432443-1d7f-4e95-8f98-5e7a648aaae1": null,
+   "436a0dc4-7b42-491b-9f3e-e4a0c2f79833": "V1",
+   "3a954826-c2e9-4c22-82f3-a0d782543288": null
+  },
+  "rematched": 1
+ },
+ {
+  "window_id": "de3e2119894fb60cfb071f6c7e5bfec112e92accab10afdd94dc865f25ee7186",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "86f13522-8c76-4132-849e-6dc5c06035e5",
+    "set": "s60",
+    "n": 29,
+    "label": "没用"
+   }
+  ],
+  "chars": 47997,
+  "turns": 241,
+  "worker": false,
+  "neighbors": 0,
+  "ms": 163523,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "标签链路（tag_marker / tag_marker_log / tag_pending_sync）的 objectId 已是 String、object_id 列统一 varchar(64) utf8mb4_bin（external_userid 区分大小写）；但 TagChange MQ 消息和源表规则 SQL（idExpression）的 id 传参刻意保留 Long，是故意的，不要当成遗漏去统一。",
+    "scenario": "当修改或排查打标、派生、同步、待同步补偿、变更日志相关代码，看到 Long 与 String 的 objectId 混用，或要给这三张表的 object_id 列做变更时。",
+    "why": "为接入企微 WEWORK 对象类型，用户拍板把 object_id 从 bigint 改成字符串（external_userid 形如 wmXXX，库里没有稳定数字 ID）。但 TagChange 经 tag_change_topic 发给仓库外的消费方，改类型会破坏消息格式；规则 SQL 里存在按字符串列比较的规则（如 cert_no = #{id}），改成按 String 传参会改变带前导零数字的匹配结果，所以这两处刻意保持 Long。",
+    "guidance": false,
+    "reason": "Long/String 混用是有意的跨模块契约，MQ 消息格式和规则 SQL 比较语义不解释清楚，下一个 agent 会当作遗漏'顺手统一'而破坏现有行为。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "客户与企微是 1:N 的关系（一个客户可绑多个 external_userid），打标 / 同步接口的 weworkId 永远由调用方明确传入，服务端不要拿 custId 反查 weworkId。",
+    "scenario": "当新增或修改涉及企微客户的打标、同步、查询接口，需要确定企微 ID 的来源时。",
+    "why": "需求评估时原以为一个客户对应一个企微 ID，实测测试库 crm.crm_wework_customer_association 里 7 个在用的客户各绑定 2 个 external_userid（每个 external_userid 只属一个客户）；服务端反查会得到多个候选，无法确定要操作哪个，所以接口设计约定由调用方（企微侧边栏）明确传入当前联系人的 weworkId。",
+    "guidance": false,
+    "reason": "数据关系与常见的 1:1 直觉相反，不记录的话下一个 agent 会按一一对应去写 custId 反查逻辑，造成操作对象不确定。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "标签链路（tag_marker / tag_marker_log / tag_pending_sync）的 objectId 已是 String、object_id 列统一 varchar(64) utf8mb4_bin（external_userid 区分大小写）；但 TagChange MQ 消息和源表规则 SQL（idExpression）的 id 传参刻意保留 Long，是故意的，不要当成遗漏去统一。",
+    "how": "new"
+   },
+   {
+    "key": "V2",
+    "text": "客户与企微是 1:N 的关系（一个客户可绑多个 external_userid），打标 / 同步接口的 weworkId 永远由调用方明确传入，服务端不要拿 custId 反查 weworkId。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "86f13522-8c76-4132-849e-6dc5c06035e5": null,
+   "3d8eeb42-9361-4e0a-af0c-1792081e558a": "V1",
+   "36dd48e4-611d-41f0-a300-68b6898cbe8f": null,
+   "a7840671-c76a-4379-9024-004a8d7e7dad": null,
+   "f6a42cc3-0d1d-4428-af00-5a5cc0230caa": null,
+   "cfaa9328-345c-4d45-99e6-5267d95f7a2c": null
+  }
+ },
+ {
+  "window_id": "62d88889473333a8385b8168481ed7a605b04eba631eacb950dfbf2e34f40dba",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "61a2e78c-063e-46da-89d4-4e21655c9fa0",
+    "set": "s60",
+    "n": 35,
+    "label": "部分有用"
+   }
+  ],
+  "chars": 46111,
+  "turns": 98,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 73949,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [],
+  "outs": [],
+  "match": {
+   "61a2e78c-063e-46da-89d4-4e21655c9fa0": null,
+   "fe0c7fa8-d9b8-484b-8407-c697e79f42c9": null,
+   "41123000-27b1-4fdc-84e1-6f87aef05ca9": null
+  }
+ },
+ {
+  "window_id": "56a0af78c6089a3a8e14521be93ffc37cb1463b620c8c694e90e709b357199a7",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "f466f9e0-7a5c-4ffa-bcb8-40a0023e4bb7",
+    "set": "s60",
+    "n": 36,
+    "label": "有用"
+   },
+   {
+    "id": "71cefbfd-e755-4824-b250-13d0eb6880f9",
+    "set": "s60",
+    "n": 45,
+    "label": "部分有用"
+   },
+   {
+    "id": "bec87117-5197-48e4-91c3-6c1b130f9f35",
+    "set": "s60",
+    "n": 54,
+    "label": "有用"
+   }
+  ],
+  "chars": 10862,
+  "turns": 40,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 68863,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "pitfall",
+    "class": "C",
+    "text": "extensions/pstack.js 在模块级缓存技能索引（skillIndex 首次构建后不重建）；给技能根健壮性或索引构建写测试时，必须用独立加载的模块实例，否则已有实例的缓存会跳过根目录读取，缺陷路径测不到、断言假绿。",
+    "scenario": "当给 extensions/pstack.js 的技能根或索引逻辑新增/修改测试时",
+    "why": "本会话做「缺根仍能索引其余根」的测试时，若复用测试文件里已建过索引的模块实例，readdir 失败路径根本不会执行，修复前的实现也能全绿；agent 改用独立模块实例后才让测试真正命中缺根分支。",
+    "guidance": false,
+    "reason": "静默假绿、无报错可读，下次写同类索引测试仍会踩，且写进测试说明可省掉一轮排查。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "extensions/pstack.js 在模块级缓存技能索引（skillIndex 首次构建后不重建）；给技能根健壮性或索引构建写测试时，必须用独立加载的模块实例，否则已有实例的缓存会跳过根目录读取，缺陷路径测不到、断言假绿。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "f466f9e0-7a5c-4ffa-bcb8-40a0023e4bb7": null,
+   "71cefbfd-e755-4824-b250-13d0eb6880f9": null,
+   "bec87117-5197-48e4-91c3-6c1b130f9f35": null,
+   "e4c4310e-dc47-487e-989b-74b3f7858e8f": null
+  },
+  "rematched": 1
+ },
+ {
+  "window_id": "956f0f78d276624628cdd32cd9d515834fea6f202745b74b66c98112999742dd",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "25946296-4f7e-4619-8c19-87047a81383b",
+    "set": "s60",
+    "n": 38,
+    "label": "有用"
+   }
+  ],
+  "chars": 47911,
+  "turns": 508,
+  "worker": false,
+  "neighbors": 6,
+  "ms": 197993,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "同步上游 pstack 到 pstack-pi 时按需触发、选择性吸收精华：上游原文只放独立的 upstream 分支快照、本包改动全进 adapter/ 适配层、用 git 三方合并吸收，并只更新受影响的中文描述、平台映射和覆盖表；验证按变更类别分级——纯文案改动不跑付费模型调用，只有工具、脚本、提示接口或工作流发生实质变化才补受影响路径的最小真实 smoke，不默认重跑全量多模型盲评，也不新造同步器或定时器。",
+    "scenario": "当需要把上游 pstack 的新版本同步进 pstack-pi，或决定某次升级要做多少验证时",
+    "why": "重写版盲评分数虽高，但与上游正文相似度只有 0.2–0.5，上游 0.15.2→0.15.5 四个提交里已有约 8 处行为变化丢失（含 log.sh 清空日志的修复）；用户拍板：『我们不是一定要完整复制上游的项目，后续可以吸收精华，独自演进』，并在后续更新讨论中定下按变更类别做最小验证、不默认重跑全量盲评的方向。",
+    "guidance": false,
+    "reason": "这是本项目最核心的维护架构决策和验证性价比规则，重写版路线已被证明同步成本过高，下一个 agent 做上游升级时能直接省掉整套探索。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "B",
+    "text": "改动 pstack-pi 会被装进别人环境的部分（extension、适配层、安装逻辑）后，必须用与开发者机器无关的全新空 Pi 配置目录做一次隔离打包安装验证，并在 earendil 版和原版 Pi（PSTACK_TEST_PI_ROOT 指向 @mariozechner/pi-coding-agent）两套宿主上都跑完完整测试再交付；包内所有路径一律运行时解析（如 PI_CODING_AGENT_DIR），不得写死开发者机器的配置目录。",
+    "scenario": "当改动 pstack-pi 的 extension、适配层或打包安装逻辑并准备交付验证时",
+    "why": "用户明确要求：『我们改动的pstack-pi项目，保证可以无缝安装到任意pi中』；本会话因此把写死的用户目录路径改成运行时解析 PI_CODING_AGENT_DIR，把用 macOS 专有命令的 worktree 审计重写为 Node 跨平台实现，并以 earendil 和原版 Pi 两套宿主 55/55 测试作为交付门槛。",
+    "guidance": false,
+    "reason": "这是用户对该项目的硬性质量要求，任何改包行为的人都需要按此验证，否则换一台机器装上去就会坏。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "为 pstack-pi 跑盲评或版本对比评测时，用 deepseek 和 gpt-5.6-sol 两个模型（不用 gpt-6-sol），并保持隐藏验收、评审看不到每组结果来源、单独统计输入 token 开销的做法。",
+    "scenario": "当要为 pstack-pi 安排新一轮评测，或对比不同版本、不同适配结构的效果与开销时",
+    "why": "第一轮三组对比评测（重写版 / 上游原文加对照 / 补丁版）之后，用户拍板指定：『后面使用dpsk和gpt5.6 sol测试』；评测沿用了账本项目三道隐藏验收题、双模型盲评、token 开销统计的设计。",
+    "guidance": false,
+    "reason": "评测模型和评测方法由用户明确指定为后续标准做法，与编码用 gpt-6.1-sol 的规则互补，避免下次评测时用错模型。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "同步上游 pstack 到 pstack-pi 时按需触发、选择性吸收精华：上游原文只放独立的 upstream 分支快照、本包改动全进 adapter/ 适配层、用 git 三方合并吸收，并只更新受影响的中文描述、平台映射和覆盖表；验证按变更类别分级——纯文案改动不跑付费模型调用，只有工具、脚本、提示接口或工作流发生实质变化才补受影响路径的最小真实 smoke，不默认重跑全量多模型盲评，也不新造同步器或定时器。",
+    "how": "new"
+   },
+   {
+    "key": "V2",
+    "text": "改动 pstack-pi 会被装进别人环境的部分（extension、适配层、安装逻辑）后，必须用与开发者机器无关的全新空 Pi 配置目录做一次隔离打包安装验证，并在 earendil 版和原版 Pi（PSTACK_TEST_PI_ROOT 指向 @mariozechner/pi-coding-agent）两套宿主上都跑完完整测试再交付；包内所有路径一律运行时解析（如 PI_CODING_AGENT_DIR），不得写死开发者机器的配置目录。",
+    "how": "new"
+   },
+   {
+    "key": "V3",
+    "text": "为 pstack-pi 跑盲评或版本对比评测时，用 deepseek 和 gpt-5.6-sol 两个模型（不用 gpt-6-sol），并保持隐藏验收、评审看不到每组结果来源、单独统计输入 token 开销的做法。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "25946296-4f7e-4619-8c19-87047a81383b": "V2",
+   "88e46975-ebad-41f2-8777-a9c37d7ad627": "V1",
+   "13dd4290-4f0c-4844-b2a2-708326da93af": "V3",
+   "bad3456c-6282-4fc8-8d00-2013a8124fee": null,
+   "fe664aa2-fde2-4fa9-9678-38b230b49f3b": null
+  },
+  "rematched": 1
+ },
+ {
+  "window_id": "6e3e28a959c009883b62acb98743e469fcb586f01e14fb267c7f9617c7a6629f",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "ea98638a-3a6a-4771-97f0-8f8610f9a75b",
+    "set": "s60",
+    "n": 39,
+    "label": "部分有用"
+   }
+  ],
+  "chars": 47889,
+  "turns": 274,
+  "worker": true,
+  "neighbors": 0,
+  "ms": 89140,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {
+   "merge_bad_target": 1
+  },
+  "items": [],
+  "outs": [],
+  "match": {
+   "ea98638a-3a6a-4771-97f0-8f8610f9a75b": null,
+   "4ed225cd-6f90-4329-a7db-8711da70922b": null,
+   "f49de7f0-860e-482f-ba1c-ded5722de07c": null,
+   "66c8c0f7-8c34-45f1-81db-7f01fa89aac4": null,
+   "d16d321e-0d25-42b2-a9ed-397b2481a0a1": null,
+   "57e1ef11-df08-4f20-8d67-f827058f6844": null,
+   "ced330f8-69d2-42f5-ba9e-00a1e3d412e3": null
+  }
+ },
+ {
+  "window_id": "2bd333f890b27d7574a00a16b5c77caa35236344b90ac1be0da880d78aa2e65a",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "5cb51d77-18e0-4322-81bc-4c2d4ae8a16e",
+    "set": "s60",
+    "n": 40,
+    "label": "有用"
+   }
+  ],
+  "chars": 11095,
+  "turns": 52,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 100741,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "B",
+    "text": "维护语义目录导出（GET /open/semantic/catalog）和 ai-data 指标同步时，接口契约以 ~/code_me/pm/plans/ 下最新的 ai-data-metric-sync 契约文件（如 2026-10-10-ai-data-metric-sync-contract.md）为准；仓库 docs 里的 contract.md 只是发布时快照，可能过期。",
+    "scenario": "当改动语义目录导出接口、ai-data 指标同步的数据形状或字段时",
+    "why": "父 agent 派活时强调\"接口契约以 ~/code_me/pm/plans/2026-10-10-ai-data-metric-sync-contract.md 为准，它刚更新过，请重读'数据形状'开头的说明和 AtomicX\"，而项目 profile 里指向的 docs 契约是旧快照，照着改会漏掉新要求。",
+    "guidance": false,
+    "reason": "契约的权威位置在仓库外，下一个 agent 只搜仓库会用到过期快照，省掉找错契约来源的探索。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "pitfall",
+    "class": "B",
+    "text": "语义目录导出中派生指标要区分两个范围：导出列表只含已上线派生（status == 1），但解析变量/值过滤里的派生名称要用全量未删除派生（del_flag = 0）；只查已上线派生做名称解析会导致引用编辑中派生的变量缺编码和名称。",
+    "scenario": "当改动语义目录导出里取派生名称、过滤派生列表的查询时",
+    "why": "平台允许变量引用编辑中的派生，而契约要求直接带名称；上一轮实现用 selectOnline 做名称解析导致变量缺名称，这一轮改为一次查全量未删除、Java 里按 status 过滤，只为不动 selectOnline 的趋势留下伏笔。",
+    "guidance": false,
+    "reason": "两条表面矛盾的既有知识——\"对外查询只能用 status=1\"和\"契约要求直接带名称\"——统一用已上线数据会重新引入缺名称 bug，这个范围不对称不是代码一眼能看出的。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "维护语义目录导出（GET /open/semantic/catalog）和 ai-data 指标同步时，接口契约以 ~/code_me/pm/plans/ 下最新的 ai-data-metric-sync 契约文件（如 2026-10-10-ai-data-metric-sync-contract.md）为准；仓库 docs 里的 contract.md 只是发布时快照，可能过期。",
+    "how": "new"
+   },
+   {
+    "key": "V2",
+    "text": "语义目录导出中派生指标要区分两个范围：导出列表只含已上线派生（status == 1），但解析变量/值过滤里的派生名称要用全量未删除派生（del_flag = 0）；只查已上线派生做名称解析会导致引用编辑中派生的变量缺编码和名称。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "5cb51d77-18e0-4322-81bc-4c2d4ae8a16e": null,
+   "6075223f-55b7-43f5-90ab-e77afcb35ca2": null,
+   "e3de2a84-793a-427c-8f00-755429c9d7bf": "V2"
+  },
+  "rematched": 1
+ },
+ {
+  "window_id": "52a47450281857f48a18c15ae6fb4a18decc4d5f559b41ba4309761febb0bd52",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "e0632cdd-5621-4b62-a25e-33a0c5089bd8",
+    "set": "s60",
+    "n": 41,
+    "label": "有用"
+   }
+  ],
+  "chars": 7394,
+  "turns": 39,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 147801,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "汇报代码改动时列出改了哪些文件、每条改动的位置（文件:行号）和新增的测试、跑了哪些验证，并原样贴出测试输出最后的 tests/pass/fail 几行；不要贴大段代码、不要重复输出。",
+    "scenario": "当完成代码修改、向用户或父代理汇报改动与验证结果时。",
+    "why": "父代理派活时明确要求按此格式汇报（原话：'最后汇报：每条改在哪（文件:行号）、新增哪些测试，并原样贴出测试输出最后的 ℹ tests/pass/fail 几行。不要贴大段代码，不要重复输出'）。",
+    "guidance": true,
+    "reason": "常驻的汇报格式要求，能直接减少汇报摩擦。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "给 store 写并发/竞态相关的复现测试时，用两个 Store 实例或两个 DatabaseSync 连接手动交错复现，不要用 sleep 赌时序；必要时把写索引的内部分支抽成独立函数供测试直接调用。",
+    "scenario": "当给 agentbrain 的 store 层写并发或竞态相关的测试时。",
+    "why": "父代理派活时明确要求（原话：'并发用两个 Store 实例或两个 DatabaseSync 连接手动交错，不要用 sleep 赌时序'、'可把\"把某个投影写进索引\"抽成一个内部函数供测试直接调用'）。",
+    "guidance": true,
+    "reason": "对测试质量的一贯取向：竞态要确定性复现，不能靠时序碰运气。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "L3（index.db）的 meta 水位必须单调前进：索引重建写入放进 BEGIN IMMEDIATE 事务，事务内重读 meta 水位，只有投影水位严格大于 meta 才写入，否则放弃。",
+    "scenario": "当修改 L3 索引重建（writeIndex/syncIndex/search）或新增索引写入路径时。",
+    "why": "曾存在并发竞态：持有旧投影（seq=1）的一方能在另一方写到 seq=2 并重建后把 FTS 覆盖回 seq=1、meta 水位倒退，导致 search 看不到已提交写入；修复后这一单调性成为 store 层的并发契约。",
+    "guidance": false,
+    "reason": "跨 L1/L3 两个库的隐含并发契约，重蹈会静默丢搜索结果。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "汇报代码改动时列出改了哪些文件、每条改动的位置（文件:行号）和新增的测试、跑了哪些验证，并原样贴出测试输出最后的 tests/pass/fail 几行；不要贴大段代码、不要重复输出。",
+    "how": "new"
+   },
+   {
+    "key": "V2",
+    "text": "给 store 写并发/竞态相关的复现测试时，用两个 Store 实例或两个 DatabaseSync 连接手动交错复现，不要用 sleep 赌时序；必要时把写索引的内部分支抽成独立函数供测试直接调用。",
+    "how": "new"
+   },
+   {
+    "key": "V3",
+    "text": "L3（index.db）的 meta 水位必须单调前进：索引重建写入放进 BEGIN IMMEDIATE 事务，事务内重读 meta 水位，只有投影水位严格大于 meta 才写入，否则放弃。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "e0632cdd-5621-4b62-a25e-33a0c5089bd8": "V2",
+   "e730ae32-f608-4c3c-a3f6-a0a25befba2c": "V2",
+   "1671d05e-f858-421c-b3ab-1aff47557a30": "V1"
+  }
+ },
+ {
+  "window_id": "5bd3db90ab6060a426bf948bda518e9d338c420f31eff12c15e9d944157b5932",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "4b58efb7-9b58-4c96-899d-ee3e11b9649c",
+    "set": "s60",
+    "n": 42,
+    "label": "部分有用"
+   }
+  ],
+  "chars": 47753,
+  "turns": 238,
+  "worker": false,
+  "neighbors": 4,
+  "ms": 174712,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "B",
+    "text": "在 pi-ops 做带证据要求的测试或演练时，离线准备、构建、架构守卫、配置加载检查通过都不算场景 PASS；失败记录和未执行项（NOT_RUN）必须原样保留并如实汇报，不能为通过而改写失败、调低门禁/评分，也不能把旧合同快照或守卫通过当成新场景通过。",
+    "scenario": "当在 pi-ops 执行、交接或汇报测试/演练/端到端验证结果时",
+    "why": "项目测试治理明文要求证据口径：首批执行规格写明『不是开测批准，不是场景 PASS』『不要重评分旧失败』『失败就是失败，不改记为 PASS』；整场演练中每个交接都以 LIVE_NOT_RUN 标注未跑部分，审查只依据原始 session.jsonl 证据下结论，准备类通过从未被允许冒称场景通过。",
+    "guidance": false,
+    "reason": "这是 pi-ops 项目级测试汇报口径，说错口径（把准备/守卫通过当 PASS 或重写失败）会被治理审查打回；也是本轮反复出现且由治理文档固化的项目决定。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "在 pi-ops 做带证据要求的测试或演练时，离线准备、构建、架构守卫、配置加载检查通过都不算场景 PASS；失败记录和未执行项（NOT_RUN）必须原样保留并如实汇报，不能为通过而改写失败、调低门禁/评分，也不能把旧合同快照或守卫通过当成新场景通过。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "4b58efb7-9b58-4c96-899d-ee3e11b9649c": null
+  },
+  "rematched": 1
+ },
+ {
+  "window_id": "5f3d06844a9cc59bdbfa1a7af94e654cac6446b81e13dac4e321e2b23eec8770",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "28004e7d-78df-4491-b6d5-71a1c44bc691",
+    "set": "s60",
+    "n": 43,
+    "label": "没用"
+   }
+  ],
+  "chars": 3729,
+  "turns": 1,
+  "worker": true,
+  "neighbors": 1,
+  "ms": 80116,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "ai-data 指标目录的唯一访问入口是 QueryService.catalog；重载内存目录时整体替换该对象且不含 offline 条目（locate 与 staleOf 的下线语义依赖这一点），其字段名和 Catalog 类型的已有成员不要改。",
+    "scenario": "当修改 ai-data 的指标目录同步、离线、检索或内存重载相关代码时",
+    "why": "阶段 2 派活明确要求 QueryService.catalog 保持唯一访问入口、重载时整体替换、内存目录不含 offline——否则 locate 和 staleOf 的下线语义会变；指标中心/平台字段页面在请求时读取该字段，改动会连锁影响其他模块。",
+    "guidance": false,
+    "reason": "跨模块隐含契约：翻代码只能看到字段名，看不到「离线条目为何不能进内存目录」「为何必须整体替换」的设计理由；下个 agent 改目录逻辑时能少踩一次破坏既有语义的坑。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "ai-data 指标目录的唯一访问入口是 QueryService.catalog；重载内存目录时整体替换该对象且不含 offline 条目（locate 与 staleOf 的下线语义依赖这一点），其字段名和 Catalog 类型的已有成员不要改。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "28004e7d-78df-4491-b6d5-71a1c44bc691": null,
+   "2f1d4b8c-9271-4d31-b345-fef5fea4d65b": null,
+   "506fb32c-a33c-4db5-89a5-0b65ced84ea3": null,
+   "1bd83069-bc34-4fc2-8fea-748c35ce4f18": null,
+   "c88f3744-8c2b-44df-a60a-4cccedcf3833": null,
+   "ea7315e8-3116-42ed-9d6b-d39cedd8d120": "V1"
+  }
+ },
+ {
+  "window_id": "1a14bc0147938ba446de9ac8cc7c84db733453fd2a9ec7b347fbb3f3d136d897",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "bf88f699-7839-4bba-a56c-f80350c40c28",
+    "set": "s60",
+    "n": 44,
+    "label": "没用"
+   }
+  ],
+  "chars": 12628,
+  "turns": 50,
+  "worker": true,
+  "neighbors": 3,
+  "ms": 103528,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "decision",
+    "class": "B",
+    "text": "pi-ops 的真实模型诊断只能由 `apps/pi-runtime` 执行（ADR-0029），中央/控制面不做模型调用；跑真实诊断时 pi-runtime 需配 `PI_OPS_PI_PROVIDER`/`PI_OPS_PI_MODEL`/`PI_OPS_PI_API_KEY`，中央需配 `PI_OPS_PI_RUNTIME_URL`/`PI_OPS_PI_RUNTIME_TOKEN`/`PI_OPS_PI_RUNTIME_CALLBACK_URL`，六项配齐 runtime 才会放行（可用 /health 的 modelMode 核对是否 REAL 而非 FAKE）。",
+    "scenario": "当需要跑基于真实模型的故障诊断、给模型调用接线，或核查某次诊断出处是真实模型还是 fake 时",
+    "why": "real-dataasset 现场验证的结论文件写明：真实诊断按 ADR-0029 只能经 apps/pi-runtime 执行、控制面不调模型；此前实验波次 runtime 因缺凭据按设计拒绝执行，需六项环境变量配齐并单独授权后才放行；派活也要求核对 token 用量与报告必须来自真实模型。",
+    "guidance": false,
+    "reason": "B 类设计决定加跨两个进程的接线契约（六项环境变量分散在 pi-runtime 与中央两侧），下个 agent 接模型或排查 fake/real 时不用再翻 ADR-0029 和两个 app 的 config 重新拼接线。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "pi-ops 的真实模型诊断只能由 `apps/pi-runtime` 执行（ADR-0029），中央/控制面不做模型调用；跑真实诊断时 pi-runtime 需配 `PI_OPS_PI_PROVIDER`/`PI_OPS_PI_MODEL`/`PI_OPS_PI_API_KEY`，中央需配 `PI_OPS_PI_RUNTIME_URL`/`PI_OPS_PI_RUNTIME_TOKEN`/`PI_OPS_PI_RUNTIME_CALLBACK_URL`，六项配齐 runtime 才会放行（可用 /health 的 modelMode 核对是否 REAL 而非 FAKE）。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "bf88f699-7839-4bba-a56c-f80350c40c28": null
+  },
+  "match_null_string": true,
+  "rematched": 1
+ },
+ {
+  "window_id": "b1fd5d549a68638d9dc3ddf5ca7ee7389b0145d0a393e0b68e591dcad4d72da3",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "ece7cf9c-f76c-43bf-a089-a46d2e53dbd6",
+    "set": "s60",
+    "n": 46,
+    "label": "有用"
+   }
+  ],
+  "chars": 3461,
+  "turns": 1,
+  "worker": true,
+  "neighbors": 3,
+  "ms": 63589,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "按 review 意见清单修问题时，先独立核实每个问题在当前代码里确实存在再动手；核实后发现不成立的，不改，并在汇报中给出不成立的证据。",
+    "scenario": "当接手一份 review 修复清单并逐条修改时",
+    "why": "父代理派活时明确要求先核实再改，避免按过期的 review 意见盲改、修实际不存在的问题，产生无效 diff 和虚假的修复汇报。",
+    "guidance": false,
+    "reason": "派活提示中的通用干活方法：对 review 结论先验证后动手、不成立就不改并给证据，能迁移到以后的 review 修复任务并改变子代理做法；其余 16 条均属该 worktree 的一次性修复任务，修完即过时。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "按 review 意见清单修问题时，先独立核实每个问题在当前代码里确实存在再动手；核实后发现不成立的，不改，并在汇报中给出不成立的证据。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "ece7cf9c-f76c-43bf-a089-a46d2e53dbd6": null,
+   "79a770f9-a3b5-45d1-bc76-20cee90e2adc": null,
+   "2881ee34-d9e1-49a9-b1a0-da3e6679d245": null,
+   "efd78296-977b-4ee5-a0c7-f8fca4d07d59": null,
+   "e9eeb0e1-15cd-488e-95c5-cd6927bca6d6": null,
+   "5d5b434a-cdb2-4bae-9be3-3b88843baac7": "V1",
+   "c122ece9-3d00-4b74-a71b-406f3d87ac22": null
+  }
+ },
+ {
+  "window_id": "738c669837bd87adb5932f122000af8d95890da8e5bca5af388d9c181311586e",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "7345c5a1-eb2c-481f-9649-fa19cf47bdc5",
+    "set": "s60",
+    "n": 52,
+    "label": "没用"
+   }
+  ],
+  "chars": 45537,
+  "turns": 79,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 68998,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "new",
+    "into": null,
+    "kind": "pitfall",
+    "class": "C",
+    "text": "在 agentbrain 写涉及宿主检测的测试、以子进程运行 ab 时，detectHost 会沿父进程链命中运行测试的真实宿主会话并读到真实 transcript，必须显式隔离：清掉三个宿主的会话环境变量、注入假 ps 脚本伪造父进程链、把 HOME 指到含假 transcript 的临时目录。",
+    "scenario": "当在 agentbrain 仓库写 cli/host 测试，让 ab 子进程走持久记录或断言 --expand 的输出时",
+    "why": "写 cli.test 时断言“来源不可用”失败，实际输出是正在运行测试的那个会话的转录；detectHost 靠 ps 沿父进程链判定宿主、不只看环境变量，测试进程本身就是宿主会话的子进程，于是 --expand 真的展开了本会话内容，浪费数轮才定位。",
+    "guidance": false,
+    "reason": "断言失败看不出原因（输出是真实会话文本），agentbrain 后续切片写测试会反复撞上；提前隔离能省多轮定位。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "在 agentbrain 写涉及宿主检测的测试、以子进程运行 ab 时，detectHost 会沿父进程链命中运行测试的真实宿主会话并读到真实 transcript，必须显式隔离：清掉三个宿主的会话环境变量、注入假 ps 脚本伪造父进程链、把 HOME 指到含假 transcript 的临时目录。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "7345c5a1-eb2c-481f-9649-fa19cf47bdc5": null,
+   "da07940f-a1a3-4089-83b0-acf0281fe186": null,
+   "34fd014b-35bd-4e88-a4d1-ba342dba2704": "V1",
+   "37fef30c-9077-428e-b019-be6ae2dc5ee4": null,
+   "fc495939-4ea6-48e5-9ec0-6d6a8dc43dd7": null
+  },
+  "rematched": 2
+ },
+ {
+  "window_id": "0b57433e1cf666723fef8c46559c4554b1152c445a4a1c3d86f68c73948324cd",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "92cf280a-d65b-4495-9ea2-239839d74687",
+    "set": "s60",
+    "n": 53,
+    "label": "没用"
+   }
+  ],
+  "chars": 4885,
+  "turns": 27,
+  "worker": true,
+  "neighbors": 4,
+  "ms": 30101,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [],
+  "outs": [],
+  "match": {
+   "92cf280a-d65b-4495-9ea2-239839d74687": null
+  }
+ },
+ {
+  "window_id": "afa968d5f3f26cac946100e28c466e1ef61136bd985ead472e50902128375aa6",
+  "mode": "base",
+  "model": "pi:cpa/deepseek-v4-pro@max",
+  "refs": [
+   {
+    "id": "fa54f784-4ec4-4726-8db0-b54db282c4a3",
+    "set": "s60",
+    "n": 55,
+    "label": "有用"
+   }
+  ],
+  "chars": 47789,
+  "turns": 242,
+  "worker": false,
+  "neighbors": 12,
+  "ms": 169309,
+  "prompt_version": "b1067fc1e85a",
+  "parse_ok": true,
+  "invalid": {},
+  "items": [
+   {
+    "action": "merge",
+    "into": "873b78e2-7a75-4cd6-ab32-083b7b5c46d5",
+    "kind": "rule",
+    "class": "A",
+    "text": "验收必须基于真实证据并分层汇报：跑 e2e 要真实启动服务、走真实接口、数据落真实数据库（mock 数据也通过接口写进库）；判断是否按预期走了流程要查会话记录里的实际工具调用，不看模型自述；汇报时把安装/打包通过与行为效果达标分开说，没有对照就不报效果百分比。",
+    "scenario": "当写、跑或汇报 e2e / 需求验收时",
+    "why": "用户追问“测试完成了吗？当前项目表现达到原版的多少了？”，此前“收尾完成”被澄清仅指代码与打包收尾、不代表与原版效果等价；用户又要求“检查是否真的按照预期走了流程，以及完成的结果是否达到预期”，独立评审据此改用会话里真实动作而非模型自述判流程。",
+    "guidance": true,
+    "reason": "与已确认的 e2e 真实性原则是同一件事，补上用户强调的“流程证据看真实动作”和“汇报分层不夸大”两面。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "涉及付费模型调用的验证批次，失败的样本不自动重跑；补跑或新增调用前先征得用户同意，优先先审已有证据。",
+    "scenario": "当运行消耗付费模型调用的测试或验证批次时",
+    "why": "一次需求验证中发现候选通过 bash 多发起模型调用、破坏隔离，主会话暂停批次并记录“补未完成/无效样本会产生新增模型调用，应先得到操作者决定”（interruption.md）；随后用户在两选项里选了 A：先审已有证据，不补跑需求。",
+    "guidance": true,
+    "reason": "用户对付费调用预算有明显控制意愿，下次验证不会擅自重跑烧额度。"
+   },
+   {
+    "action": "new",
+    "into": null,
+    "kind": "rule",
+    "class": "A",
+    "text": "验证 pstack-pi 的移植效果时，用项目自身跑真实需求任务，检查流程是否真按预期走、结果是否达标；不做与 Cursor 原版的对照测试。",
+    "scenario": "当要补 pstack-pi 的效果或需求验证时",
+    "why": "agent 把“补充测试”扩大成 Cursor 原版对照和旧新版竞赛，用户纠正：“不是让你用cursor测试，而是用我们这个项目，做一些需求验证，检查是否真的按照预期走了流程，以及完成的结果是否达到预期”。",
+    "guidance": false,
+    "reason": "用户明确定义了本项目的评测方式，避免下次又去搭外部对照基线。"
+   }
+  ],
+  "outs": [
+   {
+    "key": "V1",
+    "text": "验收必须基于真实证据并分层汇报：跑 e2e 要真实启动服务、走真实接口、数据落真实数据库（mock 数据也通过接口写进库）；判断是否按预期走了流程要查会话记录里的实际工具调用，不看模型自述；汇报时把安装/打包通过与行为效果达标分开说，没有对照就不报效果百分比。",
+    "how": "merge"
+   },
+   {
+    "key": "V2",
+    "text": "涉及付费模型调用的验证批次，失败的样本不自动重跑；补跑或新增调用前先征得用户同意，优先先审已有证据。",
+    "how": "new"
+   },
+   {
+    "key": "V3",
+    "text": "验证 pstack-pi 的移植效果时，用项目自身跑真实需求任务，检查流程是否真按预期走、结果是否达标；不做与 Cursor 原版的对照测试。",
+    "how": "new"
+   }
+  ],
+  "match": {
+   "fa54f784-4ec4-4726-8db0-b54db282c4a3": null,
+   "ac4cf49d-2c45-447d-8dec-c6d4fcc7b113": null,
+   "9a6c480d-c350-4af8-943f-887b4acd8983": "V3",
+   "3b79f22f-b8b6-4211-a2ab-aa386dab6fa0": null,
+   "2e2983bb-2220-4186-8724-db0b42d253de": null
+  }
+ }
+]

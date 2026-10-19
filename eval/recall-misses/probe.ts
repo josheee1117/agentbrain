@@ -2,6 +2,7 @@
  * 评测 12（召回漏检）：在 eval 07/11 同一批 38 个原窗口上做两种只读探针，不写正式库、不改产品代码。
  *   --mode judge   ：同一个一步式提示词 + 同一窗口，追加一段"评测追问"，让模型逐条说它会把每条标签条目 new / merge / skip（skip 给理由）。
  *                    用来区分漏检是"标准/提示词让它不记"还是"它也认为该记、只是没挑出来"。
+ *   --mode base    ：同一批原窗口跑现提示词（不替换），给换模型后的同模型基线用（输出格式同 variant）。
  *   --mode variant ：把一步式提示词换成召回版（V1：去掉"宁缺毋滥 / 大多数会话没东西"的偏置、加按类清单、上限 5→8），原窗口重跑，
  *                    匹配员与 eval 11 相同，和 eval 11 的 astra L 结果（eval/topic-windows/runs/astra1.jsonl）直接比。
  * 用法（Mac，在含 src/topic.ts 的 agentbrain 工作区跑；AB_HOME 是库副本）：
@@ -30,7 +31,7 @@ const { values, positionals } = parseArgs({
 const R = process.env.AB_REPO!;
 if (!R) throw new Error("AB_REPO 指向 agentbrain 工作区");
 const mode = values.mode;
-if (mode !== "judge" && mode !== "variant") throw new Error("--mode judge|variant");
+if (mode !== "judge" && mode !== "variant" && mode !== "base") throw new Error("--mode judge|variant|base");
 const { Store, VEC_MIN_SIM } = await import(R + "/src/store.ts");
 const { cleanTranscript, isWorkerTranscript } = await import(R + "/src/transcript.ts");
 const { sanitize } = await import(R + "/src/sanitize.ts");
@@ -69,6 +70,9 @@ V1 = sub(V1, "对这段会话给出 0 到 5 条结论", `对这段会话给出 0
 V1 = sub(V1, "大多数会话没有值得记的东西，这时 items 给空数组——这是正常结论，不要为了有产出硬凑。", "没有合格内容时 items 给空数组，不要为了有产出硬凑；但一段长会话里常常有好几条合格的，不要只给最显眼的一两条。");
 V1 = sub(V1, "## 你的任务", CHECKLIST + "## 你的任务");
 }
+// --mode base：同一窗口、同一模型跑"现提示词"（V1 之前的 b1067fc1e85a，上限 5，按产品 parseOnePass 解析），作为换模型后的同模型基线。
+// 产品提示词已经是 V1 时没有旧提示词可跑，直接报错（AB_REPO 要指向 §8.7 之前的工作区，如 agentbrain-topicx 4bce25c）。
+if (mode === "base" && ALREADY_V1) throw new Error("--mode base 需要 §8.7 之前的提示词：AB_REPO 里 ONE_PASS_SYSTEM 已经是 V1");
 const ver = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
 const JUDGE_PROBE = (refs: { text: string; why: string | null }[]) => `
@@ -152,7 +156,7 @@ for (const l of labels) {
 }
 const done = new Set<string>();
 if (existsSync(outPath)) for (const line of readFileSync(outPath, "utf8").split("\n").filter(Boolean)) { const o = JSON.parse(line); if (o.window_id && !o.error) done.add(o.window_id); }
-for (const f of values["done-from"] ? [values["done-from"]] : []) if (existsSync(f)) for (const line of readFileSync(f, "utf8").split("\n").filter(Boolean)) { const o = JSON.parse(line); if (o.window_id && !o.error) done.add(o.window_id); }
+for (const f of values["done-from"] ? values["done-from"].split(",") : []) /* 可给多个文件，逗号分隔 */ if (existsSync(f)) for (const line of readFileSync(f, "utf8").split("\n").filter(Boolean)) { const o = JSON.parse(line); if (o.window_id && !o.error) done.add(o.window_id); }
 let todo = [...wins.values()].filter((w) => !done.has(w.window_id));
 if (values.reverse) todo.reverse(); // 第二个进程从另一头跑（输出另写一个文件，打分时按窗口去重）
 if (values.limit) todo = todo.slice(0, Number(values.limit));
@@ -219,10 +223,10 @@ async function runWindow(w: Win): Promise<any> {
   // variant
   if (!hasExtractableSignal(c.turns)) { out.no_signal = true; out.items = []; }
   else {
-    msgs[0] = { ...msgs[0], content: V1 };
+    if (mode === "variant") msgs[0] = { ...msgs[0], content: V1 };
     const r = await call(modelChat, msgs);
-    const p = parseMany(r.text, nb);
-    out.ms = r.ms; out.prompt_version = ver(V1); out.parse_ok = !!p; out.invalid = p?.invalid ?? null; out.items = p?.items ?? [];
+    const p = mode === "base" ? parseOnePass(r.text, nb) : parseMany(r.text, nb);
+    out.ms = r.ms; out.prompt_version = ver(mode === "base" ? ONE_PASS_SYSTEM : V1); out.parse_ok = !!p; out.invalid = p?.invalid ?? null; out.items = p?.items ?? [];
     if (!p) out.raw = (r.text ?? "").slice(0, 2000);
   }
   const labelled = new Set(w.refs.map((r) => r.id));

@@ -100,3 +100,45 @@ if args and args[0] == '--variant':
     # 产出里没对上任何原条目的新条目
     newc = sum(1 for o in V.values() for x in o['outs'] if x['key'] not in {v for v in o['match'].values() if v})
     print('V1 产出中和任何原条目都对不上的', newc)
+
+# 同模型两种提示词对比（换模型续跑用）：python3 analyze.py --pair <base.jsonl|json> <v1.jsonl|json> [--label 名字]
+# 两个文件都是 probe.ts 的输出（--mode base / --mode variant），只比两边都有成功结果的窗口。
+def load_rows(f):
+    rs = json.load(open(f)) if f.endswith('.json') else [json.loads(l) for l in open(f) if l.strip()]
+    out = {}
+    for o in rs:
+        if o.get('window_id') and not o.get('error') and 'match' in o and o['window_id'] not in out: out[o['window_id']] = o
+    return out
+if args and args[0] == '--pair':
+    lab_name = 'Volcano'
+    if '--label' in args:
+        k = args.index('--label'); lab_name = args[k + 1]; del args[k:k + 2]
+    Bw, Vw = load_rows(args[1]), load_rows(args[2])
+    lab = {i['id']: i for i in items}
+    wins = [w for w in Vw if w in Bw and not Vw[w].get('match_invalid') and not Bw[w].get('match_invalid')]
+    skipped = sorted(set(Vw) ^ set(Bw) | {w for w in Vw if w in Bw and (Vw[w].get('match_invalid') or Bw[w].get('match_invalid'))})
+    rows = []
+    for w in wins:
+        for r in Vw[w]['refs']:
+            rows.append(dict(id=r['id'], label=lab[r['id']]['label'], set=r['set'], kind=lab[r['id']]['kind'], B=bool(Bw[w]['match'].get(r['id'])), V=bool(Vw[w]['match'].get(r['id']))))
+    def line(name, key, xs):
+        u = [r for r in xs if r['label'] == '有用']; pu = [r for r in xs if r['label'] != '没用']; x = [r for r in xs if r['label'] == '没用']
+        f = lambda g, want: f"{sum(1 for r in g if r[key] is want)}/{len(g)}"
+        acc = sum(1 for r in xs if r[key] == (r['label'] != '没用'))
+        return f"| {name} | {f(u, True)} | {f(pu, True)} | {f(x, False)} | {acc}/{len(xs)} |"
+    models = sorted({o.get('model') for o in list(Bw.values()) + list(Vw.values())})
+    print(f'\n## 同模型对比（{lab_name}；模型 {models}；窗口 {len(wins)}，条目 {len(rows)}；未计入的窗口 {[w[:8] for w in skipped]}）')
+    for scope, sel in [('全部', lambda r: True), ('s30', lambda r: r['set'] == 's30'), ('s60', lambda r: r['set'] == 's60')]:
+        xs = [r for r in rows if sel(r)]
+        print(f'### {scope}\n| 提示词 | 有用留下 | 有用+部分有用留下 | 没用挡掉 | 总对 |\n|---|---|---|---|---|')
+        print(line('现提示词', 'B', xs)); print(line('召回版 V1', 'V', xs))
+    print('种类（有用类）：', {k: (sum(1 for r in rows if r['kind'] == k and r['label'] != '没用' and r['B']), sum(1 for r in rows if r['kind'] == k and r['label'] != '没用' and r['V']), sum(1 for r in rows if r['kind'] == k and r['label'] != '没用')) for k in sorted({r['kind'] for r in rows})}, '(现, V1, 总)')
+    print('分歧：')
+    for r in rows:
+        if r['V'] != r['B']: print(f"  {r['set']} {r['id'][:8]} {r['label']} {r['kind']} 现={'留' if r['B'] else '挡'} V1={'留' if r['V'] else '挡'}")
+    for name, W in [('现提示词', Bw), ('V1', Vw)]:
+        n = sum(len(W[w]['items']) for w in wins); ms = [W[w]['ms'] for w in wins if W[w].get('ms')]
+        cov = sum(1 for w in wins for k, v in W[w]['match'].items() if v); tot = sum(len(W[w]['match']) for w in wins)
+        newc = sum(1 for w in wins for x in W[w]['outs'] if x['key'] not in {v for v in W[w]['match'].values() if v})
+        inv = dict(collections.Counter(k for w in wins for k, v in (W[w].get('invalid') or {}).items() for _ in range(v)))
+        print(f'{name}: 产出 {n}（每窗口 {n/max(1,len(wins)):.1f}）；每次抽取平均 {sum(ms)/max(1,len(ms))/1000:.0f}s（{len(ms)} 次）；对上原候选 {cov}/{tot}；对不上任何原条目的新产出 {newc}；无效/超上限 {inv}；无信号窗口 {sum(1 for w in wins if W[w].get("no_signal"))}')
