@@ -579,3 +579,20 @@ test("并发交错：压缩标记读改写拿写锁——别的连接正在写�
     other.close();
   }
 });
+
+test("§8.7：一步式上限 8 条在话题沉淀里生效（多出的计 too_many 丢掉）；提示词版本随提示词自动变", async () => {
+  const { ONE_PASS_SYSTEM, ONE_PASS_WORKER_NOTE, ONE_PASS_MAX_ITEMS } = await import("./onepass.ts");
+  const { createHash } = await import("node:crypto");
+  assert.equal(ONE_PASS_MAX_ITEMS, 8);
+  assert.equal(PROMPT_VERSION, createHash("sha256").update(`${ONE_PASS_SYSTEM}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
+  assert.notEqual(PROMPT_VERSION, createHash("sha256").update(`${ONE_PASS_SYSTEM.replace("漏记和错记一样有代价", "宁缺毋滥")}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const topics = ["前端", "数据库", "部署", "日志", "缓存", "鉴权", "队列", "监控", "备份", "文档"];
+  const chat = fakeChat(() => ({ items: topics.map((w, i) => ({ ...ITEM, text: `${w}相关的第 ${i} 条独立规则：${w.repeat(i + 1)}`, scenario: `当处理${w}时` })) }));
+  const saved: TopicRunReport[] = [];
+  const r = await runWork(e.deps(topicDeps(chat, saved)), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.equal(e.store.project().props.size, 8);
+  assert.deepEqual(saved.at(-1)!.windows[0].invalid, { too_many: 2 });
+});

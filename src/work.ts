@@ -959,7 +959,7 @@ async function onePassWindow(
       },
       confirmed: false,
       origin: "extract",
-      // 一步式输出没有逐字引文（eval 07 测的就是这版提示词），不能声称"用户原话"：一律记 agent 推断
+      // 一步式输出没有逐字引文（eval 07 的原提示词和 §8.7 的 V1 都不要引文），不能声称"用户原话"：一律记 agent 推断
       basis: "agent_inference",
       evidence: [],
       window_id: c.id,

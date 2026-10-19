@@ -619,7 +619,7 @@ Proposal 被 accepted 只表示它可以进入当前 proposition read model，�
 
 **6. 谁来跑：后台宿主子模型，一次完成抽取和判断**
 
-- 提示词和输出校验已有：`src/onepass.ts`（PR #54）。模型读话题窗口 + 背景 +《好记忆的标准》+ 附近已有记忆，一次给出 0～5 条结论，每条是"新记"或"并入已有某条"。
+- 提示词和输出校验已有：`src/onepass.ts`（PR #54）。模型读话题窗口 + 背景 +《好记忆的标准》+ 附近已有记忆，一次给出 0～8 条结论（原为 5 条；2026-10-19 起按 §8.7 召回修法 1–3 改为 8 条，并去掉偏少倾向、加按类清单，§8.7 在 PR #60），每条是"新记"或"并入已有某条"。
 - 用哪个模型：哪个宿主的会话就用哪个宿主的命令行子模型和它自己的额度——Claude Code 用 `claude -p` Haiku 5.5 max；Codex 用 `codex exec`，模型取 `~/.codex/config.toml` 的 `review_model`（没有就 gpt-6-astra）、推理 max；Pi 用 `pi -p`，模型取 reviewer 子代理配置（本机 openai-codex/gpt-6-astra）、thinking max。和 `ab setup` 的宿主审稿人默认一致（PR #54 `hostReviewerDefault`）。
 - 防自激沿用 `AGENTBRAIN_REVIEWER=1`：子模型的会话不登记、不召回、不再触发抽取。
 - 额度用完：窗口留在队列里，记下恢复时间（PR #54 已能认出 Claude 的 "resets Oct 17 at 1am" 格式），到时再跑；不悄悄改用别的宿主的额度。
