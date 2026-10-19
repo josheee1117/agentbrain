@@ -1,0 +1,12 @@
+{
+  "mode": "primary",
+  "primary": "haiku",
+  "panel": [
+    {"name": "haiku", "type": "cli", "host": "claude", "model": "haiku", "effort": "max"}
+  ],
+  "hostReviewers": {
+    "claude": {"name": "claude-review", "type": "cli", "host": "claude", "model": "haiku", "effort": "max"},
+    "codex": {"name": "codex-review", "type": "cli", "host": "codex", "model": "gpt-6-astra", "effort": "max"},
+    "pi": {"name": "pi-review", "type": "cli", "host": "pi", "model": "openai-codex/gpt-6-astra", "effort": "max"}
+  }
+}

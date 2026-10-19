@@ -3,7 +3,7 @@
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
-export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage";
+export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate";
 export type Host = "claude" | "codex" | "pi";
 /** candidate：v3 候选区（ab work 自动抽取写这里），不进召回、brief、搜索，等审稿人裁决（§21 2026-10-14 v3）。 */
 export type PropState = "active" | "archived" | "superseded" | "candidate";
@@ -22,7 +22,7 @@ export interface SourcePointer {
 
 /** 切片 3：这条记忆从哪种依据抽出来（§8.2）。user_* 必须引用户原话，observed_failure 必须引工具输出。 */
 export type Basis = "user_directive" | "user_confirmed" | "observed_failure" | "agent_inference";
-export type Origin = "manual" | "extract" | "import";
+export type Origin = "manual" | "extract" | "import" | "curate";
 /** 从外部知识库导入的出处（§21 2026-10-13 Pensieve 导入）：原文件路径与内容哈希，重导时据此判断是否变更。 */
 export interface ImportRef {
   system: "pensieve";
@@ -81,6 +81,8 @@ export interface RememberBody {
   candidate?: boolean;
   /** ab remember --direct（人工迁移数据）写入：ab audit agent-remember 不把它当成 agent 自记。 */
   direct?: boolean;
+  /** ab curate 改写生成的新条目：哪次运行、改写的是哪条（--undo 在报告没落盘时从 L1 找回）。 */
+  curate?: { run: string; of: string };
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
 }
@@ -109,7 +111,7 @@ export interface ConfirmBody {
 
 /** archive 事件体。ab work 归档过期提议、或判定为重复后并入 into 时带 reason。用 reactivate 可撤销。 */
 export interface ArchiveBody {
-  reason?: "expired" | "duplicate" | "value-audit";
+  reason?: "expired" | "duplicate" | "value-audit" | "curate";
   into?: string;
   /** 归档说明（value-audit 写不合格的原因）。 */
   note?: string;
@@ -123,6 +125,18 @@ export interface ArchiveBody {
 export interface UnconfirmBody {
   reason: "worker_prompt";
   note?: string;
+}
+
+/**
+ * curate 事件（v3 第 2 阶段，审稿团）：把候选转进正式库（promote），或撤销这一步回到候选区（unpromote）。
+ * 丢弃、改写、并入都用已有事件表达（archive reason=curate / remember origin=curate），都能 reactivate 撤销。
+ * 只作用于候选；用户确认过的条目投影时忽略这个事件。
+ */
+export interface CurateBody {
+  action: "promote" | "unpromote";
+  run: string;
+  verdict?: string;
+  reason?: string;
 }
 
 /**
@@ -204,6 +218,8 @@ export interface Proposition {
   candidate: boolean;
   /** 被 stage 事件从正式库移回候选区（unstage 只对它生效）。 */
   staged: boolean;
+  /** 审稿团从候选区转正过（unpromote 只对它生效）。转正会清掉 staged。 */
+  curated: boolean;
   value: RememberBody["value"] | null;
 }
 
@@ -233,6 +249,8 @@ export function fold(rows: EventRow[]): Projection {
   let orphans = 0;
   let ephemeral = 0;
   let purged = 0;
+  /** 被 curate promote 时原本是 staged 的条目：unpromote 时恢复 staged。 */
+  const stagedBeforePromote = new Set<string>();
   for (const r of rows) {
     if (r.kind === "purge") continue;
     if (r.body === null) {
@@ -280,6 +298,7 @@ export function fold(rows: EventRow[]): Projection {
         demoted: null,
         candidate: b.candidate === true,
         staged: false,
+        curated: false,
         value: b.value ?? null,
       });
       continue;
@@ -331,6 +350,24 @@ export function fold(rows: EventRow[]): Projection {
         target.candidate = false;
         target.staged = false;
         if (target.state === "candidate") target.state = "active";
+      }
+      continue;
+    }
+    if (r.kind === "curate") {
+      const b = JSON.parse(r.body) as CurateBody;
+      if (target.confirmed_by === "user") continue; // 用户确认过的不动
+      if (b.action === "promote" && target.candidate) {
+        target.candidate = false;
+        target.curated = true;
+        // 转正后不再是 stage 状态：清掉 staged（unstage 不会再动它）；记下来，unpromote 时恢复
+        if (target.staged) stagedBeforePromote.add(target.id);
+        target.staged = false;
+        if (target.state === "candidate") target.state = "active";
+      } else if (b.action === "unpromote" && target.curated) {
+        target.candidate = true;
+        target.curated = false;
+        if (stagedBeforePromote.delete(target.id)) target.staged = true;
+        if (target.state === "active") target.state = "candidate";
       }
       continue;
     }

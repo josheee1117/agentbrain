@@ -159,11 +159,35 @@ export class Store {
     return this.append("remember", projectId, sessionId, ephemeral, null, body);
   }
 
-  /** archive/reactivate/confirm/unconfirm/tag/stage：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
-  lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage", targetId: string, sessionId: string | null, body: object = {}): string {
+  /** archive/reactivate/confirm/unconfirm/tag/stage/curate：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
+  lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object = {}): string {
     const p = this.project().props.get(targetId);
     if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
+  }
+
+  /** 目标条目最近一条去留类事件（archive/reactivate/curate/stage）的 id；没有为 null。ab curate --undo 据此确认这一步没被后来的操作取代。 */
+  lastStateEvent(targetId: string): string | null {
+    const r = this.db
+      .prepare("SELECT id FROM events WHERE target_id=? AND kind IN ('archive','reactivate','curate','stage') AND body IS NOT NULL ORDER BY seq DESC LIMIT 1")
+      .get(targetId) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
+  /** 目标条目最近一条改 guidance 的 tag 事件 id；没有为 null。撤销转正时据此确认 guidance 没被用户后来改过。 */
+  lastGuidanceTag(targetId: string): string | null {
+    const r = this.db
+      .prepare("SELECT id FROM events WHERE target_id=? AND kind='tag' AND body IS NOT NULL AND json_extract(body,'$.guidance') IS NOT NULL ORDER BY seq DESC LIMIT 1")
+      .get(targetId) as { id: string } | undefined;
+    return r?.id ?? null;
+  }
+
+  /** 某次 ab curate --apply 写下的事件（body.run 或 body.curate.run 等于 run），按写入顺序。--undo 以 L1 为准，不全靠报告。 */
+  curateRunEvents(run: string): { id: string; kind: EventKind; target_id: string | null; body: any }[] {
+    const rows = this.db
+      .prepare("SELECT id, kind, target_id, body FROM events WHERE body IS NOT NULL AND (json_extract(body,'$.run')=? OR json_extract(body,'$.curate.run')=?) ORDER BY seq")
+      .all(run, run) as { id: string; kind: EventKind; target_id: string | null; body: string }[];
+    return rows.map((r) => ({ ...r, body: JSON.parse(r.body) }));
   }
 
   /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */

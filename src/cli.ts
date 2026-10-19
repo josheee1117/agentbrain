@@ -25,6 +25,10 @@ import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
+import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
+import { REVIEWER_ENV } from "./clireviewer.ts";
+import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "./review.ts";
+import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
@@ -133,6 +137,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
   let cwd: string;
   let worker = false;
   if (values.hook) {
+    if (process.env[REVIEWER_ENV]) return; // 审稿子进程不注入召回
     const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown };
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
@@ -771,6 +776,7 @@ function spawnWork(key: string): void {
  * stdin 是宿主给的 JSON：session_id、transcript_path、cwd、hook_event_name；Pi 扩展额外可给 ephemeral。
  */
 async function captureHook(host: Host): Promise<void> {
+  if (process.env[REVIEWER_ENV]) return; // 审稿子进程的会话不登记、不抽取
   const raw = JSON.parse(await readStdin()) as Record<string, unknown>;
   const given = typeof raw.transcript_path === "string" && raw.transcript_path ? raw.transcript_path : null;
   const ephemeral = raw.ephemeral === true;
@@ -907,6 +913,7 @@ async function cmdWork(argv: string[]): Promise<void> {
   } finally {
     store.close();
   }
+
 }
 
 async function cmdImport(argv: string[]): Promise<void> {
@@ -1034,10 +1041,115 @@ const USAGE = `用法:
                                     手动登记一个会话（hook 没生效时）
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
+  ab setup [--only fast,reviewers,panel,keys,hosts,test]
+                                    上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
+  ab curate [--apply] [--host claude|codex|pi] [--limit N] | ab curate --undo <run>
+                                    审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
+                                    默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动候选、用户确认过的不动；--undo 整次撤销
+                                    --host：只审该宿主会话抽出的候选，用 review.json hostReviewers 里给它配的审稿人（用该宿主自己的额度）
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）
                                     --sweep 另扫描漏登记的会话、按代码核验未确认的坑（到期条目不再自动归档，见 ab review）（launchd 每 30 分钟）`;
+
+async function cmdCurate(argv: string[]): Promise<void> {
+  const { values } = parseArgs({
+    args: argv,
+    options: { apply: { type: "boolean", default: false }, host: { type: "string" }, limit: { type: "string" }, undo: { type: "string" } },
+    strict: true,
+  });
+  const root = home();
+  if (values.undo) {
+    const report = loadReport(root, values.undo);
+    const store = open();
+    try {
+      console.log(`已撤销 ${report.run}：${undoRun(store, report)} 条恢复原状`);
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  // 审稿子进程里不再递归审稿
+  if (process.env[REVIEWER_ENV]) return;
+  const loaded = loadReviewConfig(root);
+  if ("error" in loaded) die(loaded.error);
+  if (values.host !== undefined && !HOSTS.includes(values.host as Host)) die(`--host 只能是 ${HOSTS.join("/")}`);
+  // --host：只审从这个宿主会话抽出来的候选，用该宿主配的审稿人（hostReviewers），用它自己的额度
+  const { cfg, onlyHost } = configForHost(loaded, (values.host as Host | undefined) ?? null);
+  const wantApply = values.apply;
+  const store = open();
+  const run = `curate-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
+  try {
+    const props = store.project().props;
+    const names = namesOf(store);
+    const cap = values.limit ? Math.max(1, Number(values.limit) || 1) : cfg.batchSize * cfg.maxBatches;
+    const pending = [...props.values()].filter((p) => p.state === "candidate" && p.confirmed_by !== "user" && (!onlyHost || p.source.host === onlyHost)).sort((a, b) => a.seq - b.seq);
+    const cands = pending.slice(0, cap);
+    if (!cands.length) {
+      console.log("候选区是空的，没有要审的。");
+      return;
+    }
+    const { panel, arbiter, missing } = connectPanel(cfg);
+    if (!arbiter || panel.length === 0) die(`审稿团连不上：${missing.join("；") || "仲裁不可用"}`);
+    // panel 模式要 3 家都在；primary 模式要主审和配置里的参考成员都在（缺参考意见也不写库，避免悄悄退化）
+    const full = missing.length === 0 && (cfg.mode === "primary" ? true : panel.length >= 3);
+    const apply = wantApply && full;
+    const stats: CallStat[] = [];
+    const inputs = cands.map((p) => candidateInput(store, p, props, names));
+    let results: Awaited<ReturnType<typeof runPanel>>;
+    try {
+      results = await runPanel(inputs, panel, arbiter, cfg.batchSize, stats, 2, cfg.mode === "primary" ? cfg.primary : null);
+    } catch (e) {
+      if (e instanceof QuotaExhausted) die(`审稿团停下了，什么都没写：${e.message}`);
+      throw e;
+    }
+    // 审稿要几分钟：期间用户可能确认/归档了某条。按此刻的库重新规划，planAction 会跳过已不是候选或已被用户确认的
+    const fresh = store.project().props;
+    const actions = planAll(results, fresh);
+    const report: RunReport = {
+      run,
+      at: new Date().toISOString(),
+      dry_run: !apply,
+      panel: cfg.panel.map((m) => ({ name: m.name, model: m.type === "cli" ? `${m.host}:${m.model || "默认"}${m.effort ? `@${m.effort}` : ""}` : m.model })),
+      arbiter: cfg.mode === "primary" ? `primary:${cfg.primary}` : cfg.arbiter,
+      results: results.map((r, i) => ({ ...r, action: actions[i], text: (fresh.get(r.id) ?? props.get(r.id))!.text })),
+      stats,
+      applied: [],
+    };
+    // 先落盘报告再写库，每写一步更新一次：中途出错也能 ab curate --undo
+    let path = saveReport(root, report);
+    if (apply)
+      applyActions(store, run, actions, fresh, (applied) => {
+        report.applied = applied;
+        path = saveReport(root, report);
+      });
+    const count = (op: string) => actions.filter((a) => a.op === op).length;
+    const routes = results.map((r) => r.decision.route);
+    const arb = routes.filter((r) => r === "arbiter" || r === "arbiter_wording").length;
+    const advisors = cfg.panel.filter((m) => m.name !== cfg.primary).map((m) => m.name);
+    const cost = stats.reduce((n, s) => n + (s.costUsd ?? 0), 0);
+    console.log(
+      [
+        `${new Date().toISOString()} ${apply ? "已执行" : "dry-run（没写库）"}：${cands.length} 条候选`,
+        `  沉淀 ${count("promote")}，改写 ${count("rewrite")}，并入 ${count("merge")}，丢弃 ${count("discard")}，跳过 ${count("skip")}`,
+        cfg.mode === "primary" ? `  主审 ${cfg.primary} 定结论 ${routes.filter((r) => r === "primary").length}，未决 ${routes.filter((r) => r === "undecided").length}${advisors.length ? `（参考意见：${advisors.join("、")}）` : ""}` : `  三票一致 ${routes.filter((r) => r === "unanimous").length}，仲裁 ${arb}（其中只定写法 ${routes.filter((r) => r === "arbiter_wording").length}），未决 ${routes.filter((r) => r === "undecided").length}`,
+        `  调用 ${stats.length} 次，失败 ${stats.filter((s) => !s.ok).length}，token ${stats.reduce((n, s) => n + s.tokens, 0)}${cost ? `，费用约 $${cost.toFixed(4)}` : ""}`,
+        missing.length ? `  审稿团缺人（只出报告，不写库）：${missing.join("；")}` : "",
+        wantApply && !full ? `  --apply 被忽略：${cfg.mode === "primary" ? "主审或参考成员连不上" : "审稿团不满 3 家"}` : "",
+        `报告：${path}${apply ? `\n撤销：ab curate --undo ${run}` : ""}`,
+      ].filter(Boolean).join("\n"),
+    );
+  } finally {
+    store.close();
+  }
+}
+
+async function cmdSetup(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: { only: { type: "string" } }, strict: true });
+  const only = values.only ? (values.only.split(",").map((s) => s.trim()) as Step[]) : null;
+  if (only?.some((s) => !STEPS.includes(s))) die(`--only 只能是 ${STEPS.join(",")}`);
+  await runSetup(home(), only);
+}
 
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -1070,6 +1182,8 @@ async function main(): Promise<void> {
     if (cmd === "import") return await cmdImport(rest);
     if (cmd === "view") return cmdView(rest);
     if (cmd === "review") return cmdReview(rest);
+    if (cmd === "curate") return await cmdCurate(rest);
+    if (cmd === "setup") return await cmdSetup(rest);
   } catch (e) {
     if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
     throw e;

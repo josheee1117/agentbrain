@@ -339,7 +339,7 @@ valid_days（可选）：你估计这条多少天内仍然有效（7 到 730 的
 最多 ${MAX_CANDIDATES_PER_WINDOW} 条。`;
 
 /** worker 会话附加说明：user 轮是父 agent 写的派活提示。 */
-const WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话：不能当用户原话证据，basis 不能填 user_directive / user_confirmed，也不要从派活提示里抽规则。只记工具输出证实的坑（observed_failure）。`;
+export const WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话：不能当用户原话证据，basis 不能填 user_directive / user_confirmed，也不要从派活提示里抽规则。只记工具输出证实的坑（observed_failure）。`;
 
 function renderTurns(turns: Turn[], prefix: string): string {
   return turns.map((t, i) => `[#${prefix}${i + 1} ${t.role}] ${t.text}`).join("\n\n");

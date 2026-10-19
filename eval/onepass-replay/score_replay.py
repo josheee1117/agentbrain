@@ -7,6 +7,8 @@ W = {}
 for r in rows:
     if r.get('window_id') and not r.get('error'): W[r['window_id']] = r
 W = list(W.values())
+# 出错后补跑成功的窗口不算出错（追加写，同一窗口可能先有 error 行、后有成功行）
+errs = [r for r in errs if r.get('window_id') not in {w['window_id'] for w in W}]
 if len(sys.argv) > 2:
     RM = json.load(open(sys.argv[2]))
     agree = collections.Counter()
