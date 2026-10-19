@@ -36,6 +36,7 @@
 ## 复现
 
 > 复现注意（2026-10-19）：本评测用的是 §8.7 之前的一步式提示词（版本 `b1067fc1e85a`，上限 5 条）。§8.7 修法 1–3 之后 `src/onepass.ts` 已换成 V1（`eea066fc04d0`，上限 8 条），要复现本篇数字请先切回本篇完成时的提交（`0027fe6`）。
+
 仓库内数据即可，不需要私有转录：
 ```bash
 python3 eval/onepass-replay/compare.py eval/onepass-replay/run1-meta.json eval/onepass-replay/rematch_high.json \
