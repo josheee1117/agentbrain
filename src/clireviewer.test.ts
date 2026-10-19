@@ -195,6 +195,29 @@ test("一步式召回修法 §8.7：去掉偏少倾向、含按类清单（含�
   assert.equal(r!.items.length, 8);
   assert.deepEqual(r!.invalid, { too_many: 2 });
   assert.equal(parseOnePass(JSON.stringify({ items: Array.from({ length: 8 }, (_, i) => item(i)) }), [])!.items.length, 8);
+  // 超限之后的坏条按真实原因计数；坏条不占名额
+  const mixed = [item(0), { ...item(1), kind: "fact" }, ...Array.from({ length: 8 }, (_, i) => item(i + 2)), { ...item(20), scenario: "排查时" }];
+  const m = parseOnePass(JSON.stringify({ items: mixed }), [])!;
+  assert.equal(m.items.length, 8);
+  assert.deepEqual(m.invalid, { bad_kind: 1, too_many: 1, no_scenario: 1 });
+});
+
+test("一步式提示词钉死为评测 12 的 V1（eea066fc04d0）：§8.7 批准的是逐字相同，任何漂移都要先过用户", async () => {
+  const { ONE_PASS_SYSTEM } = await import("./onepass.ts");
+  const { createHash } = await import("node:crypto");
+  // 版本号口径与评测 12 的 probe.ts 一致：sha256(ONE_PASS_SYSTEM) 前 12 位。
+  // 注意 topic.ts 的 PROMPT_VERSION 另把子代理说明一起算进去，数值不同、不要拿来对比。
+  assert.equal(createHash("sha256").update(ONE_PASS_SYSTEM).digest("hex").slice(0, 12), "eea066fc04d0");
+});
+
+test("一步式：A 类结论一律 guidance=true（与审稿链路同口径），B/C 类看模型标注", async () => {
+  const { parseOnePass } = await import("./onepass.ts");
+  const r = parseOnePass(JSON.stringify({ items: [
+    { action: "new", kind: "rule", class: "A", text: "说人话", scenario: "当汇报时", guidance: false },
+    { action: "new", kind: "decision", class: "B", text: "选方案 X", scenario: "当改存储时" },
+    { action: "new", kind: "pitfall", class: "C", text: "先重启再测", scenario: "当跑 e2e 时", guidance: true },
+  ] }), [])!;
+  assert.deepEqual(r.items.map((i) => i.guidance), [true, false, true]);
 });
 
 test("限流识别：Claude 新格式 weekly limit 带重置时间（时区）→ http_429 + 等待时长", () => {
