@@ -13,6 +13,7 @@
 | `graph-1hop/` | 08 | 模拟脚本、关系边（只有 id）、输出 |
 | `scene-sim/` | 09 | 模拟脚本与输出 |
 | `scene-directory/` | 10 | 出题与评测脚本、46 道题、结果（去掉了 brief 全文） |
+| `linked-recall/` | 13 | 评测脚本、34 道关联题 + 43 道无偏对照题、结果（只有 id）、不含正文的库元数据 `props-meta.json` |
 | `lib/` | — | `scrub.py`（脱敏）、`collect.py`（从本地工作目录收集并脱敏，记录了数据来源） |
 
 ## 约定
