@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
 import { type Host, type PropKind, type Proposition, type SourcePointer } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
-import { expandSource, latestAnchor } from "./source.ts";
+import { expandImport, expandSource, latestAnchor } from "./source.ts";
+import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState } from "./links.ts";
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
@@ -37,6 +38,12 @@ import { displayPath, importPensieve, planImport, type PlanInput } from "./pensi
 
 const RECALL_EMBED_TIMEOUT_MS = 3000;
 const GET_MAX_NEIGHBORS = 3;
+/** ab search 前几条显示全文（§11.5 (ii)）。 */
+const SEARCH_FULL_ROWS = 8;
+/** ab search 一共取多少条：第 SEARCH_FULL_ROWS+1 名到这里每条一行（§11.6 (i)，代码常量，§2.2）。 */
+const SEARCH_MAX_HITS = 16;
+/** 第 9–16 名那一行正文最多显示的字数。 */
+const SEARCH_BRIEF_CHARS = 60;
 const EXTRACT_TIMEOUT_MS = 90_000;
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
@@ -370,17 +377,29 @@ async function cmdSearch(argv: string[]): Promise<void> {
       includeGlobal,
       kind: values.kind as PropKind | undefined,
       includeArchived: values.archived,
+      limit: SEARCH_MAX_HITS,
     }, embedder);
     if (!hits.length) {
       console.log("没有匹配的记忆。");
     }
     const props = store.project().props;
-    for (const h of hits) {
+    const links = linkIndex(props);
+    hits.slice(0, SEARCH_FULL_ROWS).forEach((h) => {
       const p = props.get(h.id);
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p ? marks(p) : "";
-      const flag = p?.state === "archived" ? "（已归档）" : p?.state === "superseded" ? "（已被替代）" : p?.state === "candidate" ? "（候选）" : "";
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${flag}${p ? disputed(p) : ""}: ${searchDetail(h.text, p)}`);
+      // 正文用投影里的 p.text：命中里的 text 是索引文本（正文 + why），用它会把 why 打两遍
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${p ? linkState(p) : ""}${p ? disputed(p) : ""}: ${searchDetail(p ? p.text : h.text, p)}`);
+      const rel = p ? linkSummary(links.get(p.id) ?? [], props, short) : "";
+      if (rel) console.log(`  关联: ${rel}`);
+    });
+    const more = hits.slice(SEARCH_FULL_ROWS);
+    if (more.length) {
+      console.log(`更多（第 ${SEARCH_FULL_ROWS + 1}–${SEARCH_FULL_ROWS + more.length} 名，看全文用 ab get）:`);
+      for (const h of more) {
+        const p = props.get(h.id);
+        console.log(`  [${short(h.id)}] ${p ? SCOPE_LABEL(p, names) : "未知"} ${KIND_LABEL[h.kind]}${p ? marks(p) + linkState(p) : ""}: ${firstLine(p ? p.text : h.text, SEARCH_BRIEF_CHARS)}`);
+      }
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
   } finally {
@@ -412,11 +431,8 @@ function cmdGet(argv: string[]): void {
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
-      p.merged_into ? `判定与 [${short(p.merged_into)}] 重复，已并入并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
-      p.related && p.related.outcome === "refines" && p.related.target ? `是 [${short(p.related.target)}] 的补充` : "",
-      p.conflicts_with ? `与 [${short(p.conflicts_with)}] 说法冲突（关系判定），两条不能同时成立` : "",
-      p.supersedes ? `替代了 [${short(p.supersedes)}]` : "",
-      p.superseded_by ? `已被 [${short(p.superseded_by)}] 替代` : "",
+      // 并入、冲突、替代的对方在下面"关联"里列（带状态和正文第一行）；这里只留撤销提示
+      p.merged_into ? `已判定为重复并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       ...p.pending_corrections.map((id) => {
         const c = store.project().props.get(id)!;
         if (c.conflicts_with === p.id && !c.supersedes) return `与 [${short(id)}] 说法冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;
@@ -425,7 +441,16 @@ function cmdGet(argv: string[]): void {
       p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
-    const shown = new Set([p.supersedes, p.superseded_by, ...p.pending_corrections]);
+    // 双向关联（§11.6 (ii)）：每个一行，带对方状态和正文第一行；上面已带操作提示列出的待确认纠正不重复
+    const all = store.project().props;
+    const rel = (linkIndex(all).get(p.id) ?? []).filter((l) => !p.pending_corrections.includes(l.id));
+    if (rel.length) {
+      linesOut.push("关联:", ...rel.map((l) => {
+        const n = all.get(l.id)!;
+        return `  ${LINK_LABEL[l.type]} [${short(n.id)}]${linkState(n)} ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${marks(n)}: ${firstLine(n.text, SEARCH_BRIEF_CHARS)}`;
+      }));
+    }
+    const shown = new Set<string | undefined>([p.supersedes, p.superseded_by, ...p.pending_corrections, ...rel.map((l) => l.id)]);
     const near = store.neighbors(p.id);
     if (near === null) linesOut.push("相关: 近邻不可用，这条还没有向量");
     else {
@@ -435,7 +460,14 @@ function cmdGet(argv: string[]): void {
     }
     if (values.expand) {
       const disc = expandSource(p.source);
-      linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
+      if (disc || !p.import_ref) linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
+      else {
+        // Pensieve 导入条没有 transcript：打开导入时记下的原 md 文件（§11.6 (iii)）
+        const r = expandImport(p.import_ref);
+        linesOut.push("", "--- Pensieve 原文件 ---");
+        if (r.ok) linesOut.push(`${displayPath(r.path, homedir())}${r.changed ? "（导入后改过：内容哈希与导入时不同，下面是现在的内容）" : ""}`, r.text, ...(r.truncated ? ["（已截断，完整内容看原文件）"] : []));
+        else linesOut.push(`原文件不可用：${r.reason}`);
+      }
     }
     console.log(linesOut.join("\n"));
   } finally {
@@ -1066,7 +1098,9 @@ const USAGE = `用法:
   ab recall [--hook] [文本…]            每轮召回：当前项目和全局的已确认坑/规则/决定；另可带 1 条无争议的未确认坑/规则/决定（标未确认）
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
-  ab get <id 前缀> [--expand]       看一条：替代链、待确认的纠正、向量近邻；--expand 展开记下这条时的原始讨论
+                                    前 8 条全文并列出关联，第 9–16 名每条一行
+  ab get <id 前缀> [--expand]       看一条：双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
+                                    --expand 展开记下这条时的原始讨论（Pensieve 导入条打开原 md 文件）
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）

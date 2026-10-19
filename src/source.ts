@@ -3,7 +3,10 @@
  * 从记忆时的定位点回溯，还原"当时是怎么讨论出来的"。
  * agentbrain 自身不存对话原文。
  */
-import { readFileSync, existsSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { extname, isAbsolute, sep } from "node:path";
+import { sanitize } from "./sanitize.ts";
 import type { SourcePointer, Host } from "./l2.ts";
 
 const MAX_ENTRIES = 30;
@@ -163,4 +166,72 @@ export function latestAnchor(host: Host, transcriptPath: string): string | null 
     if (e.type === "response_item" && e.payload?.type === "message" && typeof e.ordinal === "number") ordinal = e.ordinal;
   }
   return ordinal === null ? null : String(ordinal);
+}
+
+// ---------- Pensieve 导入条的原文件（§11.6 (iii)，2026-10-19 用户批准） ----------
+
+/** 打开原文件最多给这么多字（按字符计），超出截断并说明。 */
+export const IMPORT_EXPAND_MAX_CHARS = 4000;
+/** 原文件超过这个字节数不读（Pensieve 文档通常几 KB）。 */
+const IMPORT_EXPAND_MAX_BYTES = 256 * 1024;
+
+export type ImportExpand = { ok: true; path: string; text: string; changed: boolean; truncated: boolean } | { ok: false; reason: string };
+
+/**
+ * 读 Pensieve 导入条的原 md 文件。只读 import_ref 里记下的路径（主路径不在时依次试 also 里的副本）；
+ * 只接受真实路径落在某个 .pensieve/ 目录下的普通 .md 文件（防止被改过的路径指向别处）。
+ * 内容走 sanitize 脱敏；哈希与导入时不同就标 changed。读不到时给出原因，不抛。
+ */
+export function expandImport(ref: { path: string; sha256: string; also?: string[] }): ImportExpand {
+  const reasons: string[] = [];
+  for (const p of [ref.path, ...(ref.also ?? [])]) {
+    const r = readImportFile(p);
+    if (!("reason" in r)) {
+      const changed = createHash("sha256").update(r.src).digest("hex") !== ref.sha256;
+      const s = sanitize(r.src).text;
+      const cs = [...s];
+      const truncated = cs.length > IMPORT_EXPAND_MAX_CHARS;
+      return { ok: true, path: r.real, text: truncated ? cs.slice(0, IMPORT_EXPAND_MAX_CHARS).join("") + "…" : s, changed, truncated };
+    }
+    reasons.push(`${p}：${r.reason}`);
+  }
+  return { ok: false, reason: reasons.join("；") };
+}
+
+function readImportFile(p: string): { src: string; real: string } | { reason: string } {
+  if (!isAbsolute(p)) return { reason: "不是绝对路径" };
+  const parts = p.split(sep);
+  const k = parts.lastIndexOf(".pensieve");
+  if (k < 0 || extname(p).toLowerCase() !== ".md") return { reason: "记下的路径不是 .pensieve 目录下的 .md 文件，拒绝读取" };
+  let real: string;
+  let root: string;
+  try {
+    real = realpathSync(p);
+    root = realpathSync(parts.slice(0, k + 1).join(sep));
+  } catch (e) {
+    return { reason: fsReason(e) };
+  }
+  // 真实路径必须还在记下的那个 .pensieve 目录里：防止 md 是指向别处的符号链接
+  if (!real.startsWith(root + sep) || extname(real).toLowerCase() !== ".md") return { reason: "文件实际指向 .pensieve 目录之外（符号链接），拒绝读取" };
+  let fd: number | undefined;
+  try {
+    // 校验之后用同一个文件描述符读，不跟随末级符号链接，免得校验和读取之间被换掉
+    fd = openSync(real, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const st = fstatSync(fd);
+    if (!st.isFile()) return { reason: "不是普通文件" };
+    if (st.size > IMPORT_EXPAND_MAX_BYTES) return { reason: `文件过大（${st.size} 字节）` };
+    return { src: readFileSync(fd, "utf8"), real };
+  } catch (e) {
+    return { reason: fsReason(e) };
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function fsReason(e: unknown): string {
+  const code = (e as NodeJS.ErrnoException).code;
+  if (code === "ENOENT" || code === "ENOTDIR") return "文件不存在";
+  if (code === "EACCES" || code === "EPERM") return "没有读取权限";
+  if (code === "ELOOP") return "是符号链接，拒绝读取";
+  return `无法读取（${code ?? "未知错误"}）`;
 }
