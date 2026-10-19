@@ -60,10 +60,15 @@ const CHECKLIST = `## 先逐类过一遍（只在心里过，不输出过程）
 `;
 const V1_MAX = 8;
 let V1 = ONE_PASS_SYSTEM as string;
+// §8.7 实现后（PR #54 / #59），产品提示词本身就是 V1：此时不再替换，直接用（版本号应仍是 eea066fc04d0，启动行会打印）。
+// 注意：那时 --mode judge 的"基线"也变成了 V1，不再是评测 12 里的 b1067fc1e85a。
+const ALREADY_V1 = V1.includes(CHECKLIST) && V1.includes(`0 到 ${V1_MAX} 条结论`) && !V1.includes("宁缺毋滥");
+if (!ALREADY_V1) {
 V1 = sub(V1, "你的结论会直接写进记忆库（可撤销），没有第二个审稿人，所以宁缺毋滥。", "你的结论会直接写进记忆库（可撤销，状态是未确认）。漏记和错记一样有代价：合格的记忆没记下来，下一个 agent 就会再踩一次。");
 V1 = sub(V1, "对这段会话给出 0 到 5 条结论", `对这段会话给出 0 到 ${V1_MAX} 条结论`);
 V1 = sub(V1, "大多数会话没有值得记的东西，这时 items 给空数组——这是正常结论，不要为了有产出硬凑。", "没有合格内容时 items 给空数组，不要为了有产出硬凑；但一段长会话里常常有好几条合格的，不要只给最显眼的一两条。");
 V1 = sub(V1, "## 你的任务", CHECKLIST + "## 你的任务");
+}
 const ver = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 12);
 
 const JUDGE_PROBE = (refs: { text: string; why: string | null }[]) => `
