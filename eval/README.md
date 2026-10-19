@@ -14,6 +14,7 @@
 | `scene-sim/` | 09 | 模拟脚本与输出 |
 | `scene-directory/` | 10 | 出题与评测脚本、46 道题、结果（去掉了 brief 全文） |
 | `lib/` | — | `scrub.py`（脱敏）、`collect.py`（从本地工作目录收集并脱敏，记录了数据来源） |
+| `linked-recall-impl/` | 14 | 真实 CLI 前后对比脚本、答案层打分规则（先提交）与驱动、结果（只有 id 和打分，无正文） |
 
 ## 约定
 - 所有文件都经过 `lib/scrub.py` 脱敏。检查命令：
