@@ -1616,9 +1616,9 @@
      "into": null,
      "kind": "pitfall",
      "class": "C",
-     "text": "本机启动 data-asset 必须带 -Dspring.cloud.nacos.discovery.enabled=false 关闭服务注册（避免本机实例注册进共享 Nacos），并带 -Dspring.profiles.active=dev；参数照用户 IDEA 运行配置（~/code/data-asset/.idea/workspace.xml）来。",
+     "text": "本机启动 data-asset 必须带 [REDACTED:host].nacos.discovery.enabled=false 关闭服务注册（避免本机实例注册进共享 Nacos），并带 -Dspring.profiles.active=dev；参数照用户 IDEA 运行配置（~/code/data-asset/.idea/workspace.xml）来。",
      "scenario": "当在本机启动 data-asset 进程、要连共享的 dev Nacos 和数据库做接口验证时",
-     "why": "派活方要求本机实例必须关服务注册，理由是不关的话测试网关会把流量路由到本机（派活方的说明，本次没有实测路由行为）。派活提示引用的 IDEA 运行配置 VM 参数是 -Dspring.profiles.active=dev -Dspring.cloud.nacos.discovery.enabled=false，子代理称已核对一致。本次按此启动后，健康检查 200，服务发现报告 Discovery Client not initialized，日志里没有 Nacos 注册记录。第一次把 -D 参数放在 -jar 后面，profile 没生效，落到默认配置去连 localhost 的 Redis 而启动失败（Unable to connect to Redis server: localhost/127.0.0.1:6379）。",
+     "why": "派活方要求本机实例必须关服务注册，理由是不关的话测试网关会把流量路由到本机（派活方的说明，本次没有实测路由行为）。派活提示引用的 IDEA 运行配置 VM 参数是 -Dspring.profiles.active=dev [REDACTED:host].nacos.discovery.enabled=false，子代理称已核对一致。本次按此启动后，健康检查 200，服务发现报告 Discovery Client not initialized，日志里没有 Nacos 注册记录。第一次把 -D 参数放在 -jar 后面，profile 没生效，落到默认配置去连 localhost 的 Redis 而启动失败（Unable to connect to Redis server: localhost/[REDACTED:ip]）。",
      "guidance": false,
      "reason": "注册进共享 Nacos 不报错，若真会被测试网关路由就是静默事故；给出的项目资料里没有这条本地启动要求。"
     }
@@ -1651,7 +1651,7 @@
   "outsB": [
    {
     "key": "B1",
-    "text": "本机启动 data-asset 必须带 -Dspring.cloud.nacos.discovery.enabled=false 关闭服务注册（避免本机实例注册进共享 Nacos），并带 -Dspring.profiles.active=dev；参数照用户 IDEA 运行配置（~/code/data-asset/.idea/workspace.xml）来。",
+    "text": "本机启动 data-asset 必须带 [REDACTED:host].nacos.discovery.enabled=false 关闭服务注册（避免本机实例注册进共享 Nacos），并带 -Dspring.profiles.active=dev；参数照用户 IDEA 运行配置（~/code/data-asset/.idea/workspace.xml）来。",
     "how": "new"
    }
   ]
@@ -2896,7 +2896,7 @@
   "outsA": [
    {
     "key": "A1",
-    "text": "访问宿主上只绑 127.0.0.1 的隔离服务前，先用独立探针单独验证容器到宿主的路径（经 host.docker.internal 会超时，TCP 连通也不代表请求命中目标）；探针不通就记为隔离缺口，不放宽绑定或网络来绕过。",
+    "text": "访问宿主上只绑 [REDACTED:ip] 的隔离服务前，先用独立探针单独验证容器到宿主的路径（经 [REDACTED:host] 会超时，TCP 连通也不代表请求命中目标）；探针不通就记为隔离缺口，不放宽绑定或网络来绕过。",
     "how": "rewrite"
    },
    {
