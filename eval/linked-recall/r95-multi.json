@@ -1,0 +1,722 @@
+[
+ {
+  "id": "RD01",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "本地编译 data-asset 用哪个 JDK？",
+  "slots": [
+   [
+    "bc2da617"
+   ],
+   [
+    "f5d66945"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD03",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "发布到 dev 指的是什么，需要我授权吗",
+  "slots": [
+   [
+    "442c37df"
+   ],
+   [
+    "5ab4957e"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD04",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "本地起 data-asset 实例要注意什么",
+  "slots": [
+   [
+    "a49f7dbe"
+   ],
+   [
+    "d7b6d2ad"
+   ],
+   [
+    "d52745be"
+   ],
+   [
+    "0b8e0844"
+   ],
+   [
+    "bc2da617"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD05",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "data-asset 这次要不要补单元测试",
+  "slots": [
+   [
+    "0647a455"
+   ],
+   [
+    "8aad6f9c"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD07",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "派生指标 dimN 槽位前后端规则一样吗",
+  "slots": [
+   [
+    "8b6bf402"
+   ],
+   [
+    "9888aac0"
+   ],
+   [
+    "a1722951"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD09",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "新的开放接口用什么方式鉴权",
+  "slots": [
+   [
+    "b3293221"
+   ],
+   [
+    "79ca63d2"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD10",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "MaxCompute 同步时表责任人在字典里找不到怎么处理",
+  "slots": [
+   [
+    "e8d8c189"
+   ],
+   [
+    "60e29b0e"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD11",
+  "type": "recall95:direct",
+  "project": "data-asset",
+  "query": "HttpLogInterceptor logs the whole response body, is that a problem for a big export endpoint?",
+  "slots": [
+   [
+    "bffd4ab7"
+   ],
+   [
+    "83bf02e8"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD13",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "在 ai-data 跑 e2e 要带什么环境变量",
+  "slots": [
+   [
+    "7841c93d"
+   ],
+   [
+    "d01b442c"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD14",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "e2e 里的期望数字可以直接写死吗",
+  "slots": [
+   [
+    "9b2918ef"
+   ],
+   [
+    "aad244dc"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD16",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "Polar 的结果表有 dt 分区和 etl_time 吗",
+  "slots": [
+   [
+    "e94466ea"
+   ],
+   [
+    "f24e2daf"
+   ],
+   [
+    "b62c600e"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD18",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "storage 测试怎么跑，数据库连接串从哪来",
+  "slots": [
+   [
+    "65506fcd"
+   ],
+   [
+    "af98030f"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD19",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "改完代码页面行为很奇怪，是不是 dev server 的问题",
+  "slots": [
+   [
+    "0de7bba2"
+   ],
+   [
+    "ced330f8"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD20",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "长问数报 DeepSeek stream idle timeout after 20000ms",
+  "slots": [
+   [
+    "cf8541cb"
+   ],
+   [
+    "daf9929a"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD21",
+  "type": "recall95:direct",
+  "project": "pi-ops",
+  "query": "本地演练发企业微信通知前要检查什么",
+  "slots": [
+   [
+    "3944650d"
+   ],
+   [
+    "9cafef64"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD24",
+  "type": "recall95:direct",
+  "project": "pi-ops",
+  "query": "real-dataasset-lab 要跑一次真实模型诊断，开跑前要准备什么",
+  "slots": [
+   [
+    "467580e7"
+   ],
+   [
+    "1c8a952f"
+   ],
+   [
+    "92cf280a"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD26",
+  "type": "recall95:direct",
+  "project": "pstack-pi",
+  "query": "how should we sync upstream pstack changes into this repo",
+  "slots": [
+   [
+    "d3446315"
+   ],
+   [
+    "96dae28c"
+   ],
+   [
+    "bbe32144"
+   ],
+   [
+    "14fb23f4"
+   ],
+   [
+    "1f2551c5"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD27",
+  "type": "recall95:direct",
+  "project": "pstack-pi",
+  "query": "pstack 里派子代理用 herdr 还是 pi-subagents",
+  "slots": [
+   [
+    "94cf1473"
+   ],
+   [
+    "42830c38"
+   ],
+   [
+    "c6f5fc24"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD30",
+  "type": "recall95:direct",
+  "project": "insuranceagent",
+  "query": "跑 mvn 测试前 JAVA_HOME 要设成什么",
+  "slots": [
+   [
+    "86f13522"
+   ],
+   [
+    "5496a888"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD31",
+  "type": "recall95:direct",
+  "project": "insuranceagent",
+  "query": "object_id 从 bigint 改成 varchar 之后代码里要改哪些地方",
+  "slots": [
+   [
+    "cfaa9328"
+   ],
+   [
+    "3d8eeb42"
+   ],
+   [
+    "89c7d7d2"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD33",
+  "type": "recall95:direct",
+  "project": "insuranceagent",
+  "query": "标签同步 MQ 失败了怎么补偿重试",
+  "slots": [
+   [
+    "63f99b47"
+   ],
+   [
+    "2611d4bd"
+   ],
+   [
+    "fbd13292"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RD34",
+  "type": "recall95:direct",
+  "project": "agentbrain",
+  "query": "hook 子命令出异常怎么处理才不会卡住宿主",
+  "slots": [
+   [
+    "61a2e78c"
+   ],
+   [
+    "d34b1db7"
+   ],
+   [
+    "6dd4bcfa"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD36",
+  "type": "recall95:direct",
+  "project": "agentbrain",
+  "query": "写 Store 并发锁测试，用 sleep 控制时序可以吗",
+  "slots": [
+   [
+    "e0632cdd"
+   ],
+   [
+    "13836c16"
+   ],
+   [
+    "bc69441c"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD37",
+  "type": "recall95:direct",
+  "project": "agentbrain",
+  "query": "cli.test.ts 里写记忆的用例为什么会影响后面的断言",
+  "slots": [
+   [
+    "8279061f"
+   ],
+   [
+    "58ae591d"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD40",
+  "type": "recall95:direct",
+  "project": "ai-data",
+  "query": "e2e 能不能用 mock 数据或者 page.route 造结果",
+  "slots": [
+   [
+    "873b78e2"
+   ],
+   [
+    "ddc7579e"
+   ],
+   [
+    "7575ee53"
+   ],
+   [
+    "312398a1"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RD44",
+  "type": "recall95:direct",
+  "project": "pi-ops",
+  "query": "cpa 上 gpt-6.1-sol 的上下文窗口应该配多少",
+  "slots": [
+   [
+    "73833a19"
+   ],
+   [
+    "455b0629"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RR01",
+  "type": "recall95:real",
+  "project": "data-asset",
+  "query": "提交并推送然后合并到dev_jdk17并推送",
+  "slots": [
+   [
+    "442c37df"
+   ],
+   [
+    "5ab4957e"
+   ],
+   [
+    "1503e670"
+   ],
+   [
+    "22ed121d"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR03",
+  "type": "recall95:real",
+  "project": "data-asset",
+  "query": "帮我找出当前分支上线需要配置的nacos配置以及受影响的mysql表和job",
+  "slots": [
+   [
+    "8db948cf"
+   ],
+   [
+    "135df5c8"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RR05",
+  "type": "recall95:real",
+  "project": "data-asset",
+  "query": "帮我生成一个查询 sql，要求查询出原子指标、派生指标的名称、code，描述，计算口径方式，存储位置信息。",
+  "slots": [
+   [
+    "595c6092"
+   ],
+   [
+    "dd03a351"
+   ],
+   [
+    "d0102761"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR06",
+  "type": "recall95:real",
+  "project": "data-asset",
+  "query": "标准字段分页查询接口能否增加字段来源类型，是polar 还是maxcompute，详情接口也返回",
+  "slots": [
+   [
+    "b98f7c50"
+   ],
+   [
+    "b830a3c1"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR09",
+  "type": "recall95:real",
+  "project": null,
+  "query": "让 codex 发布到 dev_jdk17 吧",
+  "slots": [
+   [
+    "dd6a4fdc"
+   ],
+   [
+    "18ba2a31"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR11",
+  "type": "recall95:real",
+  "project": "pi-ops",
+  "query": "cpa加了claude-opus-4-6-thinking、claude-sonnet-4-6、gemini-3.8-flash-high模型，帮我配置一下，思考等级按照模型本身的来，上下文也是",
+  "slots": [
+   [
+    "c7afa685"
+   ],
+   [
+    "73833a19"
+   ],
+   [
+    "a5c06ccc"
+   ],
+   [
+    "8d31bbf7"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR12",
+  "type": "recall95:real",
+  "project": "pi-ops",
+  "query": "你作为架构师，指挥herdr中pi-ops右边的pi pane做具体的执行，直到本项目达到我们最初规划的效果",
+  "slots": [
+   [
+    "2de961e5"
+   ],
+   [
+    "450cb4db"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RR13",
+  "type": "recall95:real",
+  "project": "pi-ops",
+  "query": "用这个企微群机器人通知，另外再推到测试机器之前能否在本地docker验证一下呢。即使项目起不来，也可以模拟一个类似dataasset的应用",
+  "slots": [
+   [
+    "77cbf3ea"
+   ],
+   [
+    "3944650d"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR16",
+  "type": "recall95:real",
+  "project": "pi-ops",
+  "query": "帮我把cpa的ops 改成1m的。现在报错Error: 400 \"1m 上下文已经全量可用，请启用 1m 上下文后重试\"",
+  "slots": [
+   [
+    "5a876cb7"
+   ],
+   [
+    "a5c06ccc"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR17",
+  "type": "recall95:real",
+  "project": "pi-ops",
+  "query": "将子代理设置的gpt 5 sol调整成gpt 6.1 sol medium默认",
+  "slots": [
+   [
+    "dd6a4fdc"
+   ],
+   [
+    "73833a19"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR18",
+  "type": "recall95:real",
+  "project": "pstack-pi",
+  "query": "我们移植到 pi 这里的不用 subagent 了，运行任务时看不到运行细节，也不能给每个子代理调整任务，观察状态。使用 herdr 代替怎么样？",
+  "slots": [
+   [
+    "94cf1473"
+   ],
+   [
+    "42830c38"
+   ],
+   [
+    "db1d71c3"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR19",
+  "type": "recall95:real",
+  "project": "pstack-pi",
+  "query": "先帮我将 pstack 原版的更新移植过来",
+  "slots": [
+   [
+    "d3446315"
+   ],
+   [
+    "96dae28c"
+   ],
+   [
+    "bbe32144"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR21",
+  "type": "recall95:real",
+  "project": "pstack-pi",
+  "query": "你这样不行，最好能是想cursor一样，能让我看到这个流程，而不是让模型自己决定",
+  "slots": [
+   [
+    "dbcc2177"
+   ],
+   [
+    "737cb364"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RR22",
+  "type": "recall95:real",
+  "project": "pstack-pi",
+  "query": "测试完成了吗？当前项目表现达到原版的多少了？之前提出的问题都解决了吗",
+  "slots": [
+   [
+    "9a6c480d"
+   ],
+   [
+    "bbe32144"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR24",
+  "type": "recall95:real",
+  "project": "content-verification-agent",
+  "query": "cpa/gpt-6-astra（models.json 自建，名字写成 1.05M） 上下文 1,050,000 最大输出 128,000 改成跟openai一样的上下文",
+  "slots": [
+   [
+    "73833a19"
+   ],
+   [
+    "455b0629"
+   ],
+   [
+    "8d31bbf7"
+   ]
+  ],
+  "split": "test"
+ },
+ {
+  "id": "RR26",
+  "type": "recall95:real",
+  "project": "ai-data",
+  "query": "你试试herdr调用pi",
+  "slots": [
+   [
+    "ac3bc3ba"
+   ],
+   [
+    "db1d71c3"
+   ]
+  ],
+  "split": "tune"
+ },
+ {
+  "id": "RR28",
+  "type": "recall95:real",
+  "project": null,
+  "query": "本机是连不上测试环境的",
+  "slots": [
+   [
+    "2ae91f00"
+   ],
+   [
+    "7da2e690"
+   ],
+   [
+    "7c5b55c5"
+   ]
+  ],
+  "split": "tune"
+ }
+]

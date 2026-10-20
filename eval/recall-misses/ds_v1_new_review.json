@@ -1,0 +1,262 @@
+[
+ {
+  "n": 0,
+  "window_id": "de3e2119894f",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "markAllGroupWithWework 这类客户+企微合并打标接口的 objectId 路由规则是：WEWORK 组用 weworkId，其余一切组（包括 tg.object 与入参 object 不同的派生组，如 ENT）都用 custId；绝不能写\"CUST 组用 custId\"，否则派生组会用错 ID，破坏现有前端行为。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 1,
+  "window_id": "de3e2119894f",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "上线新对象类型的标签同步（尤其是 WEWORK）时，必须先给该对象的标签组配好 tag_permission，再打开同步；否则查标签的 SQL（INNER JOIN 权限表）会推出空列表，下游接口若是全量覆盖，会把对象身上的已有标签全部清空。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 2,
+  "window_id": "de3e2119894f",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "做跨模块改动评估或拟改接口之前，先梳理出完整的接口/文件影响面清单和每条改动点，交给用户逐条拍板后再动手；可以同步给出建议方案和风险，但拍板前不要自行实现。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 3,
+  "window_id": "de3e2119894f",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "标签链路里因外部契约故意保留 Long 的字段不要顺手改成 String：TagChange 经 MQ（tag_change_topic）发往仓库外的消费方，消息格式不能变；CusTags.cusId 推给华哥客户接口也保持 Long；源表原始 ID 和规则 SQL（idExpression）的参数仍按 Long 传，避免带前导零的编号匹配结果变化。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 4,
+  "window_id": "de3e2119894f",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "当依赖他人（含用户）执行 DDL/环境变更作为继续开发的前提时，先查 information_schema 核对实际 schema 再继续；口头确认\"改好了\"不一定真实完成，这次用户说完\"好了\"后核对发现三张表只有 tag_pending_sync 改成了 varchar，另两张还是 bigint。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 5,
+  "window_id": "62d888894733",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "searchHybrid 在查询前会自动触发 syncVectors 补向量（网络调用并写 index.db），是有副作用的检索函数；实现每轮 hook 检索路径（如 recall）时不能直接走它，要降级为不补向量的路径，向量缺了就用纯 FTS。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 6,
+  "window_id": "56a0af78c608",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "extensions/pstack.js 的技能索引 skillIndex 是模块级缓存；给多技能根或索引初始化逻辑写测试时要用独立模块实例（加载器按路径分缓存），否则旧缓存会掩盖根目录读取失败、测试恒绿测不出 bug。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 7,
+  "window_id": "956f0f78d276",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "从上游同步新版本 pstack 时：先对比 upstream.lock 的 BASE 与固定官方 TARGET 的实际 diff，无差异就结束；有差异才在干净集成分支用 sync-upstream.mjs 导入、审语义差异后合并，只更新受影响的中文描述、平台映射和覆盖表；验证按风险分级——纯文案改动不跑付费模型评测，只有工具/脚本/提示接口/工作流实质变化才补对应路径的最小真实验证；失败留在集成分支，合并与发布由用户单独授权。另有三点防漏约束：固定官方目标提交与导入快照两个 SHA、多个待合入快照从产品共同祖先比较累计差异、lock 只推进到真正合入工作分支的基线。",
+  "reviewer_verdict": "maybe",
+  "note": "几件事拼成一条、过长"
+ },
+ {
+  "n": 8,
+  "window_id": "956f0f78d276",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "在 Pi 里派子代理做独立评审/审查时，不要用 worker——它默认带上父会话的全部上下文，评审看到实现者上下文就不再独立；要派 delegate 并显式开新上下文（context: \"fresh\"）。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 9,
+  "window_id": "956f0f78d276",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "当评测或验证的原始证据丢失、无法复核时，如实说明哪些结论仍可支撑、哪些不能，保留已有可复查摘要；不假装完整盲评，也不擅自追加付费模型调用来重跑已丢失的评测。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 10,
+  "window_id": "956f0f78d276",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "pstack-pi 不要求完整复制上游 pstack：可以按需吸收上游的精华改动，其余部分独立演进，不必为了与上游一致而接受不适合 Pi 的内容。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 11,
+  "window_id": "2bd333f890b2",
+  "action": "new",
+  "kind": "rule",
+  "class": "B",
+  "text": "语义目录导出/ai-data 指标同步的接口契约以 ~/code_me/pm/plans/2026-10-10-ai-data-metric-sync-contract.md 为准，该文件会被持续更新，改动前先重读它而不是只依赖仓库 docs 里的契约副本。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 12,
+  "window_id": "52a474502818",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "store 层一致性契约：index.db 的 meta 水位等于 FTS 索引对应的 L1 最大 seq 且只能前进，陈旧投影的索引写入会被放弃；purgeSession 提交后立即同步重建 FTS；已 purge 的 session_id 再写事件必须抛错拒绝（session_id 为 null 的写入不受限制）。",
+  "reviewer_verdict": "maybe",
+  "note": "几条契约拼成一条，可能已在设计文档"
+ },
+ {
+  "n": 13,
+  "window_id": "52a474502818",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "FTS 索引更新保持整表全量重建，不做增量更新；约 1 万条记忆以内维持全量，之后再评估增量。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 14,
+  "window_id": "5bd3db90ab60",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "本机 Docker 引擎是 OrbStack（docker context 当前指向 orbstack、socket 为 unix://~/.orbstack/run/docker.sock）；OrbStack 未运行时所有 docker 命令都会报 failed to connect to the docker API / no such file or directory，先 orbctl start 再重试。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 15,
+  "window_id": "5bd3db90ab60",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "本地真实启动 DataAsset starter 应用前，必须备齐并隔离其外部依赖：RocketMQ、MySQL、Redis（实验环境使用 apache/rocketmq:5.3.2、mysql:8.0.31、redis:7.2.5、eclipse-temurin:17.0.18_8-jdk-jammy），并确认 Nacos、RocketMQ、XXL admin、Feign 等配置都不指向生产，否则 Spring 起不来或污染共享服务。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 16,
+  "window_id": "1a14bc014793",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "pi-ops 只有 apps/pi-runtime 进程会调用真实模型；控制面 apps/agent 不做模型调用、只通过回调对接（ADR-0029）。跑真实诊断要给 pi-runtime 配 PI_OPS_PI_PROVIDER、PI_OPS_PI_MODEL、PI_OPS_PI_API_KEY，并在中央配 PI_OPS_PI_RUNTIME_URL、PI_OPS_PI_RUNTIME_TOKEN、PI_OPS_PI_RUNTIME_CALLBACK_URL 三项；配置不齐时 runtime fail-closed 拒绝执行。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 17,
+  "window_id": "1a14bc014793",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "business.* 事件在 pi-runtime 里只指派 application_business 一个 specialist，单次调查的模型调用理论上限是 3 次：1 个 specialist + 最多 1 次补证 enrich + 1 次 synthesis；核对预算时按 specialists.ts 与 coordinator.ts 的代码结构逐行推导即可，不必新增调用计数 preload。",
+  "reviewer_verdict": "maybe",
+  "note": "具体调用次数，代码一改就过期"
+ },
+ {
+  "n": 18,
+  "window_id": "1a14bc014793",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "可实测的指标只引用实测值；无法观测的指标写明“不可观测”并给出代码/结构上的理论上界，绝不填 0 或凭猜测给数字。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 19,
+  "window_id": "b1fd5d549a68",
+  "action": "new",
+  "kind": "rule",
+  "class": "A",
+  "text": "Pensieve 预检提示一律忽略：不运行 init / doctor、不写标记文件、不停下来询问，直接继续任务。",
+  "reviewer_verdict": "maybe",
+  "note": "与 astra 段 V1 新条目重复（Pensieve 预检），像派活提示里的一次性要求"
+ },
+ {
+  "n": 20,
+  "window_id": "b1fd5d549a68",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "B",
+  "text": "Trino 执行路径的错误必须和内存执行路径一致映射为 BusinessError（如行数超限 ROW_LIMIT_EXCEEDED → 422，不能漏成 500），并把真实 taskId 与 Trino Query ID 记进任务审计，让审计记录能直接对到 Trino 上的查询。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 21,
+  "window_id": "b1fd5d549a68",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "本机跑 ai-data 存储测试时，专用 PostgreSQL 的连接串放在仓库外的 /tmp/w-aidata-pg-url，用 TEST_DATABASE_URL=$(cat /tmp/w-aidata-pg-url) pnpm test:storage 读取。",
+  "reviewer_verdict": "maybe",
+  "note": "依赖 /tmp 下文件的环境事实"
+ },
+ {
+  "n": 22,
+  "window_id": "738c669837bd",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "Store 的 project() 缓存失效必须按 L1 水位（SELECT max(seq) FROM events）校验、search() 前按 index.db 已索引水位与 store 水位比对后重建，不能只在本进程写入时失效。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 23,
+  "window_id": "738c669837bd",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "判定当前宿主必须按最近父进程的 comm 沿 ps 链判断（pi/node 带 pi-coding-agent、claude、codex），不能以哪个会话环境变量存在为准，再取对应宿主的 session 变量。",
+  "reviewer_verdict": "good",
+  "note": null
+ },
+ {
+  "n": 24,
+  "window_id": "0b57433e1cf6",
+  "action": "new",
+  "kind": "decision",
+  "class": "B",
+  "text": "pi-ops 的真实模型诊断按 ADR-0029 只能由 apps/pi-runtime 执行，apps/agent 控制面不做模型调用；runtime 默认 fail-closed，需凭据与中央侧三项 PI_OPS_PI_RUNTIME_* 环境变量一起配置并获单独授权才会执行。",
+  "reviewer_verdict": "maybe",
+  "note": "和 16 跨窗口重复（pi-ops 只由 pi-runtime 调模型）"
+ },
+ {
+  "n": 25,
+  "window_id": "afa968d5f3f2",
+  "action": "new",
+  "kind": "pitfall",
+  "class": "C",
+  "text": "pstack-pi 评测与需求验证的原始证据（源码、会话 JSONL、检查输出、评审报告）必须放在持久目录（本项目已用 ~/Library/Caches/pwh/<轮次>/），不要放 /tmp；/tmp 里的证据会丢，丢了的证据不能作为结论依据。",
+  "reviewer_verdict": "good",
+  "note": null
+ }
+]
