@@ -118,3 +118,15 @@ export function statusReport(store: Store, ctx: StatusContext): string {
     );
   }
 }
+
+/** 失败窗口只看近 7 天：老失败会被 30 天保留期清掉之前一直挂着，状态栏不该常亮警告。 */
+export const STATUS_LINE_FAILED_DAYS = 7;
+
+/** `ab status --line`：给宿主状态栏用的一行 JSON（§11.7）。只读、不连网、不调模型。 */
+export function statusLine(store: Store, now: Date, clock = sourceClock()): { review: number; work_failed: number } {
+  const props = store.project().props.values();
+  const review = reviewList(props, store.usage(), now, clock).length;
+  const since = new Date(now.getTime() - STATUS_LINE_FAILED_DAYS * 86_400_000).toISOString();
+  const row = store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE state='failed' AND updated_at >= ?").get(since) as { n: number };
+  return { review, work_failed: Number(row.n) };
+}

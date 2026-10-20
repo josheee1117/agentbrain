@@ -1161,6 +1161,53 @@ $ ab get 8b6bf402
 
 **怎么验收**：用评测 13 的两组题，按改后的实际输出重跑 `linked.ts` + `score_linked.py`，test 上关联题 ≥14/17、无偏组 ≥10/13，且输出中位长度不超过现在的 1.2 倍；`ab get` 对 34 道关联题里的历史题（9 道）都能看到旧版本 id。
 
+### 11.7 Pi 底部状态栏显示 agentbrain（**已批准方案 B，实现中**，2026-10-20）
+
+> 2026-10-20 10:20（新加坡时间）用户说"开始实现"。裁决：选方案 B；"待确认"只算每日复审清单（`ab review` / `reviewList`，即"到期待复审"的未确认条目），不算候选区；`/ab` 命令一起做。
+
+**问题**：Pi 底部状态栏里 MCP、ponytail 都有一段状态，agentbrain 没有。用户看不出这一轮有没有召回、有没有东西等自己确认、后台抽取有没有坏。
+
+**依赖的 Pi 接口（Mac 本机实读，pi-coding-agent 1.3.0）**
+- `ctx.ui.setStatus(key, text | undefined)`：往状态栏放一段文字，传 undefined 清掉（`dist/core/extensions/types.d.ts:84`）。
+- 内置 footer 把所有 status 按 key 字母序拼成一行（`dist/modes/interactive/components/footer.js:252`）。
+- 用户实际用的是 pi-cc-extensions 1.0.4 的自定义 footer：没在布局配置里的 key 默认放第 2 行、按字母序（`footer-layout.ts:32,124`），所以 key `agentbrain` 会排在 `mcp`、`ponytail` 前面；**而且它把每段 status 的颜色剥掉、统一灰色**（`footer.ts:211 colorUsageChip = theme.fg("dim", stripAnsi(text))`）。所以状态只能靠文字和符号区分，不能靠红/黄。
+- ponytail 的写法可参照：`c.ui.setStatus("ponytail", … theme.fg("muted", …))`（ponytail `pi-extension/index.js:86-98`）。
+- 刷新时机用已有事件：`session_start`、`before_agent_start`（召回已在这里）、`agent_end`（`types.d.ts:1189,1209`）。`pi.registerCommand` 可加 `/ab` 命令。终端里状态栏不能点。
+
+**显示什么（推荐方案 B）**
+
+| 状态 | 文字 | 数据来源 |
+|---|---|---|
+| 本轮召回 N 条 | `🧠 ab 3` | 召回 hook 已返回的结果，扩展数条数，零额外开销 |
+| 没召回到 | `🧠 ab 0` | 同上 |
+| 召回失败 | `🧠 ab ⚠ 召回超时` / `⚠ ab 不可用` | 现在 `ab()` 出错时直接吞掉返回空，需要区分出错和没命中 |
+| 有待确认 | `· 待确认 12` | 新 `ab status --line`（见下），0 时不显示 |
+| 后台抽取有失败 | `· ⚠ 抽取失败 3` | 同上，取 `ab status` 里已有的窗口失败数；0 时不显示 |
+| 话题开关、上次抽取时间等 | 不放状态栏，放 `/ab` | `/ab` 用 `ctx.ui.notify` 打 `ab status` 摘要 |
+
+示意图（改前 / 改后各状态）：`assets/pi-status/all.png`，分图 `before.png`、`after-recalled.png`、`after-nohit.png`、`after-error.png`、`after-work-failed.png`。
+
+**三个方案**
+- A 只显示本轮召回条数：不加任何 ab 命令，零开销；但看不到待确认和后台失败，后者正是最容易被忽略的。
+- **B（推荐）**：A + 待确认数 + 抽取失败数。待办数来自新加的只读 `ab status --line`，只在 `session_start` 和 `agent_end` 后台跑（不阻塞本轮，超时 3 秒就保留旧值），不在 `before_agent_start` 跑。
+- C 再加话题开关、上次抽取时间、向量是否可用：太长，状态栏宽度有限，会把 ponytail 挤出屏幕；这些放 `/ab`。
+
+**约束**
+- 不加配置键（§2.2）：不提供开关，想隐藏用 pi-cc-extensions 自己的 `/ccstyle` 隐藏 key。
+- 不读库：扩展照旧只调 `ab`。`ab status --line` 只读、输出一行 JSON（`{pending, work_failed}`），不触发 work。
+- 不改召回内容和预算；条数只来自已经要注入的那段文字。为了数准，召回 hook 输出里补一个机器可读的条数字段，或扩展按固定条目前缀计数，实现时二选一并写测试。
+- 子代理（inMemory 会话）不设状态。
+
+**实现时的决定（2026-10-20，见评测 15）**
+- 条数：Pi 扩展在 stdin 里传 `want_count: true`，ab 只在这时往 hook JSON 里加 `agentbrain: {recalled}`；没命中时输出 `{agentbrain:{recalled:0}}`。Claude/Codex 不传，输出逐字不变。常驻偏好不算召回条数。
+- 抽取失败只数近 7 天的失败窗口（老失败要 30 天才被清掉，不能一直亮警告）。
+- 扩展自己发起的 custom 轮次不召回，状态栏不变；旧版 ab 不给条数时显示"🧠 ab"；cwd 用 Pi 会话的 `ctx.cwd`。
+
+**怎么验收**
+1. 单测：扩展在命中 / 未命中 / ab 出错 / ab 超时四种情况下 `setStatus` 的文字；`ab status --line` 在空库、有待确认、有失败窗口时的输出。新测试在改前代码上必须失败。
+2. 计时：在库副本上量 `ab status --line` 耗时（目标中位 < 300ms），以及加状态前后 `before_agent_start` 耗时不变。
+3. Mac 实测：用临时 `AB_HOME` 起一个 pi，截图核对与示意图一致，且在 pi-cc-extensions footer 和内置 footer 下都能看到。
+
 ---
 
 ## 12. 本地 Store、同步与迁移

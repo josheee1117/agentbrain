@@ -32,7 +32,7 @@ import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor
 import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "./review.ts";
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
-import { fmtCounts, statusReport } from "./status.ts";
+import { fmtCounts, statusLine, statusReport } from "./status.ts";
 import { disputed, KIND_LABEL, projectIdByName, searchDetail, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
@@ -144,9 +144,11 @@ async function cmdRecall(argv: string[]): Promise<void> {
   let query: string;
   let cwd: string;
   let worker = false;
+  let wantCount = false; // Pi 状态栏要本轮召回条数（§11.7）；Claude/Codex 不传，输出不变
   if (values.hook) {
     if (process.env[REVIEWER_ENV]) return; // 审稿子进程不注入召回
-    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown };
+    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown; want_count?: unknown };
+    wantCount = raw.want_count === true;
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
     cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
@@ -161,6 +163,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
     const used: string[] = [];
     const stale: string[] = [];
     const recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    const recalledCount = used.length; // 常驻偏好在下面才追加进 used，不算"召回"
     // 常驻偏好不看相似度，每轮都给（斜杠命令除外）；本轮召回已给出的不重复
     let prefs = "";
     if (!query.trim().startsWith("/")) {
@@ -171,7 +174,10 @@ async function cmdRecall(argv: string[]): Promise<void> {
       }
     }
     const block = prefs + recalled;
-    if (!block) return;
+    if (!block) {
+      if (wantCount) process.stdout.write(JSON.stringify({ agentbrain: { recalled: 0 } }) + "\n");
+      return;
+    }
     markUsed(store, used);
     if (stale.length) {
       try {
@@ -183,6 +189,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
     if (values.hook) {
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
+        ...(wantCount ? { agentbrain: { recalled: recalledCount } } : {}),
       }) + "\n");
     } else {
       process.stdout.write(block);
@@ -1063,9 +1070,14 @@ async function cmdImport(argv: string[]): Promise<void> {
   }
 }
 
-function cmdStatus(): void {
+function cmdStatus(argv: string[] = []): void {
+  const { values } = parseArgs({ args: argv, options: { line: { type: "boolean", default: false } }, strict: true });
   const store = open();
   try {
+    if (values.line) {
+      process.stdout.write(JSON.stringify(statusLine(store, new Date())) + "\n");
+      return;
+    }
     const { embedder, reason } = createEmbedder();
     console.log(statusReport(store, {
       cwd: process.cwd(),
@@ -1112,6 +1124,7 @@ const USAGE = `用法:
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
+  ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
   ab capture --hook --host <claude|codex|pi>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
                                     话题沉淀开着时：PreCompact 记话题边界并拉起 ab work；距上一轮超过 20 分钟也拉起
@@ -1258,7 +1271,7 @@ async function main(): Promise<void> {
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
     if (cmd === "stage") return cmdStage(rest);
-    if (cmd === "status" || cmd === "doctor") return cmdStatus();
+    if (cmd === "status" || cmd === "doctor") return cmdStatus(rest);
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);
     if (cmd === "import") return await cmdImport(rest);
