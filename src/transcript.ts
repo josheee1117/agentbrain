@@ -6,6 +6,7 @@
 import { closeSync, openSync, readSync } from "node:fs";
 import { CODEX_INJECTED, linesOf } from "./source.ts";
 import type { Host } from "./l2.ts";
+import { opencodeParts, opencodeSession } from "./opencode.ts";
 
 export type TurnRole = "user" | "assistant" | "tool";
 
@@ -264,6 +265,22 @@ function readPi(lines: any[], b: Builder): void {
 
 /** 文件读不了时抛错，由调用方记为 source_unavailable。 */
 export function cleanTranscript(host: Host, file: string): Cleaned {
+  if (host === "opencode") {
+    const { session, parts } = opencodeParts(file);
+    const b = new Builder();
+    for (const p of parts) {
+      if (p.data.type === "text" && typeof p.data.text === "string") b.push(p.id, p.role, [p.data.text], p.ts);
+      if (p.data.type === "tool" && p.data.state && typeof p.data.state === "object") {
+        const state = p.data.state as Record<string, unknown>;
+        const name = typeof p.data.tool === "string" ? p.data.tool : "tool";
+        b.push(`${p.id}:call`, "assistant", [b.call(p.id, name, state.input)], p.ts);
+        const out = typeof state.error === "string" && state.error ? state.error : typeof state.output === "string" ? state.output : "";
+        b.push(p.id, "tool", [b.output(p.id, out, state.status === "error")], p.ts);
+      }
+    }
+    const worker = !!session.parent_id || WORKER_PROMPT_MARK.test(b.turns.find((t) => t.role === "user")?.text ?? "");
+    return { turns: b.turns, stripped: b.stripped, cwd: session.directory, subagent: !!session.parent_id, worker };
+  }
   const lines = linesOf(file) as any[];
   const b = new Builder();
   if (host === "claude") readClaude(lines, b);
@@ -289,6 +306,13 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
  */
 export function isWorkerTranscript(file: string | null | undefined, maxBytes = 16_384): boolean {
   if (!file) return false;
+  if (file.startsWith("opencode://")) {
+    try {
+      return !!opencodeSession(file)?.parent_id || cleanTranscript("opencode", file).worker;
+    } catch {
+      return false;
+    }
+  }
   let head: any[];
   let raw = "";
   try {

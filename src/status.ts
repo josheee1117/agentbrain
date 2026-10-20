@@ -7,6 +7,7 @@ import type { ChatConfig } from "./llm.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 import * as intake from "./intake.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
+import { opencodeDbPath, recentOpencodeSessions } from "./opencode.ts";
 
 export interface StatusContext {
   cwd: string;
@@ -96,6 +97,16 @@ export function statusReport(store: Store, ctx: StatusContext): string {
       ["~/.pi/agent/AGENTS.md", join(userHome, ".pi/agent/AGENTS.md")],
       ["pm 仓库根 AGENTS.md", join(registryDir(), "..", "AGENTS.md")],
     ].map(([label, file]) => `${label}: ${containsBrief(file) ? "含 ab brief" : "没有 ab brief"}`);
+    const plugin = join(userHome, ".config/opencode/plugins/agentbrain-v2.js");
+    let opencode = "未安装插件";
+    if (existsSync(plugin)) {
+      try {
+        recentOpencodeSessions(ctx.now.getTime() - 7 * 86_400_000);
+        opencode = `正常（插件在位，SQLite 只读可访问，${opencodeDbPath()}）`;
+      } catch {
+        opencode = "插件在位，但 SQLite 不可读取";
+      }
+    }
     const { embedder, embedReason: reason } = ctx;
     const vectors = store.vectorStatus();
     const vectorLine = embedder
@@ -110,6 +121,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         vectorLine,
         `doctor: orphan 事件 ${proj.orphans}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
+        `opencode: ${opencode}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
         ...sedimentLines(store, ctx.chatConfig, ctx.now),
         ...(orphans.length ? [orphans.join("\n")] : []),

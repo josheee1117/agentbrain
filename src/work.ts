@@ -15,6 +15,7 @@ import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts
 import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
+import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
 import { buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
@@ -108,10 +109,20 @@ const TRANSCRIPT_ROOTS: Record<Host, string[]> = {
   claude: [".claude/projects"],
   codex: [".codex/sessions", ".codex/archived_sessions"],
   pi: [".pi/agent/sessions"],
+  opencode: [],
 };
 
 /** transcript 必须在该宿主自己的会话目录下、以 .jsonl 结尾：防止借 capture 把任意文件送出本机。 */
-export function allowedTranscript(host: Host, path: string): string | null {
+export function allowedTranscript(host: Host, path: string, sessionId?: string): string | null {
+  if (host === "opencode") {
+    const id = opencodeId(path);
+    if (!id || (sessionId !== undefined && id !== sessionId)) return null;
+    try {
+      return opencodeSession(path) ? path : null;
+    } catch {
+      return null;
+    }
+  }
   let real: string;
   try {
     real = realpathSync(path);
@@ -161,8 +172,15 @@ function headLines(file: string): any[] {
 }
 
 /** 会话开始时间：头部第一条带 timestamp 的记录；没有就用文件创建时间。 */
-export function sessionStart(file: string, head: any[] = headLines(file)): number | null {
-  for (const e of head) {
+export function sessionStart(file: string, head?: any[]): number | null {
+  if (file.startsWith("opencode://")) {
+    try {
+      return opencodeSession(file)?.time_created ?? null;
+    } catch {
+      return null;
+    }
+  }
+  for (const e of head ?? headLines(file)) {
     const t = typeof e?.timestamp === "string" ? e.timestamp : typeof e?.payload?.timestamp === "string" ? e.payload.timestamp : null;
     const ms = t ? Date.parse(t) : NaN;
     if (Number.isFinite(ms)) return ms;
@@ -233,6 +251,18 @@ export function scan(deps: WorkDeps): number {
       intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
       if (project) added++;
     }
+  }
+  try {
+    for (const s of recentOpencodeSessions(since)) {
+      if (intake.knownSession(db, "opencode", s.id)) continue;
+      const project = deps.resolveProject(s.directory);
+      if (!project) continue;
+      const via = hookMs !== null && s.time_created >= hookMs ? "scan" : "backfill";
+      intake.upsertSession(db, { host: "opencode", session_id: s.id, transcript: opencodeRef(s.id), cwd: s.directory, ended: false, ephemeral: false, via }, () => project.name, deps.now());
+      added++;
+    }
+  } catch {
+    // opencode 未安装或库不可读时不影响其他宿主的扫描。
   }
   return added;
 }
@@ -522,10 +552,19 @@ export function admit(
 
 // ---------- 主流程 ----------
 
+function transcriptMtime(s: intake.SessionRow): number {
+  if (s.host === "opencode") {
+    const session = s.transcript ? opencodeSession(s.transcript) : null;
+    if (!session) throw new Error("opencode session does not exist");
+    return session.time_updated;
+  }
+  return statSync(s.transcript!).mtimeMs;
+}
+
 function settled(s: intake.SessionRow, now: Date): boolean {
   if (s.ended_at && s.ended_at >= s.last_touch) return true; // 结束后又有新 prompt（resume）就不算结束
   try {
-    return now.getTime() - statSync(s.transcript!).mtimeMs >= SETTLE_IDLE_MS;
+    return now.getTime() - transcriptMtime(s) >= SETTLE_IDLE_MS;
   } catch {
     return false;
   }
@@ -606,7 +645,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   if (!s.ephemeral && s.project && !s.transcript) {
     // hook 来时 transcript 还没落盘（Codex 常见）：按 session id 再找一次
     const found = locateTranscript(s.host, s.session_id);
-    const ok = found ? allowedTranscript(s.host, found) : null;
+    const ok = found ? allowedTranscript(s.host, found, s.session_id) : null;
     if (ok) {
       intake.setTranscript(db, s, ok);
       s = { ...s, transcript: ok };
@@ -630,6 +669,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   let stripped = 0;
   let worker = false;
   try {
+    if (s.host === "opencode" && !allowedTranscript(s.host, s.transcript, s.session_id)) throw new Error("invalid opencode source");
     const cleaned = cleanTranscript(s.host, s.transcript);
     if (cleaned.subagent) {
       intake.markEphemeral(db, s);
@@ -656,7 +696,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
-  if (deps.topic) return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
+  if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
   if (chunks === "anchor_missing") {
     intake.setSessionError(db, s, "source_unavailable");
@@ -753,7 +793,7 @@ async function processTopicSession(
   const ended = !!(s.ended_at && s.ended_at >= s.last_touch); // 结束后又有新 prompt（resume）就不算结束
   let idleTail = false;
   try {
-    idleTail = now.getTime() - statSync(s.transcript!).mtimeMs >= TOPIC_IDLE_MS;
+    idleTail = now.getTime() - transcriptMtime(s) >= TOPIC_IDLE_MS;
   } catch {
     idleTail = false;
   }
