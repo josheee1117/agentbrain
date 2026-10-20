@@ -1,6 +1,7 @@
 /**
  * Pi 接线：每轮召回（before_agent_start）+ 切片 3 会话登记（before_agent_start / session_shutdown）
- * + 话题结束触发（§8.6）：session_before_compact 时登记一个话题边界（ab 的开关关着时 ab 什么都不做）。
+ * + 话题结束触发（§8.6）：session_before_compact 时登记一个话题边界（ab 的开关关着时 ab 什么都不做）
+ * + 底部状态栏与 /ab 命令（§11.7）。
  * 只调用 ab，不读记忆库。文件名沿用切片 2，已有的符号链接不用改。
  */
 import { execFile } from "node:child_process";
@@ -9,57 +10,159 @@ import type { BeforeAgentStartEventResult, ExtensionAPI } from "@earendil-works/
 
 const TIMEOUT_MS = 5000;
 const SHUTDOWN_TIMEOUT_MS = 3000;
+/** 状态栏待办数的刷新超时；超时保留上一次的值（§11.7）。 */
+export const STATUS_TIMEOUT_MS = 3000;
+const COMMAND_TIMEOUT_MS = 15000;
+export const STATUS_KEY = "agentbrain";
 // 宿主 PATH 不一定有 ab 和 Node ≥ 24（integrations/README.md）。本机装法存在时用绝对路径，否则退回 PATH。
 const NODE = "/opt/homebrew/bin/node";
 const AB = "/Users/hejiayuan/.local/bin/ab";
 const CMD: [string, string[]] = existsSync(NODE) && existsSync(AB) ? [NODE, [AB]] : ["ab", []];
 
-/** Pi 的会话管理器。getSessionFile 为空即 inMemory 会话（子代理），按 ephemeral 登记（§9.5）。 */
-type SessionCtx = { sessionManager?: { getSessionFile?(): string | undefined; getSessionId?(): string | undefined } };
+/** ab 调用结果：出错和"没输出"分开（以前出错也当空字符串，状态栏分不出没命中还是坏了）。 */
+export type AbResult = { ok: true; out: string } | { ok: false; reason: "timeout" | "missing" | "exit" };
+export type Runner = (args: string[], input: object, timeout: number) => Promise<AbResult>;
 
-function ab(args: string[], input: object, timeout: number): Promise<string> {
-  return new Promise((resolve) => {
+export const execRunner: Runner = (args, input, timeout) =>
+  new Promise((resolve) => {
     const child = execFile(CMD[0], [...CMD[1], ...args], { timeout, maxBuffer: 1024 * 1024 }, (err, stdout) => {
-      resolve(err ? "" : stdout);
+      if (!err) return resolve({ ok: true, out: stdout });
+      const e = err as NodeJS.ErrnoException & { killed?: boolean };
+      resolve({ ok: false, reason: e.code === "ENOENT" ? "missing" : e.killed ? "timeout" : "exit" });
     });
+    child.stdin?.on("error", () => {}); // 子进程没起来时写 stdin 会 EPIPE，结果以回调为准
     child.stdin?.end(JSON.stringify(input));
   });
+
+/** Pi 的会话管理器。getSessionFile 为空即 inMemory 会话（子代理），按 ephemeral 登记（§9.5）。 */
+type SessionCtx = { sessionManager?: { getSessionFile?(): string | undefined; getSessionId?(): string | undefined } };
+type UiCtx = { ui?: { setStatus?(key: string, text: string | undefined): void; notify?(m: string, t?: "info" | "warning" | "error"): void } };
+
+export type RecallState = { n: number } | { error: "timeout" | "missing" | "exit" } | null;
+export type Todo = { review: number; work_failed: number } | null;
+
+/** 状态栏文字。值为 0 的段不显示；pi-cc-extensions 会剥掉颜色，所以状态只靠文字和 ⚠ 区分。 */
+export function renderStatus(recall: RecallState, todo: Todo): string {
+  const parts: string[] = [];
+  if (recall && "error" in recall) {
+    parts.push(recall.error === "missing" ? "⚠ ab 不可用" : recall.error === "timeout" ? "🧠 ab ⚠ 召回超时" : "🧠 ab ⚠ 召回出错");
+  } else {
+    parts.push(recall ? `🧠 ab ${recall.n}` : "🧠 ab");
+  }
+  if (todo?.review) parts.push(`待确认 ${todo.review}`);
+  if (todo?.work_failed) parts.push(`⚠ 抽取失败 ${todo.work_failed}`);
+  return parts.join(" · ");
 }
 
-function capture(event: "UserPromptSubmit" | "SessionEnd" | "PreCompact", ctx: unknown, timeout: number): Promise<string> {
-  const sm = (ctx as SessionCtx | undefined)?.sessionManager;
-  const file = sm?.getSessionFile?.();
-  return ab(["capture", "--hook", "--host", "pi"], {
-    session_id: sm?.getSessionId?.() ?? null,
-    transcript_path: file ?? null,
-    ephemeral: !file,
-    cwd: process.cwd(),
-    hook_event_name: event,
-  }, timeout);
+function parseTodo(r: AbResult): Todo {
+  if (!r.ok) return null;
+  try {
+    const j = JSON.parse(r.out) as { review?: unknown; work_failed?: unknown };
+    if (typeof j.review !== "number" || typeof j.work_failed !== "number") return null;
+    return { review: j.review, work_failed: j.work_failed };
+  } catch {
+    return null;
+  }
 }
 
-export default function (pi: ExtensionAPI) {
-  pi.on("before_agent_start", async (e, ctx): Promise<BeforeAgentStartEventResult | undefined> => {
-    void capture("UserPromptSubmit", ctx, TIMEOUT_MS);
-    try {
+function isSubagent(ctx: unknown): boolean {
+  return !(ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.();
+}
+
+export function createExtension(run: Runner) {
+  return function (pi: ExtensionAPI) {
+    let recallState: RecallState = null;
+    let todo: Todo = null;
+
+    const paint = (ctx: unknown) => {
+      if (isSubagent(ctx)) return; // 子代理不设状态
+      try {
+        (ctx as UiCtx | undefined)?.ui?.setStatus?.(STATUS_KEY, renderStatus(recallState, todo));
+      } catch {
+        // 状态栏只是展示，失败不影响召回
+      }
+    };
+    /** 后台刷新待办数；失败或超时保留旧值。 */
+    const refreshTodo = (ctx: unknown): Promise<void> => {
+      if (isSubagent(ctx)) return Promise.resolve();
+      return run(["status", "--line"], {}, STATUS_TIMEOUT_MS).then((r) => {
+        const next = parseTodo(r);
+        if (next) todo = next;
+        paint(ctx);
+      });
+    };
+
+    const capture = (event: "UserPromptSubmit" | "SessionEnd" | "PreCompact", ctx: unknown, timeout: number) => {
+      const sm = (ctx as SessionCtx | undefined)?.sessionManager;
+      const file = sm?.getSessionFile?.();
+      return run(["capture", "--hook", "--host", "pi"], {
+        session_id: sm?.getSessionId?.() ?? null,
+        transcript_path: file ?? null,
+        ephemeral: !file,
+        cwd: process.cwd(),
+        hook_event_name: event,
+      }, timeout);
+    };
+
+    pi.on("session_start", async (_e, ctx) => {
+      paint(ctx);
+      void refreshTodo(ctx);
+    });
+    pi.on("before_agent_start", async (e, ctx): Promise<BeforeAgentStartEventResult | undefined> => {
+      void capture("UserPromptSubmit", ctx, TIMEOUT_MS);
       // 带上 transcript_path：ab 据此认出被委派的 worker 会话，按子代理规矩召回（§21 2026-10-14）
       const file = (ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.() ?? null;
-      const raw = await ab(["recall", "--hook"], { prompt: e.prompt, cwd: process.cwd(), transcript_path: file }, TIMEOUT_MS);
-      if (!raw.trim()) return undefined;
-      const parsed = JSON.parse(raw) as { hookSpecificOutput?: { additionalContext?: unknown } };
-      const content = parsed.hookSpecificOutput?.additionalContext;
-      if (typeof content !== "string" || !content) return undefined;
-      return { message: { customType: "agentbrain-recall", content, display: false } };
-    } catch {
+      // want_count：只有 Pi 要条数，ab 只在这时往 hook JSON 里多放一个 agentbrain 字段
+      const r = await run(["recall", "--hook"], { prompt: e.prompt, cwd: process.cwd(), transcript_path: file, want_count: true }, TIMEOUT_MS);
+      if (!r.ok) {
+        recallState = { error: r.reason };
+        paint(ctx);
+        return undefined;
+      }
+      try {
+        if (!r.out.trim()) {
+          recallState = { n: 0 }; // 审稿子进程等不输出任何东西
+          paint(ctx);
+          return undefined;
+        }
+        const parsed = JSON.parse(r.out) as { hookSpecificOutput?: { additionalContext?: unknown }; agentbrain?: { recalled?: unknown } };
+        const n = parsed.agentbrain?.recalled;
+        recallState = { n: typeof n === "number" ? n : 0 };
+        paint(ctx);
+        const content = parsed.hookSpecificOutput?.additionalContext;
+        if (typeof content !== "string" || !content) return undefined;
+        return { message: { customType: "agentbrain-recall", content, display: false } };
+      } catch {
+        recallState = { error: "exit" };
+        paint(ctx);
+        return undefined;
+      }
+    });
+    pi.on("agent_end", async (_e, ctx) => {
+      void refreshTodo(ctx);
+    });
+    pi.on("session_shutdown", async (_e, ctx) => {
+      await capture("SessionEnd", ctx, SHUTDOWN_TIMEOUT_MS);
+    });
+    // 只登记、拉起分离的 ab work，不等它，也不返回任何东西（不取消、不改压缩）
+    pi.on("session_before_compact", async (_e, ctx) => {
+      void capture("PreCompact", ctx, TIMEOUT_MS);
       return undefined;
-    }
-  });
-  pi.on("session_shutdown", async (_e, ctx) => {
-    await capture("SessionEnd", ctx, SHUTDOWN_TIMEOUT_MS);
-  });
-  // 只登记、拉起分离的 ab work，不等它，也不返回任何东西（不取消、不改压缩）
-  pi.on("session_before_compact", async (_e, ctx) => {
-    void capture("PreCompact", ctx, TIMEOUT_MS);
-    return undefined;
-  });
+    });
+    pi.registerCommand("ab", {
+      description: "agentbrain 状态：召回、待确认、后台抽取（ab status）",
+      handler: async (_args, ctx) => {
+        const ui = (ctx as UiCtx | undefined)?.ui;
+        const r = await run(["status"], {}, COMMAND_TIMEOUT_MS);
+        if (!r.ok) {
+          ui?.notify?.(r.reason === "missing" ? "ab 不可用：找不到 ab 命令" : r.reason === "timeout" ? "ab status 超时" : "ab status 出错", "error");
+          return;
+        }
+        ui?.notify?.(`${renderStatus(recallState, todo)}\n\n${r.out.trimEnd()}`, "info");
+        void refreshTodo(ctx);
+      },
+    });
+  };
 }
+
+export default createExtension(execRunner);

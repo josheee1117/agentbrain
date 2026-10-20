@@ -812,6 +812,105 @@ test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说�
   assert.match(gone.out, /原文件不可用：.*文件不存在/);
 });
 
+// ---------- §11.7 Pi 状态栏：ab status --line / recall 条数 / 扩展接线（2026-10-20） ----------
+
+test("ab status --line：只数到期待复审（不数候选区和已确认）和近 7 天失败窗口", async () => {
+  const own = join(dir, "status-line-store");
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: null, summary: "讨论" };
+  const pid = s.ensureProject("alpha");
+  const old = s.remember(pid, "s", false, { kind: "pitfall", text: "早就过时的坑", confirmed: false, source: src });
+  const keep = s.remember(pid, "s", false, { kind: "pitfall", text: "用户确认过的老坑", confirmed: true, source: src });
+  s.remember(pid, "s", false, { kind: "pitfall", text: "刚记的坑", confirmed: false, source: src });
+  const long = new Date(Date.now() - 400 * 86_400_000).toISOString();
+  s.workDb.prepare("UPDATE events SET ts=? WHERE id IN (?,?)").run(long, old, keep);
+  s.close();
+  const empty = ab(["status", "--line"], alpha, own);
+  assert.equal(empty.code, 0, empty.err);
+  assert.deepEqual(JSON.parse(empty.out), { review: 1, work_failed: 0 });
+  // 候选区条目不算待确认
+  assert.equal(ab(["remember", "--kind", "pitfall", "--text", "候选区里的坑", "--summary", "讨论"], alpha, own).code, 0);
+  assert.deepEqual(JSON.parse(ab(["status", "--line"], alpha, own).out), { review: 1, work_failed: 0 });
+  const s2 = new Store(join(own, "store.db"), join(own, "index.db"));
+  const ins = s2.workDb.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+  );
+  const recent = new Date(Date.now() - 86_400_000).toISOString();
+  const stale = new Date(Date.now() - 10 * 86_400_000).toISOString();
+  ins.run("w1", "pi", "s", null, "a1", "failed", 4, null, "llm_error", null, recent);
+  ins.run("w2", "pi", "s", null, "a2", "failed", 4, null, "llm_error", null, stale);
+  ins.run("w3", "pi", "s", null, "a3", "done", 1, null, null, null, recent);
+  s2.close();
+  rmSync(keyRead, { force: true });
+  const line = ab(["status", "--line"], alpha, own);
+  assert.equal(line.code, 0, line.err);
+  assert.deepEqual(JSON.parse(line.out), { review: 1, work_failed: 1 });
+  assert.equal(existsSync(keyRead), false, "status --line 不读钥匙串");
+});
+
+test("recall --hook 带 want_count 时多给本轮召回条数（常驻偏好不算），不带时输出不变", () => {
+  const own = join(dir, "recall-count-home");
+  const remember = (args: string[]) => ab(["remember", ...args], alpha, own);
+  assert.equal(remember(["--confirmed", "--kind", "pitfall", "--text", "别在 alpha 计数里用全局锁", "--summary", "计数"]).code, 0);
+  assert.equal(remember(["--confirmed", "--kind", "rule", "--text", "alpha 计数规则：全局锁要先拿", "--summary", "计数"]).code, 0);
+  const pref = remember(["--confirmed", "--global", "--kind", "rule", "--text", "说人话", "--summary", "偏好"]);
+  const prefId = pref.out.match(/\[([0-9a-f]{8})\]/)![1];
+  assert.equal(ab(["guidance", prefId], alpha, own).code, 0);
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, want_count: true }));
+  assert.equal(hit.code, 0, hit.err);
+  const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string }; agentbrain: { recalled: number } };
+  const rows = j.hookSpecificOutput.additionalContext.split("<agentbrain-recall>")[1].split("\n").filter((l) => /^- \[/.test(l));
+  assert.ok(rows.length >= 1);
+  assert.match(j.hookSpecificOutput.additionalContext, /说人话/);
+  assert.equal(j.agentbrain.recalled, rows.length);
+  const plain = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha }));
+  assert.equal("agentbrain" in JSON.parse(plain.out), false, "Claude/Codex 的 hook JSON 不多字段");
+  const miss = recall(["recall", "--hook"], nowhere, join(dir, "recall-count-empty"), JSON.stringify({ prompt: "毫不相干的话", cwd: nowhere, want_count: true }));
+  assert.equal(miss.code, 0, miss.err);
+  assert.deepEqual(JSON.parse(miss.out), { agentbrain: { recalled: 0 } });
+  const missPlain = recall(["recall", "--hook"], nowhere, join(dir, "recall-count-empty"), JSON.stringify({ prompt: "毫不相干的话", cwd: nowhere }));
+  assert.equal(missPlain.out, "");
+});
+
+test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab 打 ab status", async () => {
+  const own = join(dir, "pi-ext-home");
+  assert.equal(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 扩展里用全局锁", "--summary", "扩展"], alpha, own).code, 0);
+  const extPath = join(import.meta.dirname, "../integrations/pi/agentbrain-recall.ts");
+  const mod = (await import(extPath)) as { createExtension(run: unknown): (pi: unknown) => void };
+  const run = (args: string[], input: object) =>
+    Promise.resolve(spawnSync("node", ["--import", networkGuard, CLI, ...args], {
+      cwd: alpha,
+      encoding: "utf8",
+      input: JSON.stringify(input),
+      env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION, AB_NO_WORK: "1" },
+    })).then((r) => (r.status === 0 ? { ok: true, out: r.stdout } : { ok: false, reason: "exit" }));
+  const handlers = new Map<string, (e: unknown, ctx: unknown) => Promise<unknown>>();
+  const commands = new Map<string, { handler(a: string, ctx: unknown): Promise<void> }>();
+  mod.createExtension(run)({ on: (n: string, h: never) => handlers.set(n, h), registerCommand: (n: string, c: never) => commands.set(n, c) });
+  const statuses: string[] = [];
+  const notes: string[] = [];
+  const ctx = {
+    sessionManager: { getSessionFile: () => join(fakeHome, "s.jsonl"), getSessionId: () => SESSION },
+    ui: { setStatus: (k: string, t: string) => { assert.equal(k, "agentbrain"); statuses.push(t); }, notify: (m: string) => notes.push(m) },
+  };
+  const cwd0 = process.cwd();
+  process.chdir(alpha);
+  try {
+    await handlers.get("session_start")!({}, ctx);
+    await new Promise((r) => setTimeout(r, 1500));
+    assert.equal(statuses.at(-1), "🧠 ab");
+    const res = (await handlers.get("before_agent_start")!({ prompt: "扩展 全局锁" }, ctx)) as { message: { content: string } };
+    assert.match(res.message.content, /别在 alpha 扩展里用全局锁/);
+    assert.equal(statuses.at(-1), "🧠 ab 1");
+    await commands.get("ab")!.handler("", ctx);
+    assert.match(notes.at(-1)!, /^🧠 ab 1\n\n[\s\S]*到期待复审: 0/);
+  } finally {
+    process.chdir(cwd0);
+  }
+});
+
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
