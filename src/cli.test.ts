@@ -876,12 +876,21 @@ test("recall --hook 带 want_count 时多给本轮召回条数（常驻偏好不
 test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab 打 ab status", async () => {
   const own = join(dir, "pi-ext-home");
   assert.equal(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 扩展里用全局锁", "--summary", "扩展"], alpha, own).code, 0);
+  {
+    const { Store } = await import("./store.ts");
+    const st = new Store(join(own, "store.db"), join(own, "index.db"));
+    const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: null, summary: "讨论" };
+    const old = st.remember(st.ensureProject("alpha"), "s", false, { kind: "pitfall", text: "早就过时的扩展坑", confirmed: false, source: src });
+    st.workDb.prepare("UPDATE events SET ts=? WHERE id=?").run(new Date(Date.now() - 400 * 86_400_000).toISOString(), old);
+    st.close();
+  }
   const extPath = join(import.meta.dirname, "../integrations/pi/agentbrain-recall.ts");
   const mod = (await import(extPath)) as { createExtension(run: unknown): (pi: unknown) => void };
-  const run = (args: string[], input: object) =>
+  const run = (args: string[], input: object, timeout: number) =>
     Promise.resolve(spawnSync("node", ["--import", networkGuard, CLI, ...args], {
       cwd: alpha,
       encoding: "utf8",
+      timeout,
       input: JSON.stringify(input),
       env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION, AB_NO_WORK: "1" },
     })).then((r) => (r.status === 0 ? { ok: true, out: r.stdout } : { ok: false, reason: "exit" }));
@@ -891,6 +900,7 @@ test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab �
   const statuses: string[] = [];
   const notes: string[] = [];
   const ctx = {
+    cwd: alpha,
     sessionManager: { getSessionFile: () => join(fakeHome, "s.jsonl"), getSessionId: () => SESSION },
     ui: { setStatus: (k: string, t: string) => { assert.equal(k, "agentbrain"); statuses.push(t); }, notify: (m: string) => notes.push(m) },
   };
@@ -899,12 +909,12 @@ test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab �
   try {
     await handlers.get("session_start")!({}, ctx);
     await new Promise((r) => setTimeout(r, 1500));
-    assert.equal(statuses.at(-1), "🧠 ab");
+    assert.equal(statuses.at(-1), "🧠 ab · 待确认 1"); // 真 ab status --line 的结果；失败数 0 不显示
     const res = (await handlers.get("before_agent_start")!({ prompt: "扩展 全局锁" }, ctx)) as { message: { content: string } };
     assert.match(res.message.content, /别在 alpha 扩展里用全局锁/);
-    assert.equal(statuses.at(-1), "🧠 ab 1");
+    assert.equal(statuses.at(-1), "🧠 ab 1 · 待确认 1");
     await commands.get("ab")!.handler("", ctx);
-    assert.match(notes.at(-1)!, /^🧠 ab 1\n\n[\s\S]*到期待复审: 0/);
+    assert.match(notes.at(-1)!, /^🧠 ab 1 · 待确认 1\n\n[\s\S]*到期待复审: 1/);
   } finally {
     process.chdir(cwd0);
   }

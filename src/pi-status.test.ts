@@ -5,21 +5,22 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
 
 type R = { ok: true; out: string } | { ok: false; reason: "timeout" | "missing" | "exit" };
 const extPath = join(import.meta.dirname, "../integrations/pi/agentbrain-recall.ts");
 const mod = (await import(extPath)) as {
-  createExtension(run: (a: string[], i: object, t: number) => Promise<R>): (pi: unknown) => void;
+  createExtension(run: (a: string[], i: object, t: number, cwd?: string) => Promise<R>): (pi: unknown) => void;
   renderStatus(r: unknown, t: unknown): string;
-  execRunner(a: string[], i: object, t: number): Promise<R>;
+  makeExecRunner(cmd: [string, string[]]): (a: string[], i: object, t: number, cwd?: string) => Promise<R>;
 };
 
-function harness(script: (args: string[], input: object, timeout: number) => R | Promise<R>, sessionFile: string | undefined = "/tmp/s.jsonl") {
+function harness(script: (args: string[], input: object, timeout: number) => R | Promise<R>, sessionFile = "/tmp/s.jsonl") {
   const handlers = new Map<string, (e: unknown, ctx: unknown) => Promise<unknown>>();
   const commands = new Map<string, { handler(a: string, ctx: unknown): Promise<void> }>();
-  const calls: { args: string[]; input: object; timeout: number }[] = [];
-  mod.createExtension(async (args, input, timeout) => {
-    calls.push({ args, input, timeout });
+  const calls: { args: string[]; input: object; timeout: number; cwd?: string }[] = [];
+  mod.createExtension(async (args, input, timeout, cwd?: string) => {
+    calls.push({ args, input, timeout, cwd });
     return script(args, input, timeout);
   })({ on: (n: string, h: never) => handlers.set(n, h), registerCommand: (n: string, c: never) => commands.set(n, c) });
   const statuses: string[] = [];
@@ -125,19 +126,45 @@ test("/ab：成功时弹出当前状态 + ab status 全文，失败时报错误�
   assert.deepEqual(h.notes.at(-1), ["ab 不可用：找不到 ab 命令", "error"]);
 });
 
-test("execRunner：区分 ab 不存在、超时、非零退出", async () => {
-  // 直接用 node 子进程验证错误分类的判定依据（不依赖本机 ab 路径）
-  const { execFile } = await import("node:child_process");
-  const classify = (cmd: string, args: string[], timeout: number) =>
-    new Promise<string>((res) =>
-      execFile(cmd, args, { timeout }, (err) => {
-        if (!err) return res("ok");
-        const e = err as NodeJS.ErrnoException & { killed?: boolean };
-        res(e.code === "ENOENT" ? "missing" : e.killed ? "timeout" : "exit");
-      }),
-    );
-  assert.equal(await classify("/nonexistent/ab-xyz", [], 1000), "missing");
-  assert.equal(await classify(process.execPath, ["-e", "setTimeout(()=>{},5000)"], 200), "timeout");
-  assert.equal(await classify(process.execPath, ["-e", "process.exit(3)"], 1000), "exit");
-  assert.equal(typeof mod.execRunner, "function");
+test("execRunner：真起子进程，区分 ab 不存在、超时、非零退出，并在指定 cwd 运行", async () => {
+  const missing = mod.makeExecRunner(["/nonexistent/ab-xyz", []]);
+  assert.deepEqual(await missing(["status"], {}, 1000), { ok: false, reason: "missing" });
+  const slow = mod.makeExecRunner([process.execPath, ["-e", "setTimeout(()=>{},5000)"]]);
+  assert.deepEqual(await slow([], {}, 200), { ok: false, reason: "timeout" });
+  const fail = mod.makeExecRunner([process.execPath, ["-e", "process.exit(3)"]]);
+  assert.deepEqual(await fail([], {}, 2000), { ok: false, reason: "exit" });
+  const big = mod.makeExecRunner([process.execPath, ["-e", "process.stdout.write('x'.repeat(2*1024*1024))"]]);
+  assert.deepEqual(await big([], {}, 5000), { ok: false, reason: "exit" }, "输出超限不算超时");
+  const echo = mod.makeExecRunner([process.execPath, ["-e", "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>process.stdout.write(process.cwd()+'|'+s))"]]);
+  assert.deepEqual(await echo([], { a: 1 }, 2000, "/tmp"), { ok: true, out: `${realpathSync("/tmp")}|{"a":1}` });
+});
+
+test("runner 抛错或 reject 时按出错处理，不让这一轮失败", async () => {
+  const h = harness(() => {
+    throw new Error("boom");
+  });
+  assert.equal(await h.handlers.get("before_agent_start")!({ prompt: "q" }, h.ctx), undefined);
+  assert.equal(h.statuses.at(-1), "🧠 ab ⚠ 召回出错");
+  await h.handlers.get("agent_end")!({}, h.ctx);
+  await h.tick();
+});
+
+test("扩展发起的 custom 轮次不召回、状态保持；旧版 ab 不给条数时不冒充 0；cwd 用会话的 ctx.cwd", async () => {
+  let out = hookOut(4);
+  const h = harness((args) => (args[0] === "recall" ? { ok: true, out } : { ok: true, out: "" }));
+  (h.ctx as Record<string, unknown>).cwd = "/session/dir";
+  await h.handlers.get("before_agent_start")!({ messageType: "user", prompt: "q" }, h.ctx);
+  assert.equal(h.statuses.at(-1), "🧠 ab 4");
+  const recallCall = h.calls.find((c) => c.args[0] === "recall")!;
+  assert.equal((recallCall.input as { cwd: string }).cwd, "/session/dir");
+  assert.equal(recallCall.cwd, "/session/dir");
+  const n = h.calls.length;
+  assert.equal(await h.handlers.get("before_agent_start")!({ messageType: "custom", message: {} }, h.ctx), undefined);
+  assert.equal(h.calls.filter((c) => c.args[0] === "recall").length, 1, "custom 轮次不召回");
+  assert.ok(h.calls.length > n, "但照常登记会话");
+  assert.equal(h.statuses.at(-1), "🧠 ab 4");
+  out = JSON.stringify({ hookSpecificOutput: { additionalContext: "<agentbrain-recall>\n- [abcd1234] 坑: x\n</agentbrain-recall>" } });
+  const res = (await h.handlers.get("before_agent_start")!({ prompt: "q" }, h.ctx)) as { message: { content: string } };
+  assert.match(res.message.content, /abcd1234/);
+  assert.equal(h.statuses.at(-1), "🧠 ab");
 });
