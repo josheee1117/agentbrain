@@ -20,13 +20,15 @@ import { chatClient, loadChatConfig } from "./llm.ts";
 import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
+import { applyNotes } from "./notes.ts";
+import { citeEnabled, setCite, logInjections, logRecallRun, modelOf, prune, RETENTION_DAYS, scanSession, sessionsToScan, withCiteInstruction, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
-import { opencodeSession } from "./opencode.ts";
+import { opencodeId, opencodeSession } from "./opencode.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
 import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor, topicEnabled, TOPIC_IDLE_MS, topicReportDir, undoTopicRun } from "./topic.ts";
@@ -146,10 +148,13 @@ async function cmdRecall(argv: string[]): Promise<void> {
   let cwd: string;
   let worker = false;
   let wantCount = false; // Pi 状态栏要本轮召回条数（§11.7）；Claude/Codex 不传，输出不变
+  const t0 = performance.now();
+  let hookRaw: Record<string, unknown> | null = null;
   if (values.hook) {
     if (process.env[REVIEWER_ENV]) return; // 审稿子进程不注入召回
     const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown; want_count?: unknown; worker?: unknown };
     wantCount = raw.want_count === true;
+    hookRaw = raw as Record<string, unknown>;
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
     cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
@@ -160,11 +165,26 @@ async function cmdRecall(argv: string[]): Promise<void> {
     if (!query.trim()) return;
   }
   const store = open();
+  const ctx = telemetryCtx(store, hookRaw, cwd);
+  let cite = false;
+  try {
+    cite = citeEnabled(store.workDb);
+  } catch {
+    cite = false;
+  }
   try {
     const used: string[] = [];
     const stale: string[] = [];
-    const recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    let recalled: string;
+    try {
+      recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+    } catch (e) {
+      telemetry(() => logRecallRun(store.workDb, ctx, "error", 0, performance.now() - t0, cite, new Date()));
+      throw e;
+    }
     const recalledCount = used.length; // 常驻偏好在下面才追加进 used，不算"召回"
+    const recallIds = used.slice();
+    if (cite && recalled) recalled = withCiteInstruction(recalled);
     // 常驻偏好不看相似度，每轮都给（斜杠命令除外）；本轮召回已给出的不重复
     let prefs = "";
     if (!query.trim().startsWith("/")) {
@@ -175,6 +195,12 @@ async function cmdRecall(argv: string[]): Promise<void> {
       }
     }
     const block = prefs + recalled;
+    const now = new Date();
+    telemetry(() => {
+      logRecallRun(store.workDb, ctx, recallIds.length ? "hit" : "nohit", recallIds.length, performance.now() - t0, cite, now);
+      logInjections(store.workDb, ctx, "recall", recallIds, now);
+      logInjections(store.workDb, ctx, "pref", used.slice(recallIds.length), now);
+    });
     if (!block) {
       if (wantCount) process.stdout.write(JSON.stringify({ agentbrain: { recalled: 0 } }) + "\n");
       return;
@@ -198,6 +224,84 @@ async function cmdRecall(argv: string[]): Promise<void> {
   } finally {
     store.close();
   }
+}
+
+/** ab view 前：清理过期统计，扫描有召回注入的会话里的 ab-used（§11.8.9）。单个会话读不到就跳过。 */
+function refreshCitations(store: Store, now: Date): { sessions: number; cited: number; dropped: number; unreadable: number; pruned: number } {
+  const r = { sessions: 0, cited: 0, dropped: 0, unreadable: 0, pruned: 0 };
+  try {
+    r.pruned = prune(store.workDb, now);
+  } catch {
+    // 只读库时跳过
+  }
+  const props = store.project().props;
+  const textOf = (id: string) => props.get(id)?.text ?? null;
+  for (const s of (() => { try { return sessionsToScan(store.workDb); } catch { return []; } })()) {
+    const file = s.transcript ?? locateTranscript(s.host, s.session_id);
+    if (!file) {
+      r.unreadable++;
+      continue;
+    }
+    try {
+      const turns = cleanTranscript(s.host, file).turns;
+      const res = scanSession(store.workDb, s.host, s.session_id, turns, textOf, modelOf(s.host, file), now);
+      r.sessions++;
+      r.cited += res.cited;
+      r.dropped += res.dropped;
+    } catch {
+      r.unreadable++;
+    }
+  }
+  return r;
+}
+
+/** 看板统计（§11.8.2）：失败一律吞掉，不影响召回输出。 */
+function telemetry(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // 库忙、只读或表不存在时跳过
+  }
+}
+
+/** 从 hook 输入认出宿主和会话：transcript_path 必须在该宿主会话目录下（allowedTranscript），否则看环境变量。 */
+function telemetryCtx(store: Store, raw: Record<string, unknown> | null, cwd: string): TelemetryCtx {
+  let host: Host | null = null;
+  let session_id: string | null = null;
+  let transcript: string | null = null;
+  const given = raw && typeof raw.transcript_path === "string" && raw.transcript_path ? raw.transcript_path : null;
+  const sid = raw && typeof raw.session_id === "string" && raw.session_id ? raw.session_id : null;
+  if (given) {
+    for (const h of HOSTS) {
+      const ok = allowedTranscript(h, given);
+      if (!ok) continue;
+      host = h;
+      transcript = ok;
+      session_id = h === "opencode" ? opencodeId(given) : h === "pi" ? piSessionId(ok) : sid ?? codexOrClaudeId(ok);
+      break;
+    }
+  }
+  if (!host) {
+    const found = detectHost();
+    if (found.ok && found.detection) {
+      host = found.detection.host;
+      session_id = sid ?? found.detection.session_id;
+    }
+  }
+  let project_id: string | null = null;
+  try {
+    const here = resolveProject(cwd);
+    project_id = here ? (store.listProjects().find((p) => p.name === here.name)?.id ?? null) : null;
+  } catch {
+    project_id = null;
+  }
+  return { host, session_id, transcript, project_id };
+}
+
+/** Claude 是 <uuid>.jsonl，Codex 是 rollout-…-<uuid>.jsonl：取末尾 uuid。 */
+function codexOrClaudeId(file: string): string | null {
+  const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(file);
+  return m ? m[1] : null;
 }
 
 /** 记"最近被注入"（到期复审用）。只是统计：失败不影响 brief/recall 的输出。 */
@@ -228,6 +332,7 @@ function cmdBrief(argv: string[]): void {
     }
     process.stdout.write(out);
     markUsed(store, used);
+    telemetry(() => logInjections(store.workDb, telemetryCtx(store, null, process.cwd()), "brief", used, new Date()));
   } finally {
     store.close();
   }
@@ -772,20 +877,27 @@ function cmdReview(argv: string[]): void {
 function cmdView(argv: string[]): void {
   const { values } = parseArgs({
     args: argv,
-    options: { out: { type: "string" }, "no-open": { type: "boolean", default: false } },
+    options: { out: { type: "string" }, "no-open": { type: "boolean", default: false }, share: { type: "boolean", default: false }, "exclude-project": { type: "string", multiple: true } },
     strict: true,
   });
-  const out = values.out ?? join(home(), "view.html");
+  const out = values.out ?? join(home(), values.share ? "view-share.html" : "view.html");
   const store = open();
   let data;
+  let scan = { sessions: 0, cited: 0, dropped: 0, unreadable: 0, pruned: 0 };
   try {
-    data = buildViewData(store);
+    scan = refreshCitations(store, new Date());
+    data = buildViewData(store, new Date(), { share: values.share, exclude: values["exclude-project"] ?? [] });
   } finally {
     store.close();
   }
   writeFileSync(out, renderHtml(data), { mode: 0o600 });
   chmodSync(out, 0o600);
   console.log(`已生成 ${out}：共 ${data.counts.total} 条（有效 ${data.counts.active}），有向量 ${data.counts.vectors} 条`);
+  console.log(`引用扫描：${scan.sessions} 个会话，记到 ${scan.cited} 次引用，丢弃 ${scan.dropped} 个对不上注入记录的 id${scan.unreadable ? `，${scan.unreadable} 个会话读不到对话` : ""}；清理 ${RETENTION_DAYS} 天前的统计 ${scan.pruned} 行`);
+  if (values.share) {
+    const withBody = new Set(data.entries.map((e) => e.project));
+    console.log(`分享版：带正文的项目 ${[...withBody].join("、") || "无"}${data.excluded.length ? `；已排除 ${data.excluded.join("、")}` : ""}。正文已过脱敏（规则匹配，不保证抓全），会话 id、路径、证据定位点已去掉。发出前请自己看一眼。`);
+  }
   if (!values["no-open"]) {
     const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
     spawn(opener, [out], { stdio: "ignore", detached: true }).on("error", () => console.log(`没能自动打开，请手动打开 ${out}`)).unref();
@@ -1130,7 +1242,9 @@ const USAGE = `用法:
   ab stage <id 前缀…> [--undo]          把条目移进候选区（用户确认过的不动）；--undo 撤销，移回正式库
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
-  ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
+  ab view [--out <路径>] [--no-open] [--share] [--exclude-project <名>…]
+      生成记忆看板（概览、关联图、记忆详情、注入/引用统计；默认 ~/.agentbrain/view.html）。只手动生成。
+      --share：内部分享版，正文经脱敏、去掉会话 id 与路径；--exclude-project 去掉整个项目
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
   ab capture --hook --host <claude|codex|pi|opencode>
@@ -1141,6 +1255,9 @@ const USAGE = `用法:
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
   ab setup [--only fast,reviewers,panel,keys,hosts,test]
+  ab setup --cite on|off [--dry-run]      引用指令开关（默认关），同时更新宿主指令文件的托管块
+  ab setup --notes [--dry-run] [--adopt]  安装/更新宿主指令文件里的 agentbrain 托管块（写前备份，先打印 diff）
+  ab setup --remove-notes [--dry-run]     只删托管块
                                     上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
   ab curate [--apply] [--host claude|codex|pi|opencode] [--limit N] | ab curate --undo <run>
                                     审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
@@ -1249,8 +1366,48 @@ async function cmdCurate(argv: string[]): Promise<void> {
   }
 }
 
+/**
+ * `ab setup --cite on|off`：引用指令开关（work_meta.cite，默认 off，§11.8.10），改完同步托管块。
+ * `ab setup --notes [--dry-run] [--adopt]`：只装/更新宿主指令文件里的托管块。`--remove-notes`：只删托管块。
+ */
+function setupNotes(v: { cite?: string; notes?: boolean; "remove-notes"?: boolean; "dry-run"?: boolean; adopt?: boolean }): void {
+  if (v.cite !== undefined && v.cite !== "on" && v.cite !== "off") die("--cite 只能是 on 或 off");
+  if (v["remove-notes"] && (v.cite !== undefined || v.notes)) die("--remove-notes 不能和 --cite / --notes 一起用");
+  const store = open();
+  let cite: boolean;
+  try {
+    if (v.cite !== undefined && !v["dry-run"]) setCite(store.workDb, v.cite === "on");
+    cite = v.cite !== undefined ? v.cite === "on" : citeEnabled(store.workDb);
+  } finally {
+    store.close();
+  }
+  if (v.cite !== undefined) console.log(`${v["dry-run"] ? "（预演）" : ""}引用指令：${cite ? "开" : "关"}${v["dry-run"] ? "（未写入）" : ""}`);
+  const opts = { cite, adopt: !!v.adopt, remove: !!v["remove-notes"], home: process.env.AB_HOST_HOME || undefined };
+  // 先按预演打印每个文件的 diff，再写
+  const preview = applyNotes({ ...opts, dryRun: true });
+  const written = v["dry-run"] ? null : applyNotes({ ...opts, dryRun: false });
+  const res = preview.map((p, i) => ({ ...p, wrote: written?.[i]?.wrote ?? false, backup: written?.[i]?.backup ?? null }));
+  const LABEL: Record<string, string> = { create: "新建文件并写入托管块", append: "追加托管块", "replace-legacy": "手写段换成托管块", adopt: "（--adopt）改过的手写段换成托管块", update: "更新托管块", unchanged: "托管块已是最新，不改", "needs-adopt": "手写段被改过，不替换；确认后加 --adopt", remove: "删除托管块", absent: "没有托管块，不改", broken: "标记不成对，不改，请手动检查" };
+  for (const r of res) {
+    console.log(`\n${r.host}  ${r.path}\n  ${LABEL[r.action]}${r.wrote ? "（已写入）" : r.diff && v["dry-run"] ? "（预演，未写入）" : ""}${r.backup ? `\n  备份：${r.backup}` : ""}`);
+    if (r.diff) console.log(r.diff.trimEnd());
+  }
+}
+
 async function cmdSetup(argv: string[]): Promise<void> {
-  const { values } = parseArgs({ args: argv, options: { only: { type: "string" } }, strict: true });
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      only: { type: "string" },
+      cite: { type: "string" },
+      notes: { type: "boolean", default: false },
+      "remove-notes": { type: "boolean", default: false },
+      "dry-run": { type: "boolean", default: false },
+      adopt: { type: "boolean", default: false },
+    },
+    strict: true,
+  });
+  if (values.cite !== undefined || values.notes || values["remove-notes"]) return setupNotes(values);
   const only = values.only ? (values.only.split(",").map((s) => s.trim()) as Step[]) : null;
   if (only?.some((s) => !STEPS.includes(s))) die(`--only 只能是 ${STEPS.join(",")}`);
   await runSetup(home(), only);

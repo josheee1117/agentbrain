@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store, type Embedder } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
-import { buildViewData, pca2, renderHtml } from "./view.ts";
+import { buildViewData, graphLayout, pca2, renderHtml } from "./view.ts";
+import { logInjections } from "./telemetry.ts";
 
 const src: RememberBody["source"] = { host: "pi", session_id: "s1", transcript: null, anchor: null, summary: "讨论端口" };
 const fakeEmbed: Embedder = async (texts) => texts.map((t) => Float32Array.from([/猫/.test(t) ? 1 : 0, /狗/.test(t) ? 1 : 0, /雨/.test(t) ? 1 : 0.1]));
@@ -50,4 +51,39 @@ test("renderHtml：数据里的 </script> 被转义，页面不引外部资源",
   const html = renderHtml(buildViewData(s));
   assert.equal(html.match(/<\/script>/g)!.length, 2);
   assert.ok(!/https?:\/\//.test(html));
+});
+
+test("buildViewData：没生效的替代单独标出；按会话计注入；排除项目连带去掉关联", () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("proj");
+  const other = s.ensureProject("secret-proj");
+  const old = s.remember(pid, "s1", false, { kind: "rule", text: "旧规则", confirmed: true, source: src });
+  const pending = s.remember(pid, "s1", false, { kind: "rule", text: "未确认的纠正", confirmed: false, supersedes: old, source: src });
+  const hidden = s.remember(other, "s1", false, { kind: "note", text: "客户项目的事", confirmed: true, supersedes: old, source: src });
+  const ctx = { host: "pi" as const, session_id: "s1", transcript: null, project_id: pid };
+  logInjections(s.workDb, ctx, "recall", [old], new Date("2026-10-20T01:00:00Z"));
+  logInjections(s.workDb, ctx, "recall", [old], new Date("2026-10-20T02:00:00Z"));
+  logInjections(s.workDb, { ...ctx, session_id: "s2" }, "pref", [old], new Date("2026-10-20T03:00:00Z"));
+  const v = buildViewData(s, new Date("2026-10-21T00:00:00Z"));
+  const get = (id: string) => v.entries.find((e) => e.id === id)!;
+  assert.deepEqual(get(pending).links.filter((l) => l.type.startsWith("supersedes")), [{ type: "supersedes_pending", id: old }]);
+  assert.deepEqual(get(hidden).links, [{ type: "supersedes", id: old }], "用户确认的纠正才算已生效的替代");
+  assert.equal(get(old).state, "superseded");
+  assert.equal(get(old).usage.inject_sessions, 2);
+  assert.equal(get(old).usage.inject_total, 3);
+  assert.deepEqual(get(old).usage.by_path, { recall: 2, pref: 1 });
+  const ex = buildViewData(s, new Date("2026-10-21T00:00:00Z"), { exclude: ["secret-proj"] });
+  assert.ok(!ex.entries.some((e) => e.id === hidden));
+  assert.ok(!ex.entries.some((e) => e.links.some((l) => l.id === hidden)));
+  assert.ok(ex.entries.find((e) => e.id === old)!.g, "带关联的条目有关联图坐标");
+});
+
+test("graphLayout：确定性、坐标有限、相连的点比不相连的近", () => {
+  const nodes = ["a", "b", "c", "d"];
+  const L1 = graphLayout(nodes, [["a", "b"], ["c", "d"]]);
+  const L2 = graphLayout(nodes, [["a", "b"], ["c", "d"]]);
+  assert.deepEqual([...L1], [...L2]);
+  const dist = (x: string, y: string) => Math.hypot(L1.get(x)![0] - L1.get(y)![0], L1.get(x)![1] - L1.get(y)![1]);
+  assert.ok([...L1.values()].every((p) => p.every(Number.isFinite)));
+  assert.ok(dist("a", "b") < dist("a", "c") && dist("c", "d") < dist("b", "d"));
 });

@@ -3,6 +3,7 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
+import { stripAbUsed } from "./telemetry.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
@@ -676,7 +677,8 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       report.windows.skipped++;
       return;
     }
-    turns = cleaned.turns;
+    // ab-used 行是给看板数引用的标记（§11.8.9），不进抽取输入
+    turns = cleaned.turns.flatMap((t) => (t.role === "assistant" ? (stripAbUsed(t.text) ? [{ ...t, text: stripAbUsed(t.text) }] : []) : [t]));
     stripped = cleaned.stripped;
     worker = cleaned.worker;
     // 旧版把 Claude 压缩摘要当成一轮，处理进度可能停在它上面；现在它被跳过，进度换成它前面那一轮（两种模式都适用）

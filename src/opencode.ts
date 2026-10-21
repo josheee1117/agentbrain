@@ -98,3 +98,16 @@ export function opencodeParts(ref: string): { session: OpencodeSession; parts: O
     return { session, parts };
   });
 }
+
+/** 会话里最后一条助手消息用的模型：provider/model；读不到为 null。 */
+export function opencodeModel(ref: string): string | null {
+  const session = opencodeSession(ref);
+  if (!session) return null;
+  return readDb((db) => {
+    const row = db.prepare("SELECT data FROM session_message WHERE session_id=? AND type='assistant' ORDER BY seq DESC LIMIT 1").get(session.id) as { data?: unknown } | undefined;
+    if (!row || typeof row.data !== "string") return null;
+    const m: unknown = JSON.parse(row.data);
+    if (!object(m) || !object(m.model) || typeof m.model.id !== "string") return null;
+    return typeof m.model.providerID === "string" ? `${m.model.providerID}/${m.model.id}` : m.model.id;
+  });
+}

@@ -79,6 +79,16 @@ CREATE TABLE IF NOT EXISTS verify_attempts(prop_id TEXT PRIMARY KEY, head TEXT N
 CREATE TABLE IF NOT EXISTS work_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS verify_queue(prop_id TEXT PRIMARY KEY, at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS prop_usage(prop_id TEXT PRIMARY KEY, last_used TEXT NOT NULL, uses INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS inject_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, host TEXT, session_id TEXT, transcript TEXT, project_id TEXT,
+  prop_id TEXT NOT NULL, path TEXT NOT NULL, rank INTEGER NOT NULL,
+  cited INTEGER NOT NULL DEFAULT 0, cited_at TEXT, cited_title TEXT, title_mismatch INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS inject_log_session ON inject_log(host, session_id);
+CREATE INDEX IF NOT EXISTS inject_log_prop ON inject_log(prop_id);
+CREATE TABLE IF NOT EXISTS recall_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, host TEXT, session_id TEXT, project_id TEXT,
+  outcome TEXT NOT NULL, n_hits INTEGER NOT NULL, ms INTEGER NOT NULL, cite INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, marked_turns INTEGER NOT NULL, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
 `;
 
 export interface PendingAppend {
