@@ -1401,7 +1401,7 @@ ab-used: 调 pi/codex 测试用临时库 (7f3c2a1b)；含全局软链的目录�
 
 **托管块（用户 2026-10-21 11:39 裁决：现有手写段也收归 `ab setup` 管理）**
 
-2026-10-21 在 Mac 上只读比对：三份手写段（`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）逐字相同，各 5 行（标题、空行、三条），且都在文件末尾。所以"并集去重"就是这三条，再加 used-note 三条。托管块全文：
+2026-10-21 在 Mac 上只读比对：三份手写段（`~/.claude/CLAUDE.md`、`~/.codex/AGENTS.md`、`~/.pi/agent/AGENTS.md`）逐字相同，各 5 行（标题、空行、三条），且都在文件末尾。所以"并集去重"就是这三条，再加 used-note 两条（原三条合并了重复的 recall 说明）。托管块全文：
 
 ```
 <!-- agentbrain:begin managed v1（由 ab setup 维护，勿手改；ab setup --remove-notes 可删除） -->
