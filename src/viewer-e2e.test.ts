@@ -59,6 +59,9 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.deepEqual(inj.map((r) => ({ ...r })), [{ host: "pi", session_id: SESSION, path: "recall", rank: 1, p: id }]);
   assert.deepEqual({ ...(d.prepare("SELECT host,outcome,n_hits,cite FROM recall_runs").get() as any) }, { host: "pi", outcome: "hit", n_hits: 1, cite: 0 });
   d.close();
+  // 模型回答了这一轮（没有回复的回合会被当成模型调用失败，不进统计）
+  appendFileSync(transcript, line({ type: "message", id: "a0", parentId: "u1", timestamp: new Date().toISOString(),
+    message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: "先按账户加锁。" }] } }));
 
   // 2. 打开开关：宿主指令文件写入托管块（含 ab-used 说明），召回块末尾多一行指令
   const setup = ab(["setup", "--cite", "on"]);
@@ -68,7 +71,7 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.match(on, /ab-used: 简短标题 \(id\)，多条用；分隔。没用上就不写。）\n<\/agentbrain-recall>$/);
 
   // 3. 助手回复引用了这条（标题贴切）和一个编造的 id
-  appendFileSync(transcript, line({ type: "message", id: "a1", parentId: "u1", timestamp: new Date(Date.now() + 1000).toISOString(),
+  appendFileSync(transcript, line({ type: "message", id: "a1", parentId: "a0", timestamp: new Date(Date.now() + 1000).toISOString(),
     message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: `换成按账户的锁。\nab-used: alpha 召回别用全局锁 (${id})；编的 (deadbeef)` }] } }));
   const out = join(dir, "view.html");
   const v = ab(["view", "--no-open", "--out", out]);

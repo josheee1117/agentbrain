@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Store } from "./store.ts";
+import { buildViewData } from "./view.ts";
 import type { RememberBody } from "./l2.ts";
-import { CITE_INSTRUCTION, citeEnabled, logInjections, logRecallRun, parseAbUsed, prune, scanSession, setCite, stripAbUsed, titleOverlap, withCiteInstruction } from "./telemetry.ts";
+import { CITE_INSTRUCTION, citeEnabled, logInjections, logRecallRun, markFailedTurns, parseAbUsed, prune, scanSession, setCite, stripAbUsed, titleOverlap, withCiteInstruction } from "./telemetry.ts";
 
 const src: RememberBody["source"] = { host: "pi", session_id: "s1", transcript: null, anchor: null, summary: "测试" };
 
@@ -81,4 +82,40 @@ test("prune：只删 90 天前的统计行", () => {
   assert.equal(prune(s.workDb, now), 2);
   assert.deepEqual((s.workDb.prepare("SELECT prop_id FROM inject_log").all() as any[]).map((r) => r.prop_id), ["y"]);
   assert.deepEqual((s.workDb.prepare("SELECT outcome FROM recall_runs").all() as any[]).map((r) => r.outcome), ["nohit"]);
+});
+
+test("模型调用失败的回合（召回后没有助手回复）不进标注率分母、不算命中、不算注入用量", () => {
+  const s = new Store(":memory:", ":memory:");
+  const a = s.remember(null, null, false, { kind: "rule", text: "调用 pi 或 codex 做测试时，AB_HOME 指到临时库", confirmed: true, source: src });
+  const ctx = { host: "claude" as const, session_id: "s9", transcript: null, project_id: null };
+  const t1 = new Date("2026-10-21T01:00:00Z"); // 这一轮额度用尽，模型没回答
+  const t2 = new Date("2026-10-21T01:05:00Z"); // 重试成功
+  for (const t of [t1, t2]) {
+    logRecallRun(s.workDb, ctx, "hit", 1, 10, true, t);
+    logInjections(s.workDb, ctx, "recall", [a], t);
+  }
+  // 失败那轮宿主写的提示已在 transcript 解析时丢掉，所以这里 01:00–01:05 之间没有助手回复
+  const turns = [
+    { anchor: "u1", role: "user" as const, text: "问题", ts: "2026-10-21T01:00:00.000Z" },
+    { anchor: "u2", role: "user" as const, text: "问题", ts: "2026-10-21T01:05:00.000Z" },
+    { anchor: "a2", role: "assistant" as const, text: `回答\nab-used: 测试用临时库 (${a.slice(0, 8)})`, ts: "2026-10-21T01:06:00.000Z" },
+  ];
+  scanSession(s.workDb, "claude", "s9", turns, (id) => s.project().props.get(id)?.text ?? null, "claude-opus-5-5", new Date("2026-10-21T02:00:00Z"));
+  const d = buildViewData(s, new Date("2026-10-21T02:00:00Z"));
+  const h = d.telemetry.hosts.find((x) => x.host === "claude")!;
+  assert.equal(h.recall_turns, 1, "分母只算模型回答了的那轮");
+  assert.equal(h.marked_turns, 1);
+  assert.equal(d.telemetry.recall_runs.hit, 1);
+  assert.equal(d.telemetry.recall_runs.model_failed, 1);
+  const e = d.entries.find((x) => x.id === a)!;
+  assert.equal(e.usage.inject_total, 1, "失败那轮的注入不算用量");
+  assert.equal(e.usage.cited_total, 1);
+});
+
+test("对话里一条带时间的回复都没有时判断不了失败，保持原样（不把整段会话当失败）", () => {
+  const s = new Store(":memory:", ":memory:");
+  const ctx = { host: "codex" as const, session_id: "s8", transcript: null, project_id: null };
+  logRecallRun(s.workDb, ctx, "hit", 1, 10, true, new Date("2026-10-21T01:00:00Z"));
+  assert.equal(markFailedTurns(s.workDb, "codex", "s8", [{ anchor: "0", role: "assistant", text: "回答" }]), 0);
+  assert.equal((s.workDb.prepare("SELECT failed FROM recall_runs").get() as any).failed, 0);
 });

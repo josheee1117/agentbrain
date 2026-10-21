@@ -125,3 +125,11 @@ test("Claude：上下文压缩后写进来的摘要（isCompactSummary）不当�
   assert.deepEqual(r.turns.map((t) => t.anchor), ["u1", "u2"]);
   assert.equal(r.stripped, 1);
 });
+
+test("Claude：额度用尽等 API 错误时宿主写的 <synthetic> 提示不算助手回复", () => {
+  const p = file("c-err.jsonl", [
+    { type: "user", uuid: "u1", timestamp: "2026-10-21T07:51:20.000Z", message: { role: "user", content: "问题" } },
+    { type: "assistant", uuid: "a1", timestamp: "2026-10-21T07:51:23.317Z", error: "rate_limit", isApiErrorMessage: true, message: { model: "<synthetic>", content: [{ type: "text", text: "You've hit your session limit · resets 7:10pm (Asia/Singapore)" }] } },
+  ]);
+  assert.deepEqual(cleanTranscript("claude", p).turns.map((t) => t.role), ["user"]);
+});

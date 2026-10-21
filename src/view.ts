@@ -68,7 +68,7 @@ export interface HostStat {
 
 export interface Telemetry {
   since: string | null;
-  recall_runs: { total: number; hit: number; nohit: number; error: number; p50_ms: number | null; p95_ms: number | null };
+  recall_runs: { total: number; hit: number; nohit: number; error: number; p50_ms: number | null; p95_ms: number | null; model_failed: number };
   recall_daily: { day: string; hit: number; nohit: number; error: number }[];
   hosts: HostStat[];
   capture: { failed_sessions: number; failed_by_host: Record<string, number>; deferred_windows: number };
@@ -109,7 +109,10 @@ function pct(sorted: number[], q: number): number | null {
 }
 
 function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry {
-  const runs = rowsOf<{ ts: string; outcome: string; ms: number }>(db, "SELECT ts,outcome,ms FROM recall_runs ORDER BY ts");
+  const all = rowsOf<{ ts: string; outcome: string; ms: number; failed: number }>(db, "SELECT ts,outcome,ms,failed FROM recall_runs ORDER BY ts");
+  // 模型调用失败的回合不算命中（§11.8，2026-10-21 用户定），单独计数
+  const runs = all.filter((r) => !r.failed);
+  const modelFailed = all.length - runs.length;
   const ms = runs.map((r) => r.ms).sort((a, b) => a - b);
   const daily = new Map<string, { day: string; hit: number; nohit: number; error: number }>();
   for (let i = 29; i >= 0; i--) {
@@ -121,7 +124,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
     if (d && (r.outcome === "hit" || r.outcome === "nohit" || r.outcome === "error")) d[r.outcome]++;
   }
   const hosts = rowsOf<HostStat>(db, `SELECT r.host AS host, COALESCE(c.model,'未知') AS model, COUNT(DISTINCT r.session_id) AS sessions,
-      SUM(CASE WHEN r.outcome='hit' AND r.cite=1 THEN 1 ELSE 0 END) AS recall_turns, COALESCE(MAX(c.marked_turns),0) AS marked_turns
+      SUM(CASE WHEN r.outcome='hit' AND r.cite=1 AND r.failed=0 THEN 1 ELSE 0 END) AS recall_turns, COALESCE(MAX(c.marked_turns),0) AS marked_turns
     FROM recall_runs r LEFT JOIN cite_scan c ON c.host=r.host AND c.session_id=r.session_id
     WHERE r.host IS NOT NULL GROUP BY r.host, r.session_id`);
   // 按会话聚合后再按 宿主+模型 汇总（marked_turns 是每会话一个数，不能在上面直接 SUM）
@@ -146,6 +149,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
       error: runs.filter((r) => r.outcome === "error").length,
       p50_ms: pct(ms, 0.5),
       p95_ms: pct(ms, 0.95),
+      model_failed: modelFailed,
     },
     recall_daily: [...daily.values()],
     hosts: [...agg.values()].sort((a, b) => b.sessions - a.sessions),
@@ -157,7 +161,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
 function usageOf(db: DatabaseSync, now: Date): Map<string, Omit<EntryUsage, "legacy_uses">> {
   const out = new Map<string, Omit<EntryUsage, "legacy_uses">>();
   const rows = rowsOf<{ prop_id: string; ts: string; host: string | null; session_id: string | null; path: string; cited: number; title_mismatch: number }>(
-    db, "SELECT prop_id,ts,host,session_id,path,cited,title_mismatch FROM inject_log ORDER BY ts");
+    db, "SELECT prop_id,ts,host,session_id,path,cited,title_mismatch FROM inject_log WHERE failed=0 ORDER BY ts");
   const start = new Date(now.getTime() - 29 * DAY).toISOString().slice(0, 10);
   const sess = new Map<string, Set<string>>();
   const citedSess = new Map<string, Set<string>>();
@@ -470,7 +474,7 @@ kpi('抽取失败',n(T.capture.failed_sessions),'会话 · 延后窗口 '+T.capt
 Object.keys(KIND).map(k=>'<div class="row"><span>'+KIND[k]+'</span><div class="bar"><div style="width:'+(100*(kd[k]||0)/maxK)+'%;background:'+KC[k]+'"></div></div><span class="num">'+(kd[k]||0)+'</span></div>').join('')+
 '<h3 style="margin-top:14px">确认状态</h3><div class="bar" style="height:18px">'+Object.keys(ST).map(k=>'<div title="'+ST[k]+'" style="width:'+(100*(st[k]||0)/Math.max(1,A.length))+'%;background:'+SC[k]+'"></div>').join('')+'</div>'+
 '<div class="lg">'+Object.keys(ST).map(k=>'<span><i style="background:'+SC[k]+'"></i>'+ST[k]+' '+(st[k]||0)+'</span>').join('')+'</div></div>'+
-'<div class="card"><h3>召回（近 30 天每天）· 共 '+n(T.recall_runs.total)+' 次，命中 '+n(T.recall_runs.hit)+'，出错 '+n(T.recall_runs.error)+(T.recall_runs.p50_ms!==null?' · 耗时 p50 '+T.recall_runs.p50_ms+'ms / p95 '+T.recall_runs.p95_ms+'ms':'')+'</h3>'+chart+
+'<div class="card"><h3>召回（近 30 天每天）· 共 '+n(T.recall_runs.total)+' 次，命中 '+n(T.recall_runs.hit)+'，出错 '+n(T.recall_runs.error)+(T.recall_runs.model_failed?'，模型没回答（不计）'+n(T.recall_runs.model_failed):'')+(T.recall_runs.p50_ms!==null?' · 耗时 p50 '+T.recall_runs.p50_ms+'ms / p95 '+T.recall_runs.p95_ms+'ms':'')+'</h3>'+chart+
 '<div class="lg"><span><i style="background:#7c5cff"></i>命中</span><span><i style="background:#334155"></i>没命中</span><span><i style="background:#ef4444"></i>出错</span><span>宿主侧超时不经过 ab，不在这里</span></div></div></div>'+
 '<div class="grid" style="grid-template-columns:1.2fr 1fr"><div class="card"><h3>标注率（按宿主 / 模型）</h3><table><tr><th>宿主</th><th>模型</th><th class="num">会话</th><th class="num">开关打开时有召回的回合</th><th class="num">标了 ab-used 的回合</th><th class="num">标注率</th></tr>'+(hostRows||'<tr><td colspan="6" class="dim">还没有记录</td></tr>')+'</table>'+
 '<div class="sub" style="margin-top:6px">"用上"= 模型在回复末尾自报的 ab-used，未经人工核对；标错请纠正。</div></div>'+

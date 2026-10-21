@@ -91,6 +91,12 @@ CREATE TABLE IF NOT EXISTS recall_runs(
 CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, marked_turns INTEGER NOT NULL, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
 `;
 
+/** 旧库补列（CREATE TABLE IF NOT EXISTS 不会给已有表加列）。 */
+function addColumn(db: DatabaseSync, table: string, col: string, decl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+}
+
 export interface PendingAppend {
   kind: EventKind;
   project_id: string | null;
@@ -132,6 +138,8 @@ export class Store {
   constructor(storePath: string, indexPath: string) {
     this.db = openDb(storePath);
     this.db.exec(SCHEMA);
+    addColumn(this.db, "recall_runs", "failed", "INTEGER NOT NULL DEFAULT 0");
+    addColumn(this.db, "inject_log", "failed", "INTEGER NOT NULL DEFAULT 0");
     this.fts = openDb(indexPath);
     this.fts.exec(FTS_SCHEMA);
   }

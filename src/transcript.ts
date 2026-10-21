@@ -181,6 +181,8 @@ function cwdOf(e: any): string | null {
 function readClaude(lines: any[], b: Builder): void {
   for (const e of lines) {
     if ((e.type !== "user" && e.type !== "assistant") || !e.uuid || e.isMeta || e.isSidechain) continue;
+    // 模型调用失败时宿主自己写的提示（如额度用尽 "You've hit your session limit"），不是模型的回答
+    if (e.type === "assistant" && (e.isApiErrorMessage === true || e.message?.model === "<synthetic>")) continue;
     // 上下文压缩后宿主写进来的摘要（以 user 身份出现，但不是用户的话，内容是前面话题的复述）：不当成新一轮，免得压缩后把前一个话题再抽一遍（§8.6）
     if (e.isCompactSummary === true) {
       b.stripped++;

@@ -177,6 +177,7 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
     }
     if (any) res.marked_turns++;
   }
+  markFailedTurns(db, host, sessionId, turns);
   db.prepare("INSERT INTO cite_scan(host,session_id,model,marked_turns,scanned_at) VALUES(?,?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, marked_turns=excluded.marked_turns, scanned_at=excluded.scanned_at")
     .run(host, sessionId, model, res.marked_turns, now.toISOString());
   return res;
@@ -185,4 +186,27 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
 /** 有过召回注入、要扫描引用的会话。 */
 export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: string; transcript: string | null }[] {
   return db.prepare("SELECT host,session_id,MAX(transcript) AS transcript FROM inject_log WHERE path='recall' AND host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id").all() as any;
+}
+
+/**
+ * 模型调用失败的回合（召回后到下一次召回前没有任何助手回复，如额度用尽）：recall_runs 与该次注入记 failed=1，
+ * 看板的标注率分母和注入用量都不算它们。对话里一条带时间的助手回复都没有时判断不了，保持原样。
+ */
+export function markFailedTurns(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[]): number {
+  const replies = turns.filter((t) => t.role === "assistant" && t.ts && t.text.trim()).map((t) => t.ts!);
+  const timed = turns.some((t) => t.ts);
+  if (!timed) return 0;
+  const runs = db.prepare("SELECT id,ts FROM recall_runs WHERE host=? AND session_id=? AND outcome='hit' ORDER BY ts, id").all(host, sessionId) as { id: number; ts: string }[];
+  const setRun = db.prepare("UPDATE recall_runs SET failed=? WHERE id=?");
+  const setInj = db.prepare("UPDATE inject_log SET failed=? WHERE host=? AND session_id=? AND ts=?");
+  let n = 0;
+  runs.forEach((r, i) => {
+    const end = runs[i + 1]?.ts;
+    const t0 = Date.parse(r.ts);
+    const answered = replies.some((ts) => Date.parse(ts) >= t0 && (end === undefined || Date.parse(ts) < Date.parse(end)));
+    setRun.run(answered ? 0 : 1, r.id);
+    setInj.run(answered ? 0 : 1, host, sessionId, r.ts);
+    if (!answered) n++;
+  });
+  return n;
 }
