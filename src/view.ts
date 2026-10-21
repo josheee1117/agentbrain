@@ -232,7 +232,7 @@ export function graphLayout(nodes: readonly string[], edges: readonly [string, s
     }
     const t = 6 * (1 - it / iters) + 0.2;
     for (let i = 0; i < n; i++) {
-      dx[i] -= x[i] * 0.01; // 轻微向心，防止离散的小团飘远
+      dx[i] -= x[i] * 0.04; // 向心，防止离散的小团飘远，防止离散的小团飘远
       dy[i] -= y[i] * 0.01;
       const d = Math.hypot(dx[i], dy[i]) || 1;
       x[i] += (dx[i] / d) * Math.min(d, t);
@@ -449,7 +449,7 @@ function cnt(list,key){const m={};list.forEach(e=>{const k=key(e);m[k]=(m[k]||0)
 function kpi(t,v,l,d,dc){return '<div class="card kpi"><h3>'+t+'</h3><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(d?'<div class="d"'+(dc?' style="color:'+dc+'"':'')+'>'+d+'</div>':'')+'</div>'}
 function overview(){
 const st=cnt(A,e=>e.status),kd=cnt(A,e=>e.kind),linked=A.filter(e=>e.links.length).length;
-const inj=A.filter(e=>e.usage.inject_sessions>0).length,never=A.length-inj,cited=A.filter(e=>e.usage.cited_sessions>0).length;
+const legacy=A.filter(e=>e.usage.legacy_uses>0).length,inj=A.filter(e=>e.usage.inject_sessions>0).length,never=A.length-inj,cited=A.filter(e=>e.usage.cited_sessions>0).length;
 const lt=cnt(E.flatMap(e=>e.links),l=>l.type);
 const hostRows=T.hosts.map(h=>'<tr><td>'+esc(h.host)+'</td><td>'+esc(h.model)+'</td><td class="num">'+h.sessions+'</td><td class="num">'+h.recall_turns+'</td><td class="num">'+h.marked_turns+'</td><td class="num">'+(h.recall_turns?Math.round(100*Math.min(1,h.marked_turns/h.recall_turns))+'%':'<span class="dim">—</span>')+'</td></tr>').join('');
 const maxK=Math.max(1,...Object.values(kd));
@@ -463,7 +463,7 @@ const mism=A.reduce((s,e)=>s+e.usage.mismatched,0);
 $('ov').innerHTML='<div class="grid" style="grid-template-columns:repeat(5,1fr)">'+
 kpi('有效记忆',n(A.length),'共 '+n(D.counts.total)+' 条 · 用户确认 '+(st.user||0),'未确认 '+(st.unconfirmed||0)+' · 代码核验 '+(st.code||0))+
 kpi('有关联的记忆',n(linked),'补充 '+((lt.refines||0))+' · 合并 '+(lt.merged_into||0)+' · 冲突 '+(lt.conflicts||0),'替代未生效 '+pendingSup,pendingSup?'#fbbf24':'')+
-kpi('被注入过',n(inj)+'<span class="dim" style="font-size:15px"> / '+n(A.length)+'</span>',T.since?'统计自 '+esc(T.since.slice(0,10)):'还没有注入记录',never+' 条从未被注入',never?'#fbbf24':'')+
+kpi('被注入过',n(inj)+'<span class="dim" style="font-size:15px"> / '+n(A.length)+'</span>',(T.since?'明细统计自 '+esc(T.since.slice(0,10)):'还没有注入明细')+' · 老累计有记录 '+legacy+' 条',never+' 条从未被注入',never?'#fbbf24':'')+
 kpi('被引用（模型自报）',n(cited),'标了 ab-used 的有效条目','标题不符 '+mism+' 次',mism?'#fbbf24':'')+
 kpi('抽取失败',n(T.capture.failed_sessions),'会话 · 延后窗口 '+T.capture.deferred_windows,'待复审 '+T.review_due,T.capture.failed_sessions?'#fda4af':'')+'</div>'+
 '<div class="grid" style="grid-template-columns:1.2fr 1fr"><div class="card"><h3>构成（有效条目）</h3>'+
@@ -486,7 +486,7 @@ const W=1400,H=Math.max(520,Math.min(1000,W*(y1-y0+1)/(x1-x0+1)));svg.setAttribu
 const sx=x=>30+(W-60)*(x-x0)/((x1-x0)||1),sy=y=>30+(H-60)*(y-y0)/((y1-y0)||1);let h='';const seen=new Set();
 for(const e of N)for(const l of e.links){const o=byId.get(l.id);if(!o||!o.g)continue;const k=[e.id,o.id].sort().join()+(l.type.startsWith('supersedes')||l.type==='superseded_by'?'s':l.type);if(seen.has(k))continue;seen.add(k);
 h+='<line x1="'+sx(e.g[0]).toFixed(1)+'" y1="'+sy(e.g[1]).toFixed(1)+'" x2="'+sx(o.g[0]).toFixed(1)+'" y2="'+sy(o.g[1]).toFixed(1)+'" stroke="'+EC[l.type]+'" stroke-width="'+(l.type==='conflicts'?2:1.3)+'" stroke-opacity=".75"'+(l.type==='supersedes_pending'||l.type==='pending_correction'?' stroke-dasharray="5 4"':'')+'/>'}
-for(const e of N){const r=3.5+Math.min(14,Math.sqrt(e.usage.inject_sessions)*2.2);h+='<circle data-id="'+e.id+'" cx="'+sx(e.g[0]).toFixed(1)+'" cy="'+sy(e.g[1]).toFixed(1)+'" r="'+r.toFixed(1)+'" fill="'+KC[e.kind]+'" fill-opacity="'+(e.state==='active'?.88:.3)+'" stroke="'+(e.status==='user'?'#f8fafc':'#0b1020')+'" stroke-width="'+(e.status==='user'?1.8:1)+'" style="cursor:pointer"/>'}
+for(const e of N){const r=5+Math.min(14,Math.sqrt(e.usage.inject_sessions)*2.2);h+='<circle data-id="'+e.id+'" cx="'+sx(e.g[0]).toFixed(1)+'" cy="'+sy(e.g[1]).toFixed(1)+'" r="'+r.toFixed(1)+'" fill="'+KC[e.kind]+'" fill-opacity="'+(e.state==='active'?.88:.3)+'" stroke="'+(e.status==='user'?'#f8fafc':'#0b1020')+'" stroke-width="'+(e.status==='user'?1.8:1)+'" style="cursor:pointer"/>'}
 svg.innerHTML=h}
 const projects=[...new Set(E.map(e=>e.project))].sort(),pc=p=>'hsl('+(projects.indexOf(p)*137%360)+',65%,55%)';
 let mdone=false;function map(){if(mdone)return;mdone=true;const pts=E.filter(e=>e.xy&&e.state==='active'),svg=$('map');if(!pts.length){svg.innerHTML='<text x="10" y="20" fill="#8a93b2">没有向量</text>';return}
@@ -513,7 +513,7 @@ document.addEventListener('click',ev=>{const f=ev.target.closest('[data-filter]'
 const tip=$('tip');document.addEventListener('mousemove',ev=>{const id=ev.target.dataset&&ev.target.dataset.id;if(!id){tip.style.display='none';return}const e=byId.get(id);tip.textContent='['+KIND[e.kind]+' · '+e.project+'] '+e.text.slice(0,160);tip.style.display='block';tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px'});
 ['q','fp','fk','fs','fu','fa'].forEach(k=>$(k).addEventListener('input',list));
 overview();list();const first=A.slice().sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions)[0];if(first)detail(first.id);
-const h0=location.hash.slice(1);if(h0.startsWith('m-')){tab('ls');detail(h0.slice(2))}else if(['ov','gr','ls','mp'].includes(h0))tab(h0);
+const h0=location.hash.slice(1);if(h0.startsWith('m=')){tab('ls');detail(h0.slice(2))}else if(h0.startsWith('tab='))tab(h0.slice(4));window.scrollTo(0,0);
 </script></body></html>`;
 }
 
