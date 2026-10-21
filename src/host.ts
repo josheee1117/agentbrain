@@ -7,6 +7,7 @@ import { readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Host } from "./l2.ts";
+import { opencodeRef, opencodeSession } from "./opencode.ts";
 
 const MAX_ANCESTORS = 20;
 
@@ -24,6 +25,7 @@ const SESSION_ENV: Record<Host, string> = {
   claude: "CLAUDE_CODE_SESSION_ID",
   codex: "CODEX_THREAD_ID",
   pi: "PI_SESSION_ID",
+  opencode: "OPENCODE_SESSION_ID",
 };
 
 /** chain 从最近的父进程开始。第一个命中的进程决定 host。 */
@@ -33,6 +35,7 @@ export function pickHost(chain: Proc[], env: Record<string, string | undefined>)
     let host: Host | null = null;
     if (name === "claude") host = "claude";
     else if (name === "codex") host = "codex";
+    else if (name === "opencode") host = "opencode";
     else if (name === "pi" || (name === "node" && p.args.includes("pi-coding-agent"))) host = "pi";
     if (host) return { host, session_id: env[SESSION_ENV[host]] || null };
   }
@@ -93,6 +96,14 @@ function findFile(dir: string, pred: (name: string) => boolean, depth: number): 
 }
 
 export function locateTranscript(host: Host, sessionId: string): string | null {
+  if (host === "opencode") {
+    const ref = opencodeRef(sessionId);
+    try {
+      return ref && opencodeSession(ref) ? ref : null;
+    } catch {
+      return null;
+    }
+  }
   const home = homedir();
   if (host === "claude") return findFile(join(home, ".claude/projects"), (n) => n === `${sessionId}.jsonl`, 2);
   if (host === "codex") return findFile(join(home, ".codex/sessions"), (n) => n.startsWith("rollout-") && n.endsWith(`-${sessionId}.jsonl`), 4);
@@ -122,6 +133,6 @@ export function detectHost(env: Record<string, string | undefined> = process.env
   const transcript = hit.session_id ? locateTranscript(hit.host, hit.session_id) : null;
   return {
     ok: true,
-    detection: { host: hit.host, session_id: hit.session_id, transcript: transcript ? realpathSync(transcript) : null },
+    detection: { host: hit.host, session_id: hit.session_id, transcript: transcript ? (hit.host === "opencode" ? transcript : realpathSync(transcript)) : null },
   };
 }

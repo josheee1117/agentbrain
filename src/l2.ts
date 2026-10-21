@@ -4,7 +4,7 @@
  */
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate";
-export type Host = "claude" | "codex" | "pi";
+export type Host = "claude" | "codex" | "pi" | "opencode";
 /** candidate：v3 候选区（ab work 自动抽取写这里），不进召回、brief、搜索，等审稿人裁决（§21 2026-10-14 v3）。 */
 export type PropState = "active" | "archived" | "superseded" | "candidate";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */

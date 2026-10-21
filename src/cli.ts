@@ -26,6 +26,7 @@ import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
+import { opencodeSession } from "./opencode.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
 import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor, topicEnabled, TOPIC_IDLE_MS, topicReportDir, undoTopicRun } from "./topic.ts";
@@ -147,12 +148,12 @@ async function cmdRecall(argv: string[]): Promise<void> {
   let wantCount = false; // Pi 状态栏要本轮召回条数（§11.7）；Claude/Codex 不传，输出不变
   if (values.hook) {
     if (process.env[REVIEWER_ENV]) return; // 审稿子进程不注入召回
-    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown; want_count?: unknown };
+    const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown; want_count?: unknown; worker?: unknown };
     wantCount = raw.want_count === true;
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
     cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
-    worker = isWorkerTranscript(typeof raw.transcript_path === "string" ? raw.transcript_path : null);
+    worker = raw.worker === true || isWorkerTranscript(typeof raw.transcript_path === "string" ? raw.transcript_path : null);
   } else {
     query = positionals.join(" ");
     cwd = process.cwd();
@@ -232,14 +233,14 @@ function cmdBrief(argv: string[]): void {
   }
 }
 
-const HOSTS: Host[] = ["claude", "codex", "pi"];
+const HOSTS: Host[] = ["claude", "codex", "pi", "opencode"];
 
 /** `--from-worker host:session`。host 必须是三个宿主之一。 */
 function parseFromWorker(raw: string): { host: Host; session_id: string } {
   const i = raw.indexOf(":");
   const host = raw.slice(0, i);
   const session_id = raw.slice(i + 1);
-  if (i <= 0 || !HOSTS.includes(host as Host) || !session_id) die(`--from-worker 必须是 claude|codex|pi:<session_id>，收到: ${raw}`);
+  if (i <= 0 || !HOSTS.includes(host as Host) || !session_id) die(`--from-worker 必须是 claude|codex|pi|opencode:<session_id>，收到: ${raw}`);
   return { host: host as Host, session_id };
 }
 
@@ -253,7 +254,7 @@ function relayedBy(): { host: Host; session_id: string | null } | null {
 function workerSource(raw: string, summary: string): { source: SourcePointer; missing: boolean } {
   const w = parseFromWorker(raw);
   const found = locateTranscript(w.host, w.session_id);
-  const transcript = found ? realpathSync(found) : null;
+  const transcript = found ? (w.host === "opencode" ? found : realpathSync(found)) : null;
   const anchor = transcript ? latestAnchor(w.host, transcript) : null;
   return {
     source: { host: w.host, session_id: w.session_id, transcript, anchor, summary, relayed_by: relayedBy() },
@@ -797,7 +798,7 @@ function parseSessionKey(raw: string): { host: Host; session_id: string } {
   const i = raw.indexOf(":");
   const host = raw.slice(0, i) as Host;
   const session_id = raw.slice(i + 1);
-  if (i <= 0 || !HOSTS.includes(host) || !session_id) die(`会话必须写成 claude|codex|pi:<session_id>，收到: ${raw}`);
+  if (i <= 0 || !HOSTS.includes(host) || !session_id) die(`会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`);
   return { host, session_id };
 }
 
@@ -819,19 +820,25 @@ async function captureHook(host: Host): Promise<void> {
   if (process.env[REVIEWER_ENV]) return; // 审稿子进程的会话不登记、不抽取
   const raw = JSON.parse(await readStdin()) as Record<string, unknown>;
   const given = typeof raw.transcript_path === "string" && raw.transcript_path ? raw.transcript_path : null;
-  const ephemeral = raw.ephemeral === true;
+  let ephemeral = raw.ephemeral === true;
   let sessionId = typeof raw.session_id === "string" && raw.session_id ? raw.session_id : null;
   if (!sessionId && host === "pi" && given) sessionId = piSessionId(given);
   if (!sessionId) return;
   let transcript: string | null = null;
   if (given) {
-    transcript = allowedTranscript(host, given);
+    transcript = allowedTranscript(host, given, sessionId);
     if (!transcript) return; // 不在宿主会话目录里的路径一律不登记
   } else if (!ephemeral) {
     const found = locateTranscript(host, sessionId);
-    transcript = found ? allowedTranscript(host, found) : null;
+    transcript = found ? allowedTranscript(host, found, sessionId) : null;
   }
-  const cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null;
+  let cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null;
+  if (host === "opencode") {
+    const session = transcript ? opencodeSession(transcript) : null;
+    if (!session) return;
+    cwd = session.directory;
+    ephemeral = !!session.parent_id;
+  }
   const event = raw.hook_event_name;
   const ended = event === "SessionEnd";
   // 话题结束触发（§8.6）只在开关打开时生效；关着时压缩事件什么都不做，下一轮也不判断静置
@@ -883,17 +890,18 @@ async function cmdCapture(argv: string[]): Promise<void> {
     }
     return;
   }
-  if (!positionals[0]) die("用法: ab capture <claude|codex|pi>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
+  if (!positionals[0]) die("用法: ab capture <claude|codex|pi|opencode>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
   const key = parseSessionKey(positionals[0]);
   const found = values.transcript ?? locateTranscript(key.host, key.session_id);
   if (!found) die("找不到这个会话的 transcript，用 --transcript 指定");
-  const transcript = allowedTranscript(key.host, found);
+  const transcript = allowedTranscript(key.host, found, key.session_id);
   if (!transcript) die(`transcript 必须在 ${key.host} 的会话目录下: ${found}`);
-  const cwd = values.cwd ?? process.cwd();
+  const session = key.host === "opencode" ? opencodeSession(transcript) : null;
+  const cwd = session?.directory ?? values.cwd ?? process.cwd();
   const store = open();
   try {
     const project = resolveProject(cwd)?.name ?? null;
-    const r = intake.upsertSession(store.workDb, { ...key, transcript, cwd, ended: values.end === true, ephemeral: false, via: "manual" }, () => project, new Date());
+    const r = intake.upsertSession(store.workDb, { ...key, transcript, cwd, ended: values.end === true, ephemeral: !!session?.parent_id, via: "manual" }, () => project, new Date());
     console.log(`${r === "new" ? "已登记" : "已刷新"} ${key.host}:${key.session_id}${project ? `（项目 ${project}）` : "（cwd 不是已登记项目，不会抽取）"}`);
   } finally {
     store.close();
@@ -1098,14 +1106,14 @@ const USAGE = `用法:
   ab brief [项目名] [--worker]      开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed] [--direct]
-              [--from-worker <claude|codex|pi>:<session_id>]
+              [--from-worker <claude|codex|pi|opencode>:<session_id>]
                                     干活时不用记：后台会从会话里自动抽取并审稿。只有用户明确要你记时才用，并加 --confirmed
                                     不加 --confirmed 的写进候选区，等后台审稿（不进 brief、召回、搜索）
                                     --direct 不经候选区直接写进正式库（未确认），只用于人工迁移数据
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
-              [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi>:<session_id>]
+              [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi|opencode>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
   ab recall [--hook] [文本…]            每轮召回：当前项目和全局的已确认坑/规则/决定；另可带 1 条无争议的未确认坑/规则/决定（标未确认）
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
@@ -1125,7 +1133,7 @@ const USAGE = `用法:
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
-  ab capture --hook --host <claude|codex|pi>
+  ab capture --hook --host <claude|codex|pi|opencode>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
                                     话题沉淀开着时：PreCompact 记话题边界并拉起 ab work；距上一轮超过 20 分钟也拉起
   ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
@@ -1134,7 +1142,7 @@ const USAGE = `用法:
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
   ab setup [--only fast,reviewers,panel,keys,hosts,test]
                                     上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
-  ab curate [--apply] [--host claude|codex|pi] [--limit N] | ab curate --undo <run>
+  ab curate [--apply] [--host claude|codex|pi|opencode] [--limit N] | ab curate --undo <run>
                                     审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
                                     默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动候选、用户确认过的不动；--undo 整次撤销
                                     --host：只审该宿主会话抽出的候选，用 review.json hostReviewers 里给它配的审稿人（用该宿主自己的额度）
@@ -1170,7 +1178,9 @@ async function cmdCurate(argv: string[]): Promise<void> {
   if ("error" in loaded) die(loaded.error);
   if (values.host !== undefined && !HOSTS.includes(values.host as Host)) die(`--host 只能是 ${HOSTS.join("/")}`);
   // --host：只审从这个宿主会话抽出来的候选，用该宿主配的审稿人（hostReviewers），用它自己的额度
-  const { cfg, onlyHost } = configForHost(loaded, (values.host as Host | undefined) ?? null);
+  const { cfg, onlyHost } = values.host === "opencode"
+    ? { cfg: loaded, onlyHost: "opencode" as const }
+    : configForHost(loaded, (values.host as "claude" | "codex" | "pi" | undefined) ?? null);
   const wantApply = values.apply;
   const store = open();
   const run = `curate-${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;

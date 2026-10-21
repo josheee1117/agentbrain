@@ -4,7 +4,7 @@
 - 最新修订：2026-10-12
 - 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验；切片 3（自动沉淀）2026-10-12 代码完成，先于 2.5，尚未接入用户机器、未跑真实模型（§21）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
-- 宿主：Pi、Claude Code、Codex 平等接入，任一都可作为主体会话（§7）
+- 宿主：Pi、Claude Code、Codex、opencode 平等接入，任一都可作为主体会话（§7）。opencode 接线合同见 §7.5。
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
 - 决策地图：[绘制以 abrain 为母体的 agentbrain v2 路线](https://github.com/josheee1117/agentbrain/issues/1)
 - 领域词汇：`CONTEXT.md`
@@ -489,6 +489,22 @@ GATE：后台 worker 形态，见 §19.3（v2.5 重开）。
 - **仿 `canonicalGitRuntime` 的 fail-closed 单键**：abrain 用一个 schema 严格、配置缺失即抛错（不是默认 legacy）的单键，在 canonical 与 legacy 发布路径间二选一。这是"激进路线与朴素路线之间的官方逃生阀"的成熟形态，agentbrain 的运行期开关应照抄这个纪律：**显式、fail-closed、可诊断**。
 
 两者都不是已拍板实现，最终形态与 §19.3 一并裁决。
+
+---
+
+### 7.5 opencode 接线（2026-10-20 用户授权实现）
+
+opencode 是第四个宿主。插件只调用 `ab`，不读 agentbrain 的库。插件使用 v2 的 `setup(ctx)` 和 `ctx.session.hook("context")`。它对最新用户文本调用 `ab recall --hook`，将返回的上下文追加为 `{type:"text",text}` 系统上下文。同一条用户消息的工具循环复用本轮结果，新用户消息重新召回。没有命中、调用失败、超时都不修改上下文。插件同时调用 `ab capture --hook --host opencode` 登记会话。
+
+来源继续使用现有 `SourcePointer`，但 `transcript` 保存 `opencode://session/<id>`，不是文件路径。新增 `src/opencode.ts` 集中处理引用校验、SQLite 会话元数据和消息读取。它只读打开 `~/.local/share/opencode/opencode.db`，拒绝任意数据库路径、伪造引用和不存在的 session。capture 使用数据库中的 directory 判定项目，不相信请求中的 cwd。数据库使用 `session_v2`、`session_message`。用户定位点是 message.id，助手定位点加 content 下标。只读取该 session 的 user、assistant 文本和压缩后的工具错误，不读 reasoning、synthetic 或压缩摘要。
+
+SQLite 读取直接生成现有轮次，不导出 JSONL。导出会多存一份对话正文，也会增加缓存一致性和删除责任。opencode 的 `parent_id` 非空表示子会话，capture 标 ephemeral，sweep 不补登记，work 不抽取。插件从宿主 session API 判断子会话，召回带 worker 标记，子会话不会拿主会话偏好。
+
+sweep 查询近 7 天 time_updated，只有 directory 属于已登记项目的主会话才补登记。静置时钟使用该会话的 time_updated，不使用整个数据库的 mtime。读取和来源展开再次验证引用。数据库无法读取时，hook 静默放行，work 报 source_unavailable。
+
+opencode 没有和 Pi session_shutdown 完全相同的公开事件。插件在 session 归档、宿主实例销毁时登记 SessionEnd，在压缩前登记 PreCompact。硬关进程仍靠既有 `ab work --sweep` 的静置兜底，不新增定时器、不启动 launchd。话题模式对 opencode 使用现有 API 抽取器，不借用其他宿主的 CLI 额度，本次不扩展审稿 CLI 后端。
+
+插件安装为 `~/.config/opencode/plugins/agentbrain-v2.js` 的符号链接。安装前保存插件目录清单和已有配置备份，不修改其他插件或 opencode 配置。默认命令是本机绝对 Node 与 ab 路径，缺失才使用 PATH。插件在 `ctx.shell.hook("create.before")` 有 sessionID 时传入当前 opencode 会话 id，使手动 `ab remember` 的来源指向 opencode，而非嵌套启动它的宿主。
 
 ---
 
@@ -1720,7 +1736,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ## 20. 明确 Out of Scope
 
 - 由本文自动授权生产实现；
-- v2 正式支持 dsh、Memory Proxy，或 Pi、Claude Code、Codex 之外的宿主；以 wire 逆向方式接入任何宿主（v2.5 起 Claude Code、Codex 已在范围内）；
+- v2 正式支持 dsh、Memory Proxy，或 Pi、Claude Code、Codex、opencode 之外的宿主；以 wire 逆向方式接入任何宿主（opencode 的公开插件接入于 2026-10-20 获授权，见 §7.5）；
 - 接管 pm 的仓库档案、计划、跨仓库调度等非记忆职责（记忆核心成熟后再议，§2.1）；
 - 多用户团队服务、服务端认证、租户 ACL；
 - 完整个人生活 Persona/数字孪生；
@@ -1737,6 +1753,10 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-10-20 安装后的默认共享服务仍缓存第一次加载失败的模块。`opencode reload`、更换链接名和源文件名后，日志仍报默认导出不是对象，新会话也未收到召回。新起的 `--standalone` 服务读取同一插件能成功。为避免中断其他活动会话，本次没有重启共享服务，默认启动方式的接线仍有这一阻塞。插件安装项最终为 `agentbrain-v2.js`。
+- 2026-10-20 实测 opencode v2.0.30 与 `~/.config/opencode/node_modules/@opencode-ai/plugin` 的旧式类型声明不同。旧插件报 `Plugin must export a default definition with an id and an effect or setup function.`，旧 `session` 表也不含本次新会话。按正在运行的 v2 改用 `setup`、context hook、`session_v2` 与 `session_message`。真实会话 `ses_ea7577936ffegXRW17PRkM0lGI` 的回答逐字输出 `[873b78e2]` 与 `[3bf3029b]` 的召回块，store 登记 `host=opencode, via=hook`，退出后处理进度推进至 `msg_158a887290012MTps7ekQjqqTa:1`。第一次失败的验收不算通过。
+- 2026-10-20 用户要求把 opencode 装上 agentbrain，并授权实现、安装和真实会话验收。新增 §7.5，撤销 §20 对 opencode 的范围排除。SQLite 来源使用固定数据库中的真实会话引用，不导出正文。子会话按 ephemeral 跳过。宿主进程检测仍以最近父进程为准。分支基线由用户纠正为 `docs/agentbrain-v2-design`，不是尚无实现的 `main`。本次不启用话题开关、不加载 launchd、不扩展 CLI 审稿后端，不改变其他宿主行为。
 
 - 2026-10-20 文档同步：§8.7 修法 1–3、§11.6 (i)(ii)(iii) 状态由"实现中"改为已实现并合并（#54 `012a971`、#59 `25c761f`、#62 `1d83866`）；§8.6 指向 §8.7 的"在 PR #60"改为"见下节"；评测 12、13 文档并入主线（原 PR #60、#61 由本次取代）；重新脱敏两份已合并的评测数据（`eval/topic-windows/runs/astra1.jsonl`、`eval/onepass-replay/run1-meta.json`），评测 07、11 汇总数字复现不变。不改任何规则和代码。
 - 2026-10-19 16:02 用户批准 §11.6 (i)(ii)(iii) 与 why 重复打印修正，关联默认显示（一行，不展开）；与第 8 篇不冲突的理由写在 §11.6 开头。抽取写被否方案（"不做的"第 3 条）不在范围。

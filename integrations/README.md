@@ -3,7 +3,7 @@
 本目录只放样例，不改任何全局配置。装到用户机器上之前要先得到用户同意，改之前先备份。
 
 
-三个宿主在用户每次发 prompt 时调用 `ab recall --hook`。它从 stdin 读宿主给的 JSON（只用 `prompt` 和 `cwd`），命中当前项目的坑、规则、决定或标了 for_workers 的全局记忆时，输出一行：
+四个宿主在用户每次发 prompt 时调用 `ab recall --hook`。它从 stdin 读宿主给的 JSON（只用 `prompt` 和 `cwd`），命中当前项目的坑、规则、决定或标了 for_workers 的全局记忆时，输出一行：
 
 ```json
 {"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"<agentbrain-recall>…</agentbrain-recall>"}}
@@ -118,6 +118,29 @@ ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 ```
 
 - 2026-10-12 在用户机器上实测：单文件扩展能被加载，模型收到并引用了注入的召回。扩展里调用的是 PATH 上的 `ab`，同样受上面 PATH/Node 版本的影响。
+
+## opencode v2
+
+本机验证版本是 `opencode v2.0.30`。插件是 `opencode/agentbrain-v2.js`，默认导出带 `id` 和 `setup` 的对象。旧 `@opencode-ai/plugin` 的 `chat.message` 类型声明不适用于这个版本。
+
+在仓库根安装。先备份现有配置，不覆盖其他插件：
+
+```sh
+mkdir -p ~/.config/opencode/backups/agentbrain-20261020
+cp -p ~/.config/opencode/opencode.json ~/.config/opencode/backups/agentbrain-20261020/
+cp -p ~/.config/opencode/opencode.jsonc ~/.config/opencode/backups/agentbrain-20261020/
+ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/agentbrain-v2.js
+```
+
+重新启动 opencode。若后台服务曾加载旧版同名插件，本机实测 `opencode reload` 未清除旧模块，需在新进程中加载。可用 `opencode --standalone` 验证，不停止其他会话的共享服务。
+
+- `ctx.session.hook("context")` 在模型请求前调用召回，追加本轮系统上下文。同一用户消息的工具循环不重复调用，新一轮重新召回。命令优先用 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab`，不存在才退回 PATH。调用超时 5 秒，任何失败静默放行。
+- capture 只接受 `opencode://session/<id>`。`ab` 从固定的 `~/.local/share/opencode/opencode.db` 只读查询 `session_v2`、`session_message`。不存在的 session、不同 session 的引用、任意文件路径都拒绝。项目以数据库中的 directory 为准。来源展开用 `ab get --expand`。
+- `parent_id` 非空的会话按 ephemeral 登记，不抽取。sweep 只补近 7 天、已登记项目的主会话。读取不包含 synthetic、reasoning 和压缩摘要。静置时钟取会话 time_updated，不取数据库文件 mtime。
+- 插件销毁或 session 归档时登记结束，拉起现有 `ab work --session`。直接杀进程时仍靠手动或已有定时 `ab work --sweep`。本次不启用 launchd，也不打开话题开关。opencode 使用现有 API 抽取器，不借其他宿主的 CLI 额度。
+- `ab doctor` 的 opencode 行检查插件路径和 SQLite 读取。它不证明当前已启动的后台服务成功加载了插件，模型回答和 store 登记才是端到端证据。本机默认共享后台服务仍缓存安装中第一次失败的模块，`opencode reload` 和更换链接名没有解决。不能据 doctor 显示正常就当成共享服务接线通过。当前真实通过的是新起的 `opencode --standalone`。重启共享服务需要先处理其中的其他活动会话，本次未重启。
+
+2026-10-20 最终安装项的真实验收在 Herdr 新 tab 中运行 `opencode --standalone`。会话 `ses_ea7463e1dffetnDViut8I7eJLc` 的助手消息 `msg_158b9c245001EhW5HTgFbbQxKr` 输出了包含 `[873b78e2]` 的 `<agentbrain-recall>` 块。`capture_sessions` 登记 host=opencode、project=agentbrain、via=hook。退出后后台完成一个窗口，处理了 2 轮、84 字，6245 token，零候选、无错误，处理进度到该助手消息的 `:1` 文本。测试 tab 已关闭。
 
 ## 每轮召回装完后的验收（设计 §15.3）
 

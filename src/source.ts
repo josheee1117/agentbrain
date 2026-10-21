@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { extname, isAbsolute, sep } from "node:path";
 import { sanitize } from "./sanitize.ts";
 import type { SourcePointer, Host } from "./l2.ts";
+import { opencodeId, opencodeParts } from "./opencode.ts";
 
 const MAX_ENTRIES = 30;
 const MAX_CHARS_PER_ENTRY = 600;
@@ -137,6 +138,17 @@ function readCodex(file: string, anchor: string): string | null {
 
 /** 返回按时间顺序的对话片段；transcript 不存在或指针无效时返回 null（显式不可用，不伪装成空）。 */
 export function expandSource(src: SourcePointer): string | null {
+  if (src.host === "opencode") {
+    if (!src.transcript || !src.anchor || opencodeId(src.transcript) !== src.session_id) return null;
+    try {
+      const { parts } = opencodeParts(src.transcript);
+      const end = parts.findIndex((p) => p.id === src.anchor);
+      if (end < 0) return null;
+      return budget(parts.slice(0, end + 1).filter((p) => p.data.type === "text" && typeof p.data.text === "string").slice(-MAX_ENTRIES).map((p) => ({ role: p.role, text: String(p.data.text) }))) || null;
+    } catch {
+      return null;
+    }
+  }
   if (!src.host || !src.transcript || !src.anchor || !existsSync(src.transcript)) return null;
   const text =
     src.host === "pi"
@@ -149,6 +161,13 @@ export function expandSource(src: SourcePointer): string | null {
 
 /** 当前 transcript 的最新定位点；文件不存在或没有可用条目时返回 null。 */
 export function latestAnchor(host: Host, transcriptPath: string): string | null {
+  if (host === "opencode") {
+    try {
+      return opencodeParts(transcriptPath).parts.filter((p) => p.data.type === "text").at(-1)?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
   if (!existsSync(transcriptPath)) return null;
   const lines = linesOf(transcriptPath);
   if (host === "pi") {
