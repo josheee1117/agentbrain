@@ -25,3 +25,12 @@ agentbrain：以 abrain 为架构母体的本地 Agent 记忆系统。Pi、Claud
 - 范围纪律：不加任务外功能/抽象/防御分支；v2 正式范围、seam 与 out-of-scope 见设计 §4/§20，不要把 Design Gate 当作实现者自由选项。
 - 复杂度纪律（§2.2）：预算类参数（超时、重试、批大小）默认写死在代码里，不新增配置键；确需按机器或阶段调整的才留成配置。任何"迁移期双写门"形态的开关都不得引入。
 - 参考实现在 `~/code_me/pi-astack/extensions/{abrain,sediment,memory,_shared}`（只读参考，勿改动）。
+
+## 本地验证技能 / Local verification skill
+
+- 本仓库有一个验证技能（随仓库提交）：`.agents/skills/verify-agentbrain/SKILL.md`，功能地图在 `.agents/skills/verify-agentbrain/features/README.md`，控制脚本 `.agents/skills/verify-agentbrain/verify.sh doctor|run|cleanup`。
+- 适用工具：Codex 与 Pi（pstack-pi）直接读取 `.agents/skills/verify-agentbrain/`；Claude Code 通过软链接 `.claude/skills/verify-agentbrain` 读取同一份文件。`/maintain-verification-skill` 由 pstack-pi 提供。
+- 任何 agent 改完代码，必须先按该技能验证并给出证据（`~/.cache/verify-evidence/agentbrain/`），才能说完成。
+- 每个工作日应跑一次维护：`/maintain-verification-skill`（没有该命令时：对照最近提交，更新功能地图和 SKILL.md 中过期的命令/入口，再完整跑一遍 `verify.sh run`），让功能地图跟代码保持一致。
+- 这些文件随仓库提交，所有 agent 都能读到。
+- This repo has a verification skill (tracked in git) at `.agents/skills/verify-agentbrain/SKILL.md` with a feature map at `.agents/skills/verify-agentbrain/features/README.md`. Any agent must use it to verify changes (with evidence) before calling them done. A weekday daily maintenance pass should run `/maintain-verification-skill` (or, without it: diff recent commits, update stale feature-map entries/commands, then re-run `verify.sh run`) to keep the map in sync with code. These files are tracked in git so every agent can read them. Tools: Codex and Pi (pstack-pi) read `.agents/skills/verify-agentbrain/` directly; Claude Code reads it via the symlink `.claude/skills/verify-agentbrain`. `/maintain-verification-skill` comes from pstack-pi.
