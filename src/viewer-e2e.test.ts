@@ -108,3 +108,20 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.doesNotMatch(hook(), /ab-used/);
   assert.doesNotMatch(readFileSync(join(fakeHome, ".config/opencode/AGENTS.md"), "utf8"), /ab-used/);
 });
+
+test("库被别的进程占着写锁时，召回 hook 照常输出，统计放弃不等", () => {
+  const before = (db().prepare("SELECT COUNT(*) AS n FROM recall_runs").get() as { n: number }).n;
+  const lock = new DatabaseSync(join(home, "store.db"));
+  lock.exec("BEGIN IMMEDIATE");
+  try {
+    const t0 = Date.now();
+    const ctx = hook();
+    const ms = Date.now() - t0;
+    assert.match(ctx, /<agentbrain-recall>/);
+    assert.ok(ms < 2000, `hook 用了 ${ms}ms`);
+  } finally {
+    lock.exec("ROLLBACK");
+    lock.close();
+  }
+  assert.equal((db().prepare("SELECT COUNT(*) AS n FROM recall_runs").get() as { n: number }).n, before, "拿不到锁就不记");
+});

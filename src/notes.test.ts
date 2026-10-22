@@ -94,3 +94,13 @@ test("applyNotes：dry-run 不写；真写先备份原文件，四个宿主各�
   assert.equal(readFileSync(pi, "utf8").includes("agentbrain"), false);
   assert.ok(readFileSync(pi, "utf8").includes("- 别动我"));
 });
+
+test("--adopt 只换到下一个一级或二级标题为止，后面的用户内容原样保留", () => {
+  const edited = LEGACY_SECTION.replace("信现场", "问我");
+  for (const next of ["# 另一个一级标题", "## 另一个二级标题"]) {
+    const tail = `${next}\n\n- 用户自己的规则\n`;
+    const p = planNotes(edited + "\n\n" + tail, false, true);
+    assert.equal(p.action, "adopt");
+    assert.ok(p.next!.endsWith(tail), next);
+  }
+});

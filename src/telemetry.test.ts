@@ -119,3 +119,31 @@ test("对话里一条带时间的回复都没有时判断不了失败，保持�
   assert.equal(markFailedTurns(s.workDb, "codex", "s8", [{ anchor: "0", role: "assistant", text: "回答" }]), 0);
   assert.equal((s.workDb.prepare("SELECT failed FROM recall_runs").get() as any).failed, 0);
 });
+
+test("parseAbUsed：段尾标点、顿号和逗号分隔都认", () => {
+  assert.deepEqual(parseAbUsed("ab-used: 标题 (7f3c2a1b)。"), [{ id: "7f3c2a1b", title: "标题" }]);
+  assert.deepEqual(parseAbUsed("ab-used: 标题 (7f3c2a1b)."), [{ id: "7f3c2a1b", title: "标题" }]);
+  const two = [{ id: "7f3c2a1b", title: "甲" }, { id: "b81d44e7", title: "乙" }];
+  assert.deepEqual(parseAbUsed("ab-used: 甲 (7f3c2a1b)、乙 (b81d44e7)"), two);
+  assert.deepEqual(parseAbUsed("ab-used: 甲 (7f3c2a1b)，乙 (b81d44e7)"), two);
+  assert.deepEqual(parseAbUsed("ab-used: 甲 (7f3c2a1b), 乙 (b81d44e7)"), two);
+  assert.deepEqual(parseAbUsed("ab-used: 先读配置、再改代码 (7f3c2a1b)"), [{ id: "7f3c2a1b", title: "先读配置、再改代码" }], "标题里的顿号不切开");
+});
+
+test("标注率按召回轮一一对应：一轮里两条回复都写 ab-used 只算一轮；没召回的轮写了也不算", () => {
+  const s = new Store(":memory:", ":memory:");
+  const a = s.remember(null, null, false, { kind: "rule", text: "调用 pi 做测试时用临时库", confirmed: true, source: src });
+  const ctx = { host: "claude" as const, session_id: "s7", transcript: null, project_id: null };
+  const t1 = new Date("2026-10-21T01:00:00Z");
+  logRecallRun(s.workDb, ctx, "hit", 1, 1, true, t1);
+  logInjections(s.workDb, ctx, "recall", [a], t1);
+  logRecallRun(s.workDb, ctx, "nohit", 0, 1, true, new Date("2026-10-21T01:10:00Z"));
+  const id = a.slice(0, 8);
+  scanSession(s.workDb, "claude", "s7", [
+    { anchor: "x1", role: "assistant", text: `先说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:01:00.000Z" },
+    { anchor: "x2", role: "assistant", text: `再说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:02:00.000Z" },
+    { anchor: "x3", role: "assistant", text: `下一轮没召回\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:11:00.000Z" },
+  ], () => "调用 pi 做测试时用临时库", null, new Date("2026-10-21T02:00:00Z"));
+  const h = buildViewData(s, new Date("2026-10-21T02:00:00Z")).telemetry.hosts.find((x) => x.host === "claude")!;
+  assert.deepEqual({ recall_turns: h.recall_turns, marked_turns: h.marked_turns }, { recall_turns: 1, marked_turns: 1 });
+});
