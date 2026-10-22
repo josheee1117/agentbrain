@@ -8,7 +8,8 @@ import { cleanTranscript, isPiWorker, isWorkerTranscript } from "./transcript.ts
 import { buildMessages, validate, type ExtractWindow } from "./extract.ts";
 import { Store } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
-import { recallableUnconfirmed } from "./l2.ts";
+import { recallable } from "./visibility.ts";
+const recallableUnconfirmed = (p: Parameters<typeof recallable>[0]) => !p.confirmed && recallable(p, true);
 import { guidanceBlock, GUIDANCE_MAX_CHARS } from "./recall.ts";
 import { workerQuoteAudit } from "./audit.ts";
 

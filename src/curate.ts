@@ -119,13 +119,10 @@ export function applyActions(store: Store, run: string, actions: Action[], props
   };
   for (const a of actions) {
     const p = props.get(a.id);
-    if (!p || p.confirmed_by === "user" || p.state !== "candidate") continue; // 二次把关
+    if (!p || p.confirmed || p.state !== "active") continue; // 二次把关
     if (a.op === "promote") {
-      const x = done({ op: a.op, id: p.id, events: [store.lifecycle("curate", p.id, null, { action: "promote", run, verdict: "keep" })] });
-      if (a.guidance && !p.guidance) {
-        x.events.push(store.lifecycle("tag", p.id, null, { guidance: true, run }));
-        onProgress(applied);
-      }
+      // 留下：条目本来就有效，不写状态事件；审稿认定是干活偏好的才打 guidance
+      if (a.guidance && !p.guidance) done({ op: a.op, id: p.id, events: [store.lifecycle("tag", p.id, null, { guidance: true, run })] });
     } else if (a.op === "discard") {
       done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", run, note: `${run}: ${a.reason}`.slice(0, 300) })] });
     } else if (a.op === "rewrite") {
@@ -160,7 +157,7 @@ export function applyActions(store: Store, run: string, actions: Action[], props
 }
 
 /**
- * 撤销一次 --apply：转正的退回候选区，归档的恢复，改写生成的新条目归档。
+ * 撤销一次 --apply：打上的 guidance 收回，归档的恢复，改写生成的新条目归档。
  * 只撤销仍然是"这次运行写下的最后一步"的动作：之后被用户确认、被别的运行或手动操作改过的条目不动（不重复撤销，也不撤掉后来的运行）。
  */
 /**
@@ -177,7 +174,6 @@ export function appliedFromLog(store: Store, run: string): RunReport["applied"] 
   for (const e of store.curateRunEvents(run)) {
     if (e.kind === "remember" && e.body.curate?.of) entry(e.body.curate.of, "rewrite").created = e.id;
     else if (!e.target_id) continue;
-    else if (e.kind === "curate" && e.body.action === "promote") entry(e.target_id, "promote").events.unshift(e.id);
     else if (e.kind === "tag") entry(e.target_id, "promote").events.push(e.id);
     else if (e.kind === "archive") {
       const x = entry(e.target_id, e.body.reason === "duplicate" ? "merge" : e.body.into ? "rewrite" : "discard");
@@ -198,11 +194,14 @@ export function undoRun(store: Store, report: RunReport): number {
     const p = props.get(a.id);
     const mine = (ev: string | undefined) => !!ev && store.lastStateEvent(a.id) === ev;
     if (p && p.confirmed_by !== "user") {
-      if (a.op === "promote" && p.curated && mine(a.events[0])) {
-        store.lifecycle("curate", p.id, null, { action: "unpromote", run: report.run });
+      if (a.op === "promote") {
+        // 旧版本的报告第一个事件是 curate（现在重放时不起作用），guidance tag 在最后
+        const tag = a.events[a.events.length - 1];
         // guidance 只在最近一次改它的仍是本次运行的 tag 时才收回（用户之后自己改过就不动）
-        if (p.guidance && a.events.length > 1 && store.lastGuidanceTag(p.id) === a.events[1]) store.lifecycle("tag", p.id, null, { guidance: false });
-        n++;
+        if (p.guidance && tag && store.lastGuidanceTag(p.id) === tag) {
+          store.lifecycle("tag", p.id, null, { guidance: false });
+          n++;
+        }
       } else if ((a.op === "discard" || a.op === "merge" || a.op === "rewrite") && p.state === "archived" && mine(a.events[a.events.length - 1])) {
         store.lifecycle("reactivate", p.id, null);
         n++;

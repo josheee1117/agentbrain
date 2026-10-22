@@ -274,7 +274,6 @@ async function cmdRemember(argv: string[]): Promise<void> {
       project: { type: "string" },
       "for-workers": { type: "boolean", default: false },
       confirmed: { type: "boolean", default: false },
-      direct: { type: "boolean", default: false },
       "from-worker": { type: "string" },
     },
     strict: true,
@@ -317,10 +316,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
       transcript = source.transcript;
       missingWorker = w.missing;
     }
-    // v3：agent 自己判断要记的进候选区，等后台审稿；用户明确要记的（--confirmed）和人工迁移（--direct）直接进正式库。
-    // AB_STAGING=off 时回到 v2 行为（回滚开关，与 ab work 一致）。
     const confirmed = values.confirmed === true;
-    const staged = !confirmed && !values.direct && process.env.AB_STAGING !== "off";
     const id = store.remember(projectId, source.session_id, false, {
       kind,
       text: values.text,
@@ -328,16 +324,11 @@ async function cmdRemember(argv: string[]): Promise<void> {
       for_workers: values["for-workers"] || undefined,
       confirmed,
       source,
-      ...(staged ? { candidate: true } : {}),
-      ...(values.direct && !confirmed ? { direct: true } : {}),
     });
-    let out = staged
-      ? `已放进候选区 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`
-      : `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
+    let out = `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
     if (missingWorker) out += "\n未找到子代理会话记录";
     else if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
-    if (staged) out += `\n候选：后台审稿后决定去留，不进 brief、召回和搜索。用户明确要求记的才加 --confirmed。`;
-    else if (!confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
+    if (!confirmed) out += `\n未确认：不进 brief，用户认可后 ab confirm ${short(id)}`;
     const reason = await updateVectors(store);
     if (reason) out += `\n向量未更新：${reason}`;
     console.log(out);
@@ -427,7 +418,7 @@ function cmdGet(argv: string[]): void {
   try {
     const p = findByPrefix(store, positionals[0]);
     const names = namesOf(store);
-    const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : p.state === "candidate" ? "（候选，待审稿）" : "";
+    const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
       `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
@@ -598,12 +589,11 @@ function cmdGuidance(argv: string[]): void {
 function cmdAudit(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { apply: { type: "boolean", default: false }, since: { type: "string" } },
+    options: { apply: { type: "boolean", default: false } },
     strict: true,
     allowPositionals: true,
   });
-  if (positionals[0] === "agent-remember") return auditAgentRemember(values.since, values.apply === true);
-  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply] | ab audit agent-remember --since <ISO 时间> [--apply]");
+  if (positionals[0] !== "worker-quotes") die("用法: ab audit worker-quotes [--apply]");
   const store = open();
   try {
     const saidInMain = mainSessionQuotes(store);
@@ -622,64 +612,6 @@ function cmdAudit(argv: string[]): void {
   }
 }
 
-/**
- * agent 用 ab remember 直接写进正式库、没加 --confirmed 的条目（v3 候选区上线前的旧行为）→ 移回候选区，交给审稿。
- * 只挑：手工写入（非自动抽取、非导入、非 --direct 迁移）、写入时未确认、不是纠正、当前在正式库、用户没确认过。可用 ab stage <id> --undo 撤销。
- */
-function auditAgentRemember(since: string | undefined, apply: boolean): void {
-  if (!since || Number.isNaN(Date.parse(since))) die("用法: ab audit agent-remember --since <ISO 时间，如 2026-10-14T08:46:00Z> [--apply]");
-  const from = new Date(since).toISOString();
-  const store = open();
-  try {
-    const rows = store.rememberEventsSince(from);
-    const props = store.project().props;
-    const names = namesOf(store);
-    const plan: Proposition[] = [];
-    for (const r of rows) {
-      const b = r.body;
-      if ((b.origin ?? "manual") !== "manual" || b.confirmed !== false || b.supersedes || b.candidate || b.direct) continue;
-      const p = props.get(r.id);
-      if (!p || p.state !== "active" || p.confirmed_by === "user") continue;
-      plan.push(p);
-    }
-    const line = (p: Proposition) => `  [${short(p.id)}] ${p.ts} ${p.source.host ?? "?"} ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${p.confirmed ? `（已确认:${p.confirmed_by}）` : "（未确认）"}: ${p.text.split("\n")[0]}`;
-    console.log(`${from} 之后 agent 直接写进正式库、未经用户确认的条目：${plan.length} 条（用户确认过的不动）。`);
-    for (const p of plan) console.log(line(p));
-    if (!apply) return console.log(plan.length ? "预览，未写入。加 --apply 把这些条目移回候选区。" : "");
-    for (const p of plan) store.lifecycle("stage", p.id, null, { action: "stage", reason: "agent_remember", note: "agent 用 ab remember 直接写进正式库，未经审稿" });
-    console.log(`已移回候选区 ${plan.length} 条。撤销单条：ab stage <id> --undo；用户亲自 ab confirm 也会直接转正。`);
-  } finally {
-    store.close();
-  }
-}
-
-function cmdStage(argv: string[]): void {
-  const { values, positionals } = parseArgs({ args: argv, options: { undo: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
-  if (!positionals.length) die("用法: ab stage <id 前缀…> [--undo]");
-  const store = open();
-  try {
-    for (const prefix of positionals) {
-      const p = findByPrefix(store, prefix);
-      if (values.undo) {
-        if (!p.staged) {
-          console.log(`未变 [${short(p.id)}]：不是用 ab stage 移进候选区的`);
-          continue;
-        }
-        store.lifecycle("stage", p.id, null, { action: "unstage" });
-        console.log(`已移回正式库 [${short(p.id)}] ${p.text.split("\n")[0]}`);
-      } else {
-        if (p.confirmed_by === "user" || p.state !== "active") {
-          console.log(`未变 [${short(p.id)}]：${p.confirmed_by === "user" ? "用户确认过的不动" : `当前状态 ${p.state}`}`);
-          continue;
-        }
-        store.lifecycle("stage", p.id, null, { action: "stage", reason: "agent_remember" });
-        console.log(`已移进候选区 [${short(p.id)}] ${p.text.split("\n")[0]}`);
-      }
-    }
-  } finally {
-    store.close();
-  }
-}
 
 /**
  * 用户主会话里说过的话（所有登记会话里非 worker 会话的 user 轮），以及每个 worker 会话的 user 轮（派活提示）。
@@ -917,7 +849,6 @@ function workDeps(store: Store): WorkDeps {
     chat = typeof key === "string" ? { chat: chatClient(cfg, key, EXTRACT_TIMEOUT_MS), model: cfg.model } : { error: "no_key", message: key.error };
   }
   return {
-    staging: process.env.AB_STAGING !== "off",
     store,
     now: () => new Date(),
     chat,
@@ -1105,11 +1036,10 @@ function cmdStatus(argv: string[] = []): void {
 const USAGE = `用法:
   ab brief [项目名] [--worker]      开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
-              [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed] [--direct]
+              [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--from-worker <claude|codex|pi|opencode>:<session_id>]
-                                    干活时不用记：后台会从会话里自动抽取并审稿。只有用户明确要你记时才用，并加 --confirmed
-                                    不加 --confirmed 的写进候选区，等后台审稿（不进 brief、召回、搜索）
-                                    --direct 不经候选区直接写进正式库（未确认），只用于人工迁移数据
+                                    干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
+                                    不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
@@ -1125,9 +1055,6 @@ const USAGE = `用法:
   ab archive <id 前缀> [--reactivate]
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
   ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
-  ab audit agent-remember --since <ISO 时间> [--apply]
-                                    找出该时间后 agent 用 ab remember 直接写进正式库、未经用户确认的条目；--apply 移回候选区
-  ab stage <id 前缀…> [--undo]          把条目移进候选区（用户确认过的不动）；--undo 撤销，移回正式库
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
   ab view [--out <路径>] [--no-open]  生成一个本地 HTML 页面浏览全部记忆、关系和向量地图（默认 ~/.agentbrain/view.html）
@@ -1188,10 +1115,10 @@ async function cmdCurate(argv: string[]): Promise<void> {
     const props = store.project().props;
     const names = namesOf(store);
     const cap = values.limit ? Math.max(1, Number(values.limit) || 1) : cfg.batchSize * cfg.maxBatches;
-    const pending = [...props.values()].filter((p) => p.state === "candidate" && p.confirmed_by !== "user" && (!onlyHost || p.source.host === onlyHost)).sort((a, b) => a.seq - b.seq);
+    const pending = [...props.values()].filter((p) => p.state === "active" && !p.confirmed && (!onlyHost || p.source.host === onlyHost)).sort((a, b) => a.seq - b.seq);
     const cands = pending.slice(0, cap);
     if (!cands.length) {
-      console.log("候选区是空的，没有要审的。");
+      console.log("没有未确认的有效条目，没有要审的。");
       return;
     }
     const { panel, arbiter, missing } = connectPanel(cfg);
@@ -1208,7 +1135,7 @@ async function cmdCurate(argv: string[]): Promise<void> {
       if (e instanceof QuotaExhausted) die(`审稿团停下了，什么都没写：${e.message}`);
       throw e;
     }
-    // 审稿要几分钟：期间用户可能确认/归档了某条。按此刻的库重新规划，planAction 会跳过已不是候选或已被用户确认的
+    // 审稿要几分钟：期间用户可能确认/归档了某条。按此刻的库重新规划，planAction 会跳过已归档或已确认的
     const fresh = store.project().props;
     const actions = planAll(results, fresh);
     const report: RunReport = {
@@ -1280,7 +1207,6 @@ async function main(): Promise<void> {
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
-    if (cmd === "stage") return cmdStage(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus(rest);
     if (cmd === "capture") return await cmdCapture(rest);
     if (cmd === "work") return await cmdWork(rest);

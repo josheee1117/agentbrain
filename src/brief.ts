@@ -124,7 +124,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   const tails = [
     worker
       ? `你是被派活的子代理：不写记忆，后台会从会话里自动抽取。\n${SEARCH_HINT}`
-      : `干活时不用记记忆，后台会从会话里自动抽取并审稿；只有用户明确要你记时才用 ab remember --confirmed。\n${SEARCH_HINT}`,
+      : `干活时不用记记忆，后台会从会话里自动抽取；只有用户明确要你记时才用 ab remember --confirmed。\n${SEARCH_HINT}`,
   ];
   const auto = pending.filter((p) => p.origin === "extract").length;
   if (pending.length && !worker)

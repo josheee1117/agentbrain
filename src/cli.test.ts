@@ -179,74 +179,23 @@ test("清单改名后 status 报孤立项目", () => {
   }
 });
 
-test("v3：agent 不带 --confirmed 的 remember 写进候选区，不进 brief/search；用户 confirm 直接转正", () => {
-  const r = ab(["remember", "--kind", "pitfall", "--text", "候选区里的自记坑", "--summary", "自记"], alpha);
+test("agent 不带 --confirmed 的 remember：照常生效、标未确认，能搜到、不进 brief；用户 confirm 后进 brief（§8.8）", () => {
+  const r = ab(["remember", "--kind", "pitfall", "--text", "自己记下的未确认坑", "--summary", "自记"], alpha);
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /已放进候选区 \[[0-9a-f]{8}\]/);
-  assert.match(r.out, /后台审稿后决定去留/);
-  assert.doesNotMatch(r.out, /未确认：不进 brief/);
+  assert.match(r.out, /已记住 \[[0-9a-f]{8}\]/);
+  assert.match(r.out, /未确认：不进 brief/);
   const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
-  assert.doesNotMatch(ab(["brief"], alpha).out, /候选区里的自记坑/);
-  assert.doesNotMatch(ab(["search", "候选区里的自记坑"], alpha).out, /候选区里的自记坑/);
-  assert.match(ab(["get", id], alpha).out, /候选，待审稿/);
+  assert.doesNotMatch(ab(["brief"], alpha).out, /自己记下的未确认坑/);
+  assert.match(ab(["search", "自己记下的未确认坑"], alpha).out, new RegExp(`\\[${id}\\].*\\[未确认\\]`));
+  assert.doesNotMatch(ab(["get", id], alpha).out, /候选/);
   assert.match(ab(["confirm", id], alpha).out, new RegExp(`已确认 \\[${id}\\]`));
-  assert.match(ab(["brief"], alpha).out, /候选区里的自记坑/);
-});
-
-test("v3：--confirmed 直接进正式库；AB_STAGING=off 回到旧行为", () => {
+  assert.match(ab(["brief"], alpha).out, /自己记下的未确认坑/);
   const c = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "用户要记的坑直接生效", "--summary", "用户要记"], alpha);
-  assert.equal(c.code, 0, c.err);
-  assert.match(c.out, /已记住 \[/);
-  assert.match(ab(["brief"], alpha).out, /用户要记的坑直接生效/);
-  const off = execFileSync("node", ["--import", networkGuard, CLI, "remember", "--kind", "note", "--text", "关掉候选区的自记", "--summary", "回滚"], {
-    cwd: alpha,
-    encoding: "utf8",
-    env: { ...process.env, AB_HOME: home, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "", PI_SESSION_ID: SESSION, AB_STAGING: "off" },
-  });
-  assert.match(off, /未确认：不进 brief/);
-  assert.match(ab(["search", "关掉候选区的自记"], alpha).out, /\[未确认\]/);
+  assert.match(ab(["brief"], alpha).out, /用户要记的坑直接生效/, c.err);
+  assert.notEqual(ab(["stage", id], alpha).code, 0, "ab stage 已删除");
 });
-
-test("v3：ab audit agent-remember 预览/应用，ab stage --undo 撤销；用户确认的、自动抽取的不动", () => {
-  const own = join(dir, "stage-home");
-  const since = new Date(Date.now() - 1000).toISOString();
-  // 候选区上线前 agent 的旧行为（等同 AB_STAGING=off）：直接写进正式库、未确认
-  const legacy = { AB_STAGING: "off" };
-  const direct = ab(["remember", "--kind", "pitfall", "--text", "旧行为直接写进正式库的坑", "--summary", "迁移"], alpha, own, legacy);
-  assert.equal(direct.code, 0, direct.err);
-  const did = direct.out.match(/\[([0-9a-f]{8})\]/)![1];
-  const user = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "用户确认的坑不许动", "--summary", "用户"], alpha, own);
-  const uid = user.out.match(/\[([0-9a-f]{8})\]/)![1];
-  const later = ab(["remember", "--kind", "rule", "--text", "又一条直接写的规则", "--summary", "迁移"], alpha, own, legacy);
-  const migr = ab(["remember", "--direct", "--kind", "note", "--text", "人工迁移的条目", "--summary", "迁移"], alpha, own);
-  const mid = migr.out.match(/\[([0-9a-f]{8})\]/)![1];
-  const lid = later.out.match(/\[([0-9a-f]{8})\]/)![1];
-  assert.equal(ab(["confirm", lid], alpha, own).code, 0); // 用户事后确认过：不动
-
-  const dry = ab(["audit", "agent-remember", "--since", since], alpha, own);
-  assert.equal(dry.code, 0, dry.err);
-  assert.match(dry.out, /1 条/);
-  assert.match(dry.out, new RegExp(`\\[${did}\\]`));
-  assert.doesNotMatch(dry.out, new RegExp(`\\[${uid}\\]|\\[${lid}\\]|\\[${mid}\\]`)); // --direct 迁移的不算 agent 自记
-  assert.match(dry.out, /预览，未写入/);
-  assert.match(ab(["search", "旧行为直接写进正式库的坑"], alpha, own).out, /旧行为直接写进正式库的坑/);
-
-  const applied = ab(["audit", "agent-remember", "--since", since, "--apply"], alpha, own);
-  assert.match(applied.out, /已移回候选区 1 条/);
-  assert.doesNotMatch(ab(["search", "旧行为直接写进正式库的坑"], alpha, own).out, /旧行为直接写进正式库的坑/);
-  assert.match(ab(["get", did], alpha, own).out, /候选，待审稿/);
-  assert.match(ab(["audit", "agent-remember", "--since", since], alpha, own).out, /0 条/);
-
-  assert.match(ab(["stage", uid], alpha, own).out, /用户确认过的不动/);
-  assert.match(ab(["stage", lid, "--undo"], alpha, own).out, /不是用 ab stage 移进候选区的/);
-  assert.match(ab(["stage", did, "--undo"], alpha, own).out, new RegExp(`已移回正式库 \\[${did}\\]`));
-  assert.match(ab(["search", "旧行为直接写进正式库的坑"], alpha, own).out, /\[未确认\]/);
-  const bad = ab(["audit", "agent-remember"], alpha, own);
-  assert.notEqual(bad.code, 0);
-});
-
 test("未带 --confirmed 的坑不进 brief，search 标未确认，confirm 后进 brief", () => {
-  const r = ab(["remember", "--direct", "--kind", "pitfall", "--text", "agent 自记的坑", "--summary", "自记"], alpha);
+  const r = ab(["remember", "--kind", "pitfall", "--text", "agent 自记的坑", "--summary", "自记"], alpha);
   assert.equal(r.code, 0, r.err);
   assert.match(r.out, /未确认：不进 brief/);
   const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
@@ -363,7 +312,7 @@ test("没有 embedding 配置：search 提示仅全文检索，status 报不可�
   const status = ab(["status"], alpha);
   assert.equal(status.code, 0, status.err);
   assert.match(status.out, /向量: 不可用（.*embedding\.json/);
-  const remembered = ab(["remember", "--direct", "--kind", "note", "--text", "无配置也记下", "--summary", "降级"], alpha);
+  const remembered = ab(["remember", "--kind", "note", "--text", "无配置也记下", "--summary", "降级"], alpha);
   assert.equal(remembered.code, 0, remembered.err);
   assert.match(remembered.out, /\n向量未更新：.*embedding\.json\n$/);
   const id = remembered.out.match(/\[([0-9a-f]{8})\]/)![1];
@@ -814,7 +763,7 @@ test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说�
 
 // ---------- §11.7 Pi 状态栏：ab status --line / recall 条数 / 扩展接线（2026-10-20） ----------
 
-test("ab status --line：只数到期待复审（不数候选区和已确认）和近 7 天失败窗口", async () => {
+test("ab status --line：只数到期待复审（不数刚记下的和已确认）和近 7 天失败窗口", async () => {
   const own = join(dir, "status-line-store");
   const { Store } = await import("./store.ts");
   const s = new Store(join(own, "store.db"), join(own, "index.db"));
@@ -829,8 +778,8 @@ test("ab status --line：只数到期待复审（不数候选区和已确认）�
   const empty = ab(["status", "--line"], alpha, own);
   assert.equal(empty.code, 0, empty.err);
   assert.deepEqual(JSON.parse(empty.out), { review: 1, work_failed: 0 });
-  // 候选区条目不算待确认
-  assert.equal(ab(["remember", "--kind", "pitfall", "--text", "候选区里的坑", "--summary", "讨论"], alpha, own).code, 0);
+  // 刚记下的未确认条目还没到期，不算待复审
+  assert.equal(ab(["remember", "--kind", "pitfall", "--text", "刚记下的坑", "--summary", "讨论"], alpha, own).code, 0);
   assert.deepEqual(JSON.parse(ab(["status", "--line"], alpha, own).out), { review: 1, work_failed: 0 });
   const s2 = new Store(join(own, "store.db"), join(own, "index.db"));
   const ins = s2.workDb.prepare(

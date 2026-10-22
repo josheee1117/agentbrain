@@ -62,8 +62,6 @@ export interface WorkDeps {
   chat: { chat: Chat; model: string } | { error: WorkError; message: string };
   embedder: Embedder | null;
   registry: RegistryEntry[];
-  /** v3 候选区：自动抽取的新条目写成候选（默认开）。关掉回到 v2 直接写正式库（回滚用，CLI 里 AB_STAGING=off）。 */
-  staging?: boolean;
   registryDir: string;
   resolveProject: (cwd: string) => { name: string; path: string } | null;
   projectId: (name: string) => string;
@@ -486,7 +484,6 @@ export function admit(
   projectId: string,
   windowId: string,
   props: Map<string, Proposition>,
-  staging = false,
 ): Admission {
   const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
   for (const c of candidates) {
@@ -499,8 +496,7 @@ export function admit(
     };
     const target = c.relation.target ? props.get(c.relation.target) : undefined;
     const pid = c.scope === "global" ? null : projectId;
-    // 候选区模式下重复也写成候选（带 relation 指向目标），不给正式条目追加来源、不触发印证转正：正式库只由审稿人改
-    if (!staging && !c.unreconciled && c.relation.type === "duplicate" && target && target.state === "active") {
+    if (!c.unreconciled && c.relation.type === "duplicate" && target && target.state === "active") {
       const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence, window_id: windowId };
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
@@ -532,7 +528,6 @@ export function admit(
       ...(c.said_at ? { said_at: c.said_at } : {}),
       ...(c.guidance ? { guidance: true } : {}),
       ...(c.value ? { value: c.value } : {}),
-      ...(staging ? { candidate: true } : {}), // v3：自动抽取只写候选区，等审稿人裁决
     };
     if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
       body.unreconciled = true;
@@ -612,7 +607,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
       unreconciled: hits.some((n) => !shown.has(n.prop.id)) || (cand.relation.type === "new" && hits.some((n) => !handled.has(n.prop.id))),
     };
   });
-  return admit(checked, s, projectId, c.id, deps.store.project().props, deps.staging !== false);
+  return admit(checked, s, projectId, c.id, deps.store.project().props);
 }
 
 function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {

@@ -129,16 +129,16 @@ test("connectPanel：缺 key 的成员列进 missing", () => {
   assert.equal(r2.arbiter?.name, "s");
 });
 
-test("执行与撤销：沉淀/改写/并入/丢弃都可逆；用户确认的不动；非候选跳过", async () => {
+test("执行与撤销：沉淀/改写/并入/丢弃都可逆；用户确认的不动；已确认、已归档的跳过", async () => {
   const s = new Store(":memory:", ":memory:");
-  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src, ...extra });
+  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src, ...extra });
   const keep = mk("keep", { trigger: "当汇报时" });
   const rew = mk("rew");
   const dis = mk("dis");
   const mer = mk("mer");
   const live = s.remember(null, "s", false, { kind: "rule", text: "live", confirmed: true, source: src });
   const userCand = mk("user");
-  s.lifecycle("confirm", userCand, null, {}); // 用户确认：离开候选区
+  s.lifecycle("confirm", userCand, null, {}); // 用户确认：审稿不再动它
   const props0 = s.project().props;
   const verdicts = [
     { id: "c1", verdict: "keep", class: "A", scenario: "当汇报时" },
@@ -170,29 +170,17 @@ test("执行与撤销：沉淀/改写/并入/丢弃都可逆；用户确认的�
   const n = undoRun(s, { run: "run1", at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied });
   assert.equal(n, 4);
   const p2 = s.project().props;
-  for (const id of [keep, rew, dis, mer]) assert.equal(p2.get(id)!.state, "candidate", id);
+  for (const id of [keep, rew, dis, mer]) assert.equal(p2.get(id)!.state, "active", id);
   assert.equal(p2.get(keep)!.guidance, false);
   assert.equal(p2.get(created)!.state, "archived");
 });
 
-test("planAction：用户确认的条目、非候选一律 skip", () => {
+test("planAction：用户确认的条目、已确认或已归档的一律 skip", () => {
   const s = new Store(":memory:", ":memory:");
   const a = s.remember(null, "s", false, { kind: "rule", text: "a", confirmed: true, source: src });
   const p = s.project().props.get(a)!;
   const res = { id: a, votes: [], decision: { route: "unanimous" as const, final: { verdict: "discard" as const, class: "none" as const, guidance: false, reason: "" } } };
   assert.equal(planAction(p, res, s.project().props).op, "skip");
-});
-
-test("curate 事件：promote 后再 unpromote 回候选；用户确认的忽略；从没候选过的不受 unpromote 影响", () => {
-  const s = new Store(":memory:", ":memory:");
-  const live = s.remember(null, "s", false, { kind: "rule", text: "a", confirmed: false, source: src });
-  s.lifecycle("curate", live, null, { action: "unpromote", run: "r" });
-  assert.equal(s.project().props.get(live)!.state, "active");
-  const c = s.remember(null, "s", false, { kind: "rule", text: "c", confirmed: false, candidate: true, source: src });
-  s.lifecycle("curate", c, null, { action: "promote", run: "r" });
-  assert.equal(s.project().props.get(c)!.state, "active");
-  s.lifecycle("curate", c, null, { action: "unpromote", run: "r" });
-  assert.equal(s.project().props.get(c)!.state, "candidate");
 });
 
 test("429 退避重试后成功，不算失败；limit 限住并发", async () => {
@@ -303,7 +291,7 @@ test("primary 模式：配置校验；参考意见先跑并附给主审；结论
   assert.equal(r.decision.final?.verdict, "discard");
   assert.deepEqual(r.votes.map((v) => [v.name, !!v.advisory]), [["a", false], ["b", true], ["c", true]]);
   const s = new Store(":memory:", ":memory:");
-  const id = s.remember(null, "s", false, { kind: "rule", text: "x", confirmed: false, candidate: true, source: src });
+  const id = s.remember(null, "s", false, { kind: "rule", text: "x", confirmed: false, source: src });
   const plan = planAction(s.project().props.get(id)!, { ...r, id }, s.project().props);
   assert.equal(plan.op, "discard", "参考成员调用失败不挡主审的结论");
   const [u] = await judgeBatchPrimary([cand("a")], { name: "a", chat: dead }, [{ name: "b", chat: adv }], []);
@@ -330,26 +318,9 @@ test("primary 模式没有参考成员（主审单独判）：配置合法；不
   assert.equal(stats.length, 1);
 });
 
-test("stage 过的条目被 curate 转正：staged 清掉，unstage 不再动它；unpromote 回到候选并恢复 staged", () => {
-  const s = new Store(":memory:", ":memory:");
-  const id = s.remember(null, "s", false, { kind: "rule", text: "x", confirmed: false, source: src });
-  s.lifecycle("stage", id, null, { action: "stage", reason: "agent_remember" });
-  let p = s.project().props.get(id)!;
-  assert.deepEqual([p.state, p.candidate, p.staged], ["candidate", true, true]);
-  s.lifecycle("curate", id, null, { action: "promote", run: "r1", verdict: "keep" });
-  p = s.project().props.get(id)!;
-  assert.deepEqual([p.state, p.candidate, p.staged, p.curated], ["active", false, false, true]);
-  s.lifecycle("stage", id, null, { action: "unstage" });
-  p = s.project().props.get(id)!;
-  assert.deepEqual([p.state, p.candidate, p.staged], ["active", false, false], "转正后 unstage 不生效");
-  s.lifecycle("curate", id, null, { action: "unpromote", run: "r1" });
-  p = s.project().props.get(id)!;
-  assert.deepEqual([p.state, p.candidate, p.staged, p.curated], ["candidate", true, true, false]);
-});
-
 test("改写正文写 L1 前脱敏；撤销时用户已确认的转正条目不动也不计数", async () => {
   const s = new Store(":memory:", ":memory:");
-  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src, ...extra });
+  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src, ...extra });
   const keep = mk("keep", { trigger: "当汇报时" });
   const rew = mk("rew");
   const props0 = s.project().props;
@@ -368,7 +339,7 @@ test("改写正文写 L1 前脱敏；撤销时用户已确认的转正条目不�
   const p2 = s.project().props;
   assert.equal(p2.get(keep)!.state, "active");
   assert.equal(p2.get(keep)!.confirmed_by, "user");
-  assert.equal(p2.get(rew)!.state, "candidate");
+  assert.equal(p2.get(rew)!.state, "active");
 });
 
 test("持续 429 + 很短的 Retry-After：用完退避次数就停下，不无限重试；报告里的错误正文脱敏", async () => {
@@ -393,18 +364,18 @@ test("持续 429 + 很短的 Retry-After：用完退避次数就停下，不无�
 
 test("撤销只认这次运行写下的最后一步：A 撤销后 B 再转正，重复撤销 A 不会撤掉 B；改写的新条目被动过就不动", () => {
   const s = new Store(":memory:", ":memory:");
-  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src });
   const c = mk("c");
   const d = mk("d");
   const rep = (run: string, applied: any) => ({ run, at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied });
   const appliedA = applyActions(s, "A", [{ op: "promote", id: c, guidance: false, scenario: "当x时" }, { op: "discard", id: d, reason: "r" }], s.project().props);
-  assert.equal(undoRun(s, rep("A", appliedA)), 2);
+  assert.equal(undoRun(s, rep("A", appliedA)), 1, "留下不写事件，只撤丢弃");
   assert.equal(undoRun(s, rep("A", appliedA)), 0, "重复撤销什么都不做");
   const appliedB = applyActions(s, "B", [{ op: "promote", id: c, guidance: false, scenario: "当x时" }, { op: "discard", id: d, reason: "r" }], s.project().props);
   assert.equal(undoRun(s, rep("A", appliedA)), 0, "旧运行的撤销不撤后来的运行");
   assert.equal(s.project().props.get(c)!.state, "active");
   assert.equal(s.project().props.get(d)!.state, "archived");
-  assert.equal(undoRun(s, rep("B", appliedB)), 2);
+  assert.equal(undoRun(s, rep("B", appliedB)), 1);
   // 改写：新条目之后被手动归档再恢复（被动过），撤销不再归档它
   const e = mk("e");
   const appliedC = applyActions(s, "C", [{ op: "rewrite", id: e, text: "新正文", scenario: "当y时", guidance: false }], s.project().props);
@@ -413,12 +384,12 @@ test("撤销只认这次运行写下的最后一步：A 撤销后 B 再转正，
   s.lifecycle("reactivate", created, null);
   undoRun(s, rep("C", appliedC));
   assert.equal(s.project().props.get(created)!.state, "active");
-  assert.equal(s.project().props.get(e)!.state, "candidate");
+  assert.equal(s.project().props.get(e)!.state, "active");
 });
 
 test("applyActions 每写一步就回调（调用方据此落盘报告）；改写先记下新条目", () => {
   const s = new Store(":memory:", ":memory:");
-  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src });
   const a = mk("a");
   const b = mk("b");
   const snaps: string[] = [];
@@ -432,7 +403,7 @@ test("applyActions 每写一步就回调（调用方据此落盘报告）；改�
 
 test("撤销以 L1 为准：写库后报告没落盘（applied 为空）也能撤；转正后用户自己改过 guidance 不收回", () => {
   const s = new Store(":memory:", ":memory:");
-  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, candidate: true, source: src });
+  const mk = (text: string) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src });
   const a = mk("a");
   const b = mk("b");
   const c = mk("c");
@@ -446,16 +417,16 @@ test("撤销以 L1 为准：写库后报告没落盘（applied 为空）也能�
   const lost = { run: "R", at: "", dry_run: false, panel: [], arbiter: "a", results: [], stats: [], applied: [] };
   assert.equal(undoRun(s, lost), 4, "报告里 applied 为空，仍从 L1 找回 4 步");
   const props = s.project().props;
-  for (const id of [a, b, c, d]) assert.equal(props.get(id)!.state, "candidate");
+  for (const id of [a, b, c, d]) assert.equal(props.get(id)!.state, "active");
   assert.equal(props.get(a)!.guidance, false);
   assert.equal(props.get(created)!.state, "archived");
   assert.equal(undoRun(s, lost), 0, "重复撤销什么都不做");
-  // guidance：转正（带 guidance）后用户关掉再打开，撤销只退回候选，不清用户设的 guidance
+  // guidance：留下（带 guidance）后用户关掉再打开，撤销不清用户设的 guidance
   const e = mk("e");
   applyActions(s, "G", [{ op: "promote", id: e, guidance: true, scenario: "当z时" }], s.project().props);
   s.lifecycle("tag", e, null, { guidance: false });
   s.lifecycle("tag", e, null, { guidance: true });
-  assert.equal(undoRun(s, { ...lost, run: "G" }), 1);
-  assert.equal(s.project().props.get(e)!.state, "candidate");
+  assert.equal(undoRun(s, { ...lost, run: "G" }), 0);
+  assert.equal(s.project().props.get(e)!.state, "active");
   assert.equal(s.project().props.get(e)!.guidance, true);
 });

@@ -493,10 +493,10 @@ export type Action =
   | { op: "discard"; id: string; reason: string }
   | { op: "skip"; id: string; why: string };
 
-/** 把结论变成动作。只对候选生效；用户确认过的条目一律 skip（只进复核清单）。 */
+/** 把结论变成动作。只对未确认的有效条目生效；用户确认过的条目一律 skip（只进复核清单）。 */
 export function planAction(p: Proposition, res: CurateResult, liveProps: Map<string, Proposition>): Action {
   if (p.confirmed_by === "user") return { op: "skip", id: p.id, why: "用户确认过的条目不动，进复核清单" };
-  if (p.state !== "candidate") return { op: "skip", id: p.id, why: `不是候选（${p.state}）` };
+  if (p.state !== "active" || p.confirmed) return { op: "skip", id: p.id, why: p.confirmed ? `已确认（${p.confirmed_by}）` : `不是有效条目（${p.state}）` };
   const d = res.decision;
   const failed = res.votes.filter((v) => v.invalid === "call_failed" && !v.advisory).map((v) => v.name);
   if (failed.length) return { op: "skip", id: p.id, why: `审稿团有人没判（${failed.join("、")} 调用失败），不执行` };

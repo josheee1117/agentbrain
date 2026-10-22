@@ -5,8 +5,8 @@
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate";
 export type Host = "claude" | "codex" | "pi" | "opencode";
-/** candidate：v3 候选区（ab work 自动抽取写这里），不进召回、brief、搜索，等审稿人裁决（§21 2026-10-14 v3）。 */
-export type PropState = "active" | "archived" | "superseded" | "candidate";
+/** 只表示条目还在不在用；可信程度另看 confirmed / confirmed_by（visibility.ts 的 trustOf）。候选区已去掉（§8.8）。 */
+export type PropState = "active" | "archived" | "superseded";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */
 export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative";
 
@@ -77,9 +77,9 @@ export interface RememberBody {
   said_at?: string;
   /** 指导 agent 怎么干活的偏好（汇报方式、语气、工作流）。已确认的全局偏好每轮常驻注入（§21 2026-10-14 价值审计 C）。 */
   guidance?: boolean;
-  /** 写进候选区（v3）：投影成 state=candidate。 */
+  /** 旧版本（v3 候选区，§8.8 前）写下的候选标记。投影时忽略：条目照常是有效的未确认条目。 */
   candidate?: boolean;
-  /** ab remember --direct（人工迁移数据）写入：ab audit agent-remember 不把它当成 agent 自记。 */
+  /** 旧版本 ab remember --direct 写下的标记（候选区去掉后不再写，也不再读）。 */
   direct?: boolean;
   /** ab curate 改写生成的新条目：哪次运行、改写的是哪条（--undo 在报告没落盘时从 L1 找回）。 */
   curate?: { run: string; of: string };
@@ -235,12 +235,6 @@ export interface Proposition {
   topic_run?: string;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
   demoted: UnconfirmBody["reason"] | null;
-  /** 进过候选区（归档后再恢复也回到候选区，不会被恢复成正式条目）。 */
-  candidate: boolean;
-  /** 被 stage 事件从正式库移回候选区（unstage 只对它生效）。 */
-  staged: boolean;
-  /** 审稿团从候选区转正过（unpromote 只对它生效）。转正会清掉 staged。 */
-  curated: boolean;
   value: RememberBody["value"] | null;
 }
 
@@ -270,8 +264,6 @@ export function fold(rows: EventRow[]): Projection {
   let orphans = 0;
   let ephemeral = 0;
   let purged = 0;
-  /** 被 curate promote 时原本是 staged 的条目：unpromote 时恢复 staged。 */
-  const stagedBeforePromote = new Set<string>();
   for (const r of rows) {
     if (r.kind === "purge") continue;
     if (r.body === null) {
@@ -296,7 +288,7 @@ export function fold(rows: EventRow[]): Projection {
         source: b.source,
         for_workers: b.for_workers === true,
         confirmed: b.confirmed !== false,
-        state: b.candidate === true ? "candidate" : "active",
+        state: "active",
         supersedes: b.supersedes,
         pending_corrections: [],
         origin: b.origin ?? "manual",
@@ -318,9 +310,6 @@ export function fold(rows: EventRow[]): Projection {
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         demoted: null,
-        candidate: b.candidate === true,
-        staged: false,
-        curated: false,
         value: b.value ?? null,
       });
       continue;
@@ -336,13 +325,7 @@ export function fold(rows: EventRow[]): Projection {
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
       if ((b.by ?? "user") === "user") target.demoted = null;
-      // 用户亲自确认的候选直接进正式库（用户的话优先于审稿人）
-      if ((b.by ?? "user") === "user" && target.candidate) {
-        target.candidate = false;
-        target.staged = false;
-        if (target.state === "candidate") target.state = "active";
-      }
-      else if (target.demoted) {
+      if (target.demoted) {
         // 撤销过的条目不再自动转正（旧版本写下的事件按顺序重放时也一样）
         if (target.confirmed_by !== "user") {
           target.confirmed = false;
@@ -360,39 +343,8 @@ export function fold(rows: EventRow[]): Projection {
       target.demoted = b.reason;
       continue;
     }
-    if (r.kind === "stage") {
-      const b = JSON.parse(r.body) as StageBody;
-      if (b.action === "stage") {
-        // 用户确认过的不动；已在候选区或已归档/被替代的也不动
-        if (target.confirmed_by === "user" || target.candidate || target.state !== "active") continue;
-        target.candidate = true;
-        target.staged = true;
-        target.state = "candidate";
-      } else if (b.action === "unstage" && target.staged) {
-        target.candidate = false;
-        target.staged = false;
-        if (target.state === "candidate") target.state = "active";
-      }
-      continue;
-    }
-    if (r.kind === "curate") {
-      const b = JSON.parse(r.body) as CurateBody;
-      if (target.confirmed_by === "user") continue; // 用户确认过的不动
-      if (b.action === "promote" && target.candidate) {
-        target.candidate = false;
-        target.curated = true;
-        // 转正后不再是 stage 状态：清掉 staged（unstage 不会再动它）；记下来，unpromote 时恢复
-        if (target.staged) stagedBeforePromote.add(target.id);
-        target.staged = false;
-        if (target.state === "candidate") target.state = "active";
-      } else if (b.action === "unpromote" && target.curated) {
-        target.candidate = true;
-        target.curated = false;
-        if (stagedBeforePromote.delete(target.id)) target.staged = true;
-        if (target.state === "active") target.state = "candidate";
-      }
-      continue;
-    }
+    // 旧版本的候选区事件（§8.8 前）：照常重放，不改状态
+    if (r.kind === "stage" || r.kind === "curate") continue;
     if (r.kind === "tag") {
       const b = JSON.parse(r.body) as TagBody;
       if (typeof b.guidance === "boolean") target.guidance = b.guidance;
@@ -430,7 +382,7 @@ export function fold(rows: EventRow[]): Projection {
       target.conflicts_with = b.outcome === "conflicts" ? b.target : null;
       continue;
     }
-    target.state = r.kind === "archive" ? "archived" : target.candidate ? "candidate" : "active";
+    target.state = r.kind === "archive" ? "archived" : "active";
     const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
     target.expired = ab?.reason === "expired";
     target.merged_into = ab?.reason === "duplicate" ? (ab.into ?? null) : null;
@@ -457,23 +409,4 @@ export function fold(rows: EventRow[]): Projection {
     target.superseded_by = p.id;
   }
   return { props, orphans, ephemeral, purged };
-}
-
-/**
- * 未确认条目进每轮召回的门槛（D3，§21 2026-10-13）：规则或决定、依据是用户原话且带用户引文；
- * 关系未判定、与代码不符、有冲突或待确认纠正、本身是纠正的都不进。agent 推断的坑要等代码核验转正（那时已是已确认）。
- */
-export function recallableUnconfirmed(p: Proposition): boolean {
-  return (
-    !p.confirmed &&
-    (p.kind === "rule" || p.kind === "decision") &&
-    (p.basis === "user_directive" || p.basis === "user_confirmed") &&
-    p.evidence.some((e) => e.role === "user") &&
-    !p.unreconciled &&
-    !p.stale &&
-    !p.conflicts_with &&
-    !p.supersedes &&
-    !p.pending_corrections.length &&
-    !p.demoted
-  );
 }
