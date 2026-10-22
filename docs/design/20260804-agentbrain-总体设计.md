@@ -714,6 +714,75 @@ Proposal 被 accepted 只表示它可以进入当前 proposition read model，�
 2. 接受的代价：产出约翻倍、每窗口耗时约翻倍、没用条目可能多进一些（都是未确认、可按批撤销）。是否接受由用户定。
 3. 验收口径建议：有用类留下率明显高于现提示词（第 7 篇 B 13/26、第 11 篇 L 11/26），没用挡掉率不低于 14/16。
 
+
+### 8.8 去掉候选区：状态和可信程度分开（**已批准**，用户 2026-10-22 15:03 新加坡时间说"直接开始实现"；改动 §21 2026-10-15 那条 LOCKED 规矩）
+
+**问题（证据取自正式库，只读查询，2026-10-22）**
+
+- 2026-10-15 起，`ab work` 自动抽取和 agent 不带 `--confirmed` 的 `ab remember` 都写成候选（`candidate`），要等 `ab curate --apply` 转正。`ab curate` 没有排程，`ab work`、hook、launchd 都不调它，本机也没有 `review.json`，跑了也会直接退出。
+- 结果：候选 62 条（自动抽取 60 条、agent 自记 2 条），从 10-15 13:58 到 10-22 14:35 一条没动过；库里 `curate` 事件 0 条；10-15 以后自动抽取直接进正式库的 0 条。
+- 搜索（`store.ts` 三处 `state !== "active"`）和每轮召回（`recall.ts` 只取 active）都看不到候选。10-15 以前抽取的未确认条目照常能搜到、能进召回，以后的看不到。能不能看到按日期分，不按质量分。
+- 真实案例：用户问"阿里云 sls mcp 权限登录用什么命令"，答案在 [35670cf8] 的"为什么"里（"用户用 aliyun configure --mode OAuth 登录"）。"为什么"本来就参与检索，只是这条是候选，搜索和召回都不返回。
+- 现成评测：第 6 篇里效果最好的审稿配置丢掉没用条目 58%～67%，有用的留下 77%～90%，审稿本身还会误删一到两成有用条目。第 7、11、12 篇的短板都在抽取漏东西，不在噪音多。
+
+**决定（方案 B）**
+
+- `state` 只表示还在不在用：`active | archived | superseded`。去掉 `candidate`。
+- 可信程度单独看：`trustOf(p)` 返回 `user | code | corroboration | unconfirmed`，由 `confirmed` / `confirmed_by` 推出，不另存字段。看板的"用户确认 / 代码核验 / 跨会话印证 / 未确认"四类就是它。
+- 转正只有原来三条路（§8.4、§9.4 不变）：用户 `ab confirm` 或 `ab correct --confirmed`；`ab work --sweep` 按代码核验；跨会话印证。审稿不再是转正的路。
+- 未确认条目进每轮召回的规矩不变（§21 2026-10-14 放宽 D3）：坑、规则、决定，没有冲突、没有待确认纠正、关系已判定、与代码相符、本身不是纠正；每轮最多 1 条、标"未确认"、排在已确认之后。子代理仍按 D3 原规矩，只放有用户原话的规则或决定。
+- 搜索：有效条目全部能搜到，未确认的带"[未确认]"标记。
+
+**模块**
+
+- 新增 `src/visibility.ts`：`trustOf(p)`、`searchable(p)`、`recallable(p, worker)`、`isConfirmedCorrection(p)`、`RECALL_KINDS`。搜索、近邻、每轮召回都只调这里，原来 `l2.ts` 的 `recallableUnconfirmed` 和 `recall.ts` 的 `perTurnUnconfirmed` 合成 `recallable` 一个函数，用 `worker` 区分。
+- `store.ts` 导出 `indexText`（正文 + 为什么），召回的字面通道复用它，不再自己拼。
+- 全文索引加 `index_version`。投影规则变了（旧索引里候选行的 state 是 `candidate`），版本不对就整表重建，升级后不用等下一次写库就能搜到。
+- "场景"（trigger）进检索：**不在这次范围内**。它会改每条的向量哈希，全库要重新算一遍向量；这次的案例靠"为什么"已经能搜到。以后有漏召回的证据再单独做。
+
+**删掉的**
+
+- `Proposition` 的 `candidate`、`staged`、`curated` 三个字段，`fold` 里的 `stagedBeforePromote`，以及 stage、curate 两段投影分支。旧的 `stage` / `curate` 事件照常重放，但不改状态；旧 `remember` 事件里的 `candidate: true` 投影时忽略。
+- `AB_STAGING` 开关、`WorkDeps.staging` 和 `admit` 里的候选分支（重复条目照常给目标追加来源、触发跨会话印证）。
+- `ab stage`、`ab audit agent-remember`、`ab remember --direct`。
+- `ab status` 的"候选区"一行，`ab get` / 关联行 / 看板里的"候选"标记。
+
+**`ab curate` 的去留**：保留，改成可选的"建议归档"工具。审的范围从"候选"改成"未确认的有效条目"。结论是"留下"时不写状态事件（条目本来就有效），只在认定是干活偏好时打 guidance；"丢弃 / 改写 / 并入"照旧归档，`--undo` 照旧能撤。仍然只手动跑、默认 dry-run。不删它的理由：`ab setup` 的审稿人配置、`scripts/curate-eval.ts` 和第 6 篇评测都靠它，删掉要连带改一大片，而它不再挡任何东西。已知缺口：它不记"审过哪些"，每次手动跑都会从最早的未确认条目开始审，用 `--limit` 控制量。
+
+**迁移**
+
+- 不写任何迁移事件。新投影直接忽略候选标记和 stage/curate 事件，62 条（含 agent 自记的 2 条）升级后就是有效的未确认条目。重放几遍结果都一样，回退到旧代码也还是原来的候选。
+- 升级前先备份 `~/.agentbrain/store.db`（`sqlite3 store.db ".backup <备份路径>"`）。
+- 对照报告（只读）：`AB_HOME=<库或副本> node scripts/staging-report.ts`，列出旧候选在新代码下的状态、可信程度、能不能进召回。
+
+**LOCKED 规矩的改动**
+
+- 旧（§21 2026-10-15）："现在不带 `--confirmed` 的 `ab remember` 写进候选区（`candidate`），等审稿；`--confirmed`（用户明确要记）照旧直接生效；新增 `--direct` 只给人工迁移数据用……`AB_STAGING=off` 同样回到旧行为。"
+- 新："不带 `--confirmed` 的 `ab remember` 和 `ab work` 自动抽取都直接写进正式库，状态未确认、带'未确认'标记，能搜到，没争议的坑、规则、决定按 §21 2026-10-14 的规矩进每轮召回。`--confirmed`（用户明确要记）照旧直接生效且已确认。没有候选区，也没有 `--direct` 和 `AB_STAGING`。"
+
+**验收（都有测试，`src/visibility.test.ts`、`src/cli.test.ts`）**
+
+1. 旧版本写成候选的条目，新代码下是有效的未确认条目；"aliyun configure OAuth 登录"能搜到它。
+2. 同一条在相关提问时被每轮召回，标"（未确认）"。
+3. 旧的 stage / curate 事件重放后条目仍有效；归档再恢复也是有效。
+4. 可信程度四类分得开；有争议的未确认条目能搜到，但不进召回。
+5. agent 不带 `--confirmed` 的 `ab remember`：输出"已记住"，搜索标"[未确认]"，不进 brief，用户 confirm 后进 brief；`ab stage` 已不存在。
+6. 旧版本留下的全文索引在升级后自动重建。
+7. 真实库副本上：`ab search "阿里云 sls mcp 权限登录用什么命令"` 第 1 条是 35670cf8；`ab recall "aliyun configure --mode OAuth 登录后 sls mcp 权限过期"` 注入 35670cf8。旧代码同样两条命令都没有它。
+8. 不再需要"候选卡住"的告警：没有这一档，也就不会卡。
+
+**风险和怎么量**
+
+- 约 60 条没审过的条目进入召回候选池，噪音可能多一点。这和 10-15 以前用了很久的那档一样，每轮最多 1 条未确认、排在后面。
+- 怎么量（小评测，记到 `docs/eval/18-*.md`）：从这 62 条的来源会话和近期提问里挑约 20 个提问，旧代码和新代码各跑一遍 `ab recall`，看新注入的未确认条目里有几条对题、有几条挤掉了原来对题的条目。同时看一周的 `prop_usage`，统计这批条目被注入几次、是否被 `ab-used` 引用过（看板上线后）。挤掉对题条目的比例明显上升，就把未确认的召回门槛收紧（比如只放有用户原话的），不回到候选区。
+
+**同时修的：额度用完后能不能自己接着做**
+
+- 抽取（默认两步式）：429 原来每次都算一次失败尝试，4 次（约 2.6 小时）后窗口判成失败、这段内容永久跳过。现在 429 不算尝试，按 Retry-After 延后，额度恢复后接着抽（和 §8.6 话题模式的做法一致）。
+- embedding：错误正文里有 429 / quota / rate limit 的归成限流，同样延后不算失败；其他 embedding 故障照旧按退避用完转失败。没算上向量的条目在下一次同步（搜索、记忆写入、`ab work`）时补上，原本就是这样，这次加了测试。
+- 代码核验：原来出错（含 429）后，同一 HEAD 24 小时内不再重试；现在出错的照样在下次重试。撞上 429 时本轮停下，不再给后面的条目逐条发请求。
+- hook 拉起的单会话 `ab work` 顺带重试别的会话里已到期的延后窗口。原来只有 launchd 的 `--sweep` 会去碰别的会话，launchd 没开时这些窗口没有机会重跑。代码核验仍只在 `--sweep` 里跑，launchd 不开就不会跑，这一点没改。
+
 ---
 
 ## 9. 生命周期、冲突与纠错
@@ -1754,6 +1823,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-10-22 去掉候选区（§8.8）。用户 15:03（新加坡时间）选方案 B 并说"直接开始实现"，同意改动 2026-10-15 那条 LOCKED 规矩：agent 不带 `--confirmed` 的 `ab remember` 和自动抽取都直接进正式库、标未确认。依据：62 条候选从 10-15 起没人转正（`ab curate` 无排程、无 `review.json`），搜索和召回看不到它们。同时修了额度用完后的自动恢复（抽取、embedding、代码核验）。
 - 2026-10-20 安装后的默认共享服务仍缓存第一次加载失败的模块。`opencode reload`、更换链接名和源文件名后，日志仍报默认导出不是对象，新会话也未收到召回。新起的 `--standalone` 服务读取同一插件能成功。为避免中断其他活动会话，本次没有重启共享服务，默认启动方式的接线仍有这一阻塞。插件安装项最终为 `agentbrain-v2.js`。
 - 2026-10-20 实测 opencode v2.0.30 与 `~/.config/opencode/node_modules/@opencode-ai/plugin` 的旧式类型声明不同。旧插件报 `Plugin must export a default definition with an id and an effect or setup function.`，旧 `session` 表也不含本次新会话。按正在运行的 v2 改用 `setup`、context hook、`session_v2` 与 `session_message`。真实会话 `ses_ea7577936ffegXRW17PRkM0lGI` 的回答逐字输出 `[873b78e2]` 与 `[3bf3029b]` 的召回块，store 登记 `host=opencode, via=hook`，退出后处理进度推进至 `msg_158a887290012MTps7ekQjqqTa:1`。第一次失败的验收不算通过。
 - 2026-10-20 用户要求把 opencode 装上 agentbrain，并授权实现、安装和真实会话验收。新增 §7.5，撤销 §20 对 opencode 的范围排除。SQLite 来源使用固定数据库中的真实会话引用，不导出正文。子会话按 ephemeral 跳过。宿主进程检测仍以最近父进程为准。分支基线由用户纠正为 `docs/agentbrain-v2-design`，不是尚无实现的 `main`。本次不启用话题开关、不加载 launchd、不扩展 CLI 审稿后端，不改变其他宿主行为。
@@ -1766,7 +1836,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 - 2026-10-16 §8.6 / §11.5 由用户批准实现（PR #58 四个问题回"实现"）：话题结束时一步式沉淀落地在 `src/topic.ts` 与 `ab work` 的话题模式，**默认关闭**（`extract.json` `"topic": true` 打开），等 `docs/eval/07` 补跑与 `docs/eval/11` 验收后由用户打开；和原文不同的几处（并入只进报告不写库、无引文记 agent 推断、旧路径 30 分钟不动、压缩标记存 work_meta、额度不算失败尝试）见 §8.6 第 12 点。§11.5 两项（brief 提示何时先 `ab search`、搜索结果显示全文）同批实现，不加开关。
 - 2026-10-15 新增两个 CANDIDATE 设计（未授权实现，用户说"开始实现"后才写代码）：§8.6 话题结束时一步式沉淀——静置约 20 分钟、上下文压缩、会话结束三个触发，整段话题加前文交给宿主自己的子模型一次完成抽取和判断（`src/onepass.ts`），记下来源定位点范围、触发方式、`prompt_version` 和模型；三个宿主今天能用的事件已按官方文档和本机版本核对（Claude Code `PreCompact`/`SessionEnd`、Codex `PreCompact`/`SessionEnd`（闲置 30 分钟也触发）、Pi `session_before_compact`/`session_shutdown`），都没有现成的 20 分钟静置事件，建议在下一轮的 capture hook 里判断。§11.5 两个读路径小改动——brief 点出几类先 `ab search` 的情况；`ab search` 结果显示正文全文、为什么、场景，附改前改后示例。依据：用户 2026-10-15"一个主题的对话完了再抽""可以"、pstack 简化方向、场景目录评测（`docs/eval/10`）不如一次 `ab search`。一步式与两步式对比（`docs/eval/07`）还没跑完，§8.6 第 6 点以它为前提。
 - 2026-10-15 评测记录归档：把截至今天的所有评测（检索门槛 v1、每轮召回准确率与资格策略、防记错一次性授权、预检与引用核验、价值标准抽取门、审稿评审团 v1～v6/主审/单审/Haiku、一步式与两步式重放（未完成）、图 1 跳、场景层模拟、场景目录开工背景评测）整理到 `docs/eval/`：一篇索引加每项一篇，写明问题、数据（怎么构造、种子、划分、谁标注）、方法、复现命令、结果、结论和据此做的决定、保留意见。数据和脚本在 `eval/<名称>/`，均已脱敏；库快照、完整记忆导出和转录不进仓库，只留在本地。场景目录（PR #56）评测结论是不如一次 `ab search`，PR 搁置。
-- 2026-10-15 agent 的 `ab remember` 也走候选区（v3）：用户发现 Claude Code 主模型仍按全局说明在干活中直接 `ab remember`，绕过了"快模型抽取 → 后台审稿"的流程（#53 只改了自动抽取）。现在不带 `--confirmed` 的 `ab remember` 写进候选区（`candidate`），等审稿；`--confirmed`（用户明确要记）照旧直接生效；新增 `--direct` 只给人工迁移数据用（写入事件带 `direct: true`，`ab audit agent-remember` 不会把它当成 agent 自记移进候选区）；`AB_STAGING=off` 同样回到旧行为。brief 提示改为"干活时不用记，后台会自动抽取并审稿；只有用户明确要你记时才用 `ab remember --confirmed`"。新增 `stage` 事件（stage/unstage，可撤销，用户确认过的条目投影时忽略）、`ab stage <id> [--undo]` 和 `ab audit agent-remember --since <时间> [--apply]`，用来把候选区上线后 agent 直接写进正式库、未经用户确认的条目移回候选区。
+- 2026-10-15（已被 2026-10-22 §8.8 撤销）agent 的 `ab remember` 也走候选区（v3）：用户发现 Claude Code 主模型仍按全局说明在干活中直接 `ab remember`，绕过了"快模型抽取 → 后台审稿"的流程（#53 只改了自动抽取）。现在不带 `--confirmed` 的 `ab remember` 写进候选区（`candidate`），等审稿；`--confirmed`（用户明确要记）照旧直接生效；新增 `--direct` 只给人工迁移数据用（写入事件带 `direct: true`，`ab audit agent-remember` 不会把它当成 agent 自记移进候选区）；`AB_STAGING=off` 同样回到旧行为。brief 提示改为"干活时不用记，后台会自动抽取并审稿；只有用户明确要你记时才用 `ab remember --confirmed`"。新增 `stage` 事件（stage/unstage，可撤销，用户确认过的条目投影时忽略）、`ab stage <id> [--undo]` 和 `ab audit agent-remember --since <时间> [--apply]`，用来把候选区上线后 agent 直接写进正式库、未经用户确认的条目移回候选区。
 - 2026-10-13 Pensieve 导入的关系判定可补判：首次真实导入时有 2 批判定调用出错，而重导时导入条都是"未变"，原先不会再判，出错的就永远漏判。现在未变的导入条只要还没有关系判定结果（related 为空）就重新进判定；判定出错把原因（前 5 条）打印出来。没有足够相近邻居的条目只做向量近邻查询，不调模型。
 - 2026-10-13 Pensieve 导入试运行后的两处修正：(1) 结论段第一段以冒号收尾（"关键设计点："后接列表）时把下一段并入正文，避免只剩半句；没有结论段的 decision 取"决策"段，跳过"**日期**: …"这类元数据块；(2) knowledge 判为坑的条件收紧为标题含禁止/不要/陷阱/根因/NPE 等措辞，或结论点名是坑/根因/NPE；原先"失败""异常""必须"也算，规范和架构说明有 13 条被误标为坑。另外隐藏文件（macOS 的 ._xxx）和 .migrated/.bak 备份副本不再读取。
 - 2026-10-13 新增 Pensieve 导入（ab import pensieve <仓库目录>... [--global <目录>] [--skip-file <文件>] [--dry-run]，用户批准迁移）。只读 .pensieve/{maxims,decisions,knowledge} 里 status=active 的文件，pipelines、short-term、.state 不导，不改 Pensieve 文件。映射：maxim→rule，decision→decision，knowledge→note（标题或结论讲"禁止/不要/坑/会导致"之类陷阱的记 pitfall）。正文=标题＋一句话结论，why=Context/Problem（maxim 取 Guidance/Boundaries，knowledge 取 Content）压成一段，去掉代码块、表格、标题和 [[链接]]，均限 400 字；含密钥的整条跳过。项目按目录走现有项目解析，未登记目录跳过，--global 指定的目录记全局；同一 id 且内容相同的文件出现在多个仓库，只导一次并记为全局。导入条直接是已确认（用户自己写下的知识），origin=import。L1 出处新增 import_ref {system:"pensieve", id, path（原文件完整路径）, sha256, also（其他相同副本路径）}，ab get 显示，view 标"导入"。幂等：按 pensieve id＋项目找已导入的现役条目，sha 相同不动；文件内容变了就写一条 supersedes 旧条的新导入（纠正）；导入条被归档过就不再导。导入后走关系判定：近邻（同项目、相似度≥0.7、非导入条）里是用户确认条目的重复，就把导入条并进去、确认条目不动；是其他条目的重复，就把对方的来源挂到导入条上并把对方并入归档；冲突只标记、列在输出里，由用户处理。--skip-file 每行"id 理由"，用来跳过 Pensieve 默认模板和评审后认为过时或琐碎的条目。全部可撤销（ab archive --reactivate）。
