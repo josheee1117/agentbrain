@@ -78,3 +78,13 @@ test("可信程度：用户确认 / 代码核验 / 跨会话印证 / 未确认 �
   assert.ok(searchable(props.get(k)!));
   assert.equal(recallable(props.get(k)!, false), false);
 });
+
+test("升级时旧版本留下的全文索引（候选标成 candidate）作废重建：不用等下一次写库就能搜到", () => {
+  const s = new Store(":memory:", ":memory:");
+  const id = s.remember(null, "s", false, SLS);
+  assert.ok(s.search("aliyun configure OAuth", { projects: "all", includeGlobal: true, limit: 8 }).some((h) => h.id === id));
+  const fts = (s as any).fts;
+  fts.prepare("UPDATE props SET state='candidate' WHERE id=?").run(id); // 旧版本写下的索引行
+  fts.exec("DELETE FROM meta WHERE key='index_version'"); // 旧版本没有这个键
+  assert.ok(s.search("aliyun configure OAuth", { projects: "all", includeGlobal: true, limit: 8 }).some((h) => h.id === id));
+});

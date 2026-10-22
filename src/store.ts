@@ -90,6 +90,8 @@ export interface PendingAppend {
   body: unknown;
 }
 
+const INDEX_VERSION = "2";
+
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, text_hash TEXT NOT NULL, vec BLOB NOT NULL);
@@ -389,7 +391,10 @@ export class Store {
 
   // ---------- L3：水位不一致就整表重建 ----------
 
+  /** 索引行的形状随投影规则变（§8.8 去掉候选区后 state 不再有 candidate）：版本不对就当没建过，整表重建。 */
   private indexedSeq(): number {
+    const v = this.fts.prepare("SELECT value FROM meta WHERE key='index_version'").get() as { value: string } | undefined;
+    if (v?.value !== INDEX_VERSION) return -1;
     const row = this.fts.prepare("SELECT value FROM meta WHERE key='seq'").get() as { value: string } | undefined;
     return row ? Number(row.value) : -1;
   }
@@ -414,6 +419,7 @@ export class Store {
       }
       this.fts.exec("DELETE FROM vecs WHERE id NOT IN (SELECT id FROM props)");
       this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('seq',?)").run(String(seq));
+      this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('index_version',?)").run(INDEX_VERSION);
       this.fts.exec("COMMIT");
       return true;
     } catch (e) {
