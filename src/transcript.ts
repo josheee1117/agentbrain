@@ -169,11 +169,9 @@ class Builder {
       this.stripped++;
       return "";
     }
-    if (/<agentbrain/.test(output)) {
-      this.stripped++;
-      return "";
-    }
-    return compressOutput(output, isError);
+    const s = stripInjected(output);
+    this.stripped += s.stripped;
+    return compressOutput(s.text, isError);
   }
 }
 
