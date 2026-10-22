@@ -416,13 +416,13 @@ function cnt(list,key){const m={};list.forEach(e=>{const k=key(e);m[k]=(m[k]||0)
 function kpi(t,v,l,d,dc){return '<div class="card kpi"><h3>'+t+'</h3><div class="v">'+v+'</div><div class="l">'+l+'</div>'+(d?'<div class="d"'+(dc?' style="color:'+dc+'"':'')+'>'+d+'</div>':'')+'</div>'}
 function overview(){
 const st=cnt(A,e=>e.status),kd=cnt(A,e=>e.kind),linked=A.filter(e=>e.links.length).length;
-const legacy=A.filter(e=>e.usage.legacy_uses>0).length,inj=A.filter(e=>e.usage.inject_sessions>0).length,never=A.length-inj,cited=A.filter(e=>e.usage.cited_sessions>0).length;
+const legacy=A.filter(e=>e.usage.legacy_uses>0).length,inj=A.filter(e=>e.usage.inject_total>0).length,never=A.length-inj,cited=A.filter(e=>e.usage.cited_total>0).length;
 const lt=cnt(E.flatMap(e=>e.links),l=>l.type);
 const hostRows=T.hosts.map(h=>'<tr><td>'+esc(h.host)+'</td><td>'+esc(h.model)+'</td><td class="num">'+h.sessions+'</td><td class="num">'+h.recall_turns+'</td><td class="num">'+h.marked_turns+'</td><td class="num">'+(h.recall_turns?Math.round(100*h.marked_turns/h.recall_turns)+'%':'<span class="dim">—</span>')+'</td></tr>').join('');
 const maxK=Math.max(1,...Object.values(kd));
 const days=T.recall_daily,mx=Math.max(1,...days.map(d=>d.hit+d.nohit+d.error));
 const chart='<svg viewBox="0 0 600 120" width="100%">'+days.map((d,i)=>{let y=110,s='';[['hit','#7c5cff'],['nohit','#334155'],['error','#ef4444']].forEach(([k,c])=>{const h=100*d[k]/mx;if(h>0){s+='<rect x="'+(i*20+2)+'" y="'+(y-h).toFixed(1)+'" width="16" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"><title>'+d.day+' '+k+' '+d[k]+'</title></rect>';y-=h}});return s}).join('')+'</svg>';
-const top=A.filter(e=>e.usage.inject_sessions>0).sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions).slice(0,8);
+const top=A.filter(e=>e.usage.inject_total>0).sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions).slice(0,8);
 const conflicts=A.filter(e=>e.links.some(l=>l.type==='conflicts'||l.type==='pending_correction')).length;
 const pendingSup=E.filter(e=>e.links.some(l=>l.type==='supersedes_pending')).length;
 const supStillInj=E.filter(e=>e.state==='superseded'&&e.usage.inject_total>0).length;
@@ -463,7 +463,7 @@ $('legend').innerHTML=[...new Set(pts.map(e=>e.project))].map(p=>'<span><i style
 const opt=(el,lab,vals,names)=>{el.innerHTML='<option value="">'+lab+'</option>'+vals.map(v=>'<option value="'+esc(v)+'">'+esc(names?names[v]:v)+'</option>').join('')};
 opt($('fp'),'全部项目',projects);opt($('fk'),'全部类型',Object.keys(KIND),KIND);opt($('fs'),'全部状态',Object.keys(ST),ST);
 let sel=null;
-function visible(){const q=$('q').value.trim().toLowerCase(),u=$('fu').value;return E.filter(e=>($('fa').checked||e.state==='active')&&(!$('fp').value||e.project===$('fp').value)&&(!$('fk').value||e.kind===$('fk').value)&&(!$('fs').value||e.status===$('fs').value)&&(!u||(u==='never'?e.usage.inject_sessions===0:u==='cited'?e.usage.cited_sessions>0:e.usage.mismatched>0))&&(!q||(e.id+' '+e.text+' '+(e.why||'')).toLowerCase().includes(q)))}
+function visible(){const q=$('q').value.trim().toLowerCase(),u=$('fu').value;return E.filter(e=>($('fa').checked||e.state==='active')&&(!$('fp').value||e.project===$('fp').value)&&(!$('fk').value||e.kind===$('fk').value)&&(!$('fs').value||e.status===$('fs').value)&&(!u||(u==='never'?e.usage.inject_total===0:u==='cited'?e.usage.cited_total>0:e.usage.mismatched>0))&&(!q||(e.id+' '+e.text+' '+(e.why||'')).toLowerCase().includes(q)))}
 function list(){const v=visible();$('shown').textContent='显示 '+v.length+' 条';$('list').innerHTML=v.slice(0,600).map(e=>'<div class="item'+(e.id===sel?' sel':'')+'" data-go="'+e.id+'"><div class="t"><span class="pill k-'+e.kind+'">'+KIND[e.kind]+'</span>'+esc(e.text.split('\\n')[0])+'</div><div class="sub">['+short(e.id)+'] '+esc(e.project)+' · <span class="s-'+e.status+'">'+ST[e.status]+'</span>'+(e.state!=='active'?' · '+STATE[e.state]:'')+' · 注入 '+e.usage.inject_sessions+' 会话 · 引用 '+e.usage.cited_sessions+'</div></div>').join('')+(v.length>600?'<div class="sub" style="padding:10px">只列前 600 条，请用筛选缩小</div>':'')}
 function ref(id){const e=byId.get(id);return '<a data-go="'+id+'">['+short(id)+']</a> '+(e?esc(e.text.split('\\n')[0].slice(0,60))+(e.state!=='active'?' <span class="dim">('+STATE[e.state]+')</span>':''):'')}
 function detail(id){const e=byId.get(id);if(!e)return;sel=id;const u=e.usage;
