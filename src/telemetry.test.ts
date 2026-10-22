@@ -1,9 +1,13 @@
 import { test } from "node:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { Store } from "./store.ts";
 import { buildViewData } from "./view.ts";
 import type { RememberBody } from "./l2.ts";
-import { CITE_INSTRUCTION, citeEnabled, logInjections, logRecallRun, markFailedTurns, parseAbUsed, prune, scanSession, setCite, stripAbUsed, titleOverlap, withCiteInstruction } from "./telemetry.ts";
+import { recordRecall, CITE_INSTRUCTION, citeEnabled, logInjections, logRecallRun, markFailedTurns, parseAbUsed, prune, scanSession, setCite, stripAbUsed, titleOverlap, withCiteInstruction } from "./telemetry.ts";
 
 const src: RememberBody["source"] = { host: "pi", session_id: "s1", transcript: null, anchor: null, summary: "测试" };
 
@@ -147,4 +151,17 @@ test("标注率按召回轮一一对应：一轮里两条回复都写 ab-used �
   ], () => "调用 pi 做测试时用临时库", null, new Date("2026-10-21T02:00:00Z"));
   const h = buildViewData(s, new Date("2026-10-21T02:00:00Z")).telemetry.hosts.find((x) => x.host === "claude")!;
   assert.deepEqual({ recall_turns: h.recall_turns, marked_turns: h.marked_turns }, { recall_turns: 1, marked_turns: 1 });
+});
+
+test("开发期建的统计表（带 rank 列）打开时删掉重建，之后的写入照常", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-telemetry-old-"));
+  const old = new DatabaseSync(join(dir, "store.db"));
+  old.exec("CREATE TABLE inject_log(id INTEGER PRIMARY KEY, ts TEXT NOT NULL, host TEXT, session_id TEXT, transcript TEXT, project_id TEXT, prop_id TEXT NOT NULL, path TEXT NOT NULL, rank INTEGER NOT NULL); CREATE TABLE recall_runs(id INTEGER PRIMARY KEY, ts TEXT NOT NULL, host TEXT, session_id TEXT, project_id TEXT, outcome TEXT NOT NULL, n_hits INTEGER NOT NULL, ms INTEGER NOT NULL);");
+  old.close();
+  const s = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const ctx = { host: "pi" as const, session_id: "s1", transcript: null, project_id: null };
+  recordRecall(s.workDb, ctx, "hit", ["aaaaaaaa"], 1, false, new Date("2026-10-22T00:00:00Z"));
+  assert.equal((s.workDb.prepare("SELECT COUNT(*) AS n FROM inject_log").get() as { n: number }).n, 1);
+  assert.equal((s.workDb.prepare("SELECT marked FROM recall_runs").get() as { marked: number }).marked, 0);
+  s.close();
 });

@@ -93,6 +93,12 @@ CREATE INDEX IF NOT EXISTS recall_runs_session ON recall_runs(host, session_id);
 CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
 `;
 
+/** 开发期的统计表（带 rank 列）结构不同，又只是可丢的 90 天统计：删掉重建，免得之后的写入和看板查询静默失败。 */
+function dropPreviewTelemetry(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(inject_log)").all() as { name: string }[];
+  if (cols.some((c) => c.name === "rank")) db.exec("DROP TABLE IF EXISTS inject_log; DROP TABLE IF EXISTS recall_runs; DROP TABLE IF EXISTS cite_scan;");
+}
+
 export interface PendingAppend {
   kind: EventKind;
   project_id: string | null;
@@ -133,6 +139,7 @@ export class Store {
 
   constructor(storePath: string, indexPath: string) {
     this.db = openDb(storePath);
+    dropPreviewTelemetry(this.db);
     this.db.exec(SCHEMA);
     this.fts = openDb(indexPath);
     this.fts.exec(FTS_SCHEMA);
