@@ -145,3 +145,20 @@ test("回答里提到但没闭合的 <agentbrain-recall> 不删后文；闭合�
     "正常输出里 `<agentbrain-recall>` 块只有 1~3 行。\n所以别断言第 4 条。",
   ]);
 });
+
+test("工具输出里提到 <agentbrain-recall> 的源码不整段丢：没闭合的照留，闭合的注入块才删", () => {
+  const src = "const open = \"<agentbrain-recall>\"; // 召回块开头\nexport const x = 1;";
+  const p = file("tool-mention.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    { type: "message", id: "u", parentId: "h", message: { role: "user", content: "看下 recall.ts" } },
+    { type: "message", id: "a1", parentId: "u", message: { role: "assistant", content: [{ type: "toolCall", id: "k1", name: "read", arguments: { path: "/repo/src/recall.ts" } }] } },
+    { type: "message", id: "r1", parentId: "a1", message: { role: "toolResult", toolCallId: "k1", content: [{ type: "text", text: src }] } },
+    { type: "message", id: "a2", parentId: "r1", message: { role: "assistant", content: [{ type: "toolCall", id: "k2", name: "bash", arguments: { command: "npm test" } }] } },
+    { type: "message", id: "r2", parentId: "a2", isError: true, message: { role: "toolResult", toolCallId: "k2", isError: true, content: [{ type: "text", text: "<agentbrain-recall>\n- [abcd1234] 坑: 旧记忆\n</agentbrain-recall>\nError: 断言 `<agentbrain-recall>` 开头失败" }] } },
+  ]);
+  const tools = cleanTranscript("pi", p).turns.filter((t) => t.role === "tool").map((t) => [t.anchor, t.text]);
+  assert.deepEqual(tools, [
+    ["r1", `（工具输出 ${src.length} 字，已省略）`],
+    ["r2", "Error: 断言 `<agentbrain-recall>` 开头失败"],
+  ]);
+});
