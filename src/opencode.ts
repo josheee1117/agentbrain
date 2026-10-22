@@ -99,7 +99,6 @@ export function opencodeParts(ref: string): { session: OpencodeSession; parts: O
   });
 }
 
-/** 会话里最后一条助手消息用的模型：provider/model；读不到为 null。 */
 export function opencodeModel(ref: string): string | null {
   const session = opencodeSession(ref);
   if (!session) return null;

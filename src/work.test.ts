@@ -842,3 +842,14 @@ test("升级前进度停在只有 ab-used 的那一轮：续跑不报错，新�
   assert.equal(chat.calls.length, 1, "u2 之后的新内容送去抽取");
   assert.equal(sessionRow(e).processed_anchor, "a3");
 });
+
+test("ab-used 行不送去抽取", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的\nab-used: hook 绝对路径 (deadbeef)")]));
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.calls.length, 1);
+  assert.doesNotMatch(JSON.stringify(chat.calls[0]), /ab-used|deadbeef/);
+  assert.match(JSON.stringify(chat.calls[0]), /好的/);
+  assert.equal(sessionRow(e).processed_anchor, "a1");
+});

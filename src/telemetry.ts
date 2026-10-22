@@ -1,7 +1,4 @@
-/**
- * 记忆看板的统计（设计 §11.8.2、§11.8.9）：注入明细 inject_log、召回结果 recall_runs、引用扫描 cite_scan。
- * 都是 store.db 里的工作表，不进 L1、不参与投影；只保留 RETENTION_DAYS 天。写失败由调用方吞掉（fail-open）。
- */
+/** 记忆看板的统计（§11.8）：store.db 里的工作表，不进 L1、不参与投影，写失败由调用方吞掉。 */
 import type { DatabaseSync } from "node:sqlite";
 import { linesOf } from "./source.ts";
 import { opencodeModel } from "./opencode.ts";
@@ -14,7 +11,7 @@ export const TITLE_MATCH_MIN = 0.3;
 export const CITE_KEY = "cite";
 export const CITE_INSTRUCTION = "（本轮回答若实际依据了上面某条，在回复最后单独一行写：ab-used: 简短标题 (id)，多条用；分隔。没用上就不写。）";
 
-export type InjectPath = "recall" | "pref" | "brief" | "search" | "get";
+export type InjectPath = "recall" | "brief";
 export type RecallOutcome = "hit" | "nohit" | "error";
 
 export interface Ctx {
@@ -33,7 +30,7 @@ export function setCite(db: DatabaseSync, on: boolean): void {
   db.prepare("INSERT INTO work_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(CITE_KEY, on ? "on" : "off");
 }
 
-/** 召回块末尾（闭合标签前）加一行引用指令；没有召回块就原样返回。指令不占召回的字数预算。 */
+/** 指令行加在召回块之内、不计入召回的字数预算。 */
 export function withCiteInstruction(block: string): string {
   const close = "\n</agentbrain-recall>";
   const i = block.lastIndexOf(close);
@@ -41,9 +38,8 @@ export function withCiteInstruction(block: string): string {
 }
 
 export function logInjections(db: DatabaseSync, ctx: Ctx, path: InjectPath, ids: readonly string[], now: Date): void {
-  if (!ids.length) return;
-  const st = db.prepare("INSERT INTO inject_log(ts,host,session_id,transcript,project_id,prop_id,path,rank) VALUES(?,?,?,?,?,?,?,?)");
-  ids.forEach((id, i) => st.run(now.toISOString(), ctx.host, ctx.session_id, ctx.transcript, ctx.project_id, id, path, i + 1));
+  const st = db.prepare("INSERT INTO inject_log(ts,host,session_id,transcript,project_id,prop_id,path) VALUES(?,?,?,?,?,?,?)");
+  for (const id of ids) st.run(now.toISOString(), ctx.host, ctx.session_id, ctx.transcript, ctx.project_id, id, path);
 }
 
 export function logRecallRun(db: DatabaseSync, ctx: Ctx, outcome: RecallOutcome, nHits: number, ms: number, cite: boolean, now: Date): void {
@@ -51,7 +47,22 @@ export function logRecallRun(db: DatabaseSync, ctx: Ctx, outcome: RecallOutcome,
     .run(now.toISOString(), ctx.host, ctx.session_id, ctx.project_id, outcome, nHits, Math.round(ms), cite ? 1 : 0);
 }
 
-/** 删掉 RETENTION_DAYS 天前的统计行。返回删除行数。 */
+/** 召回 hook 已经输出之后调用：宿主要等 hook 进程退出，所以库被占着时宁可不记，也不按默认的 5 秒等锁。 */
+export const HOOK_BUSY_TIMEOUT_MS = 30;
+
+export function recordRecall(db: DatabaseSync, ctx: Ctx, outcome: RecallOutcome, ids: readonly string[], ms: number, cite: boolean, now: Date): void {
+  db.exec(`PRAGMA busy_timeout=${HOOK_BUSY_TIMEOUT_MS}`);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    logRecallRun(db, ctx, outcome, ids.length, ms, cite, now);
+    logInjections(db, ctx, "recall", ids, now);
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+}
+
 export function prune(db: DatabaseSync, now: Date, days = RETENTION_DAYS): number {
   const cut = new Date(now.getTime() - days * 86_400_000).toISOString();
   let n = 0;
@@ -67,16 +78,17 @@ export interface Citation {
 }
 
 const AB_USED = /^\s*`?\s*ab-used\s*[:：]\s*(.*?)`?\s*$/i;
-const ID_IN_PARENS = /[(（]\s*([0-9a-f]{8})\s*[)）]\s*$/i;
+const ID_IN_PARENS = /[(（]\s*([0-9a-f]{8})\s*[)）][\s。．.，,、；;！!？?]*$/i;
+/** 分号总是分隔；顿号和逗号只在紧跟"(id)"时才算分隔，标题里的不切开。 */
+const SEGMENT_END = /[；;]|(?<=[)）])\s*[，,、]/;
 
-/** 取回复里最后一行 ab-used，按；/; 切开，每段只认末尾括号里的 8 位 id；没有合法 id 的段丢弃。 */
 export function parseAbUsed(text: string): Citation[] {
   const lines = text.split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = AB_USED.exec(lines[i]);
     if (!m) continue;
     const out: Citation[] = [];
-    for (const seg of m[1].split(/[；;]/)) {
+    for (const seg of m[1].split(SEGMENT_END)) {
       const s = seg.trim();
       const id = ID_IN_PARENS.exec(s);
       if (!id) continue;
@@ -115,7 +127,6 @@ function join2(p: unknown, m: unknown): string | undefined {
   return typeof m === "string" && m ? (typeof p === "string" && p ? `${p}/${m}` : m) : undefined;
 }
 
-/** 宿主 transcript 里最后出现的模型名（pi/opencode 带 provider 前缀）；读不到为 null。 */
 export function modelOf(host: Host, file: string): string | null {
   if (host === "opencode") {
     try {
@@ -149,14 +160,17 @@ export interface ScanResult {
 }
 
 /**
- * 读一个会话的助手回复，把 ab-used 里的 id 与本会话此前注入过的召回条目（path=recall）对上，标 cited。
- * 对不上的 id 丢弃（防编造）；标题与正文重合低于 TITLE_MATCH_MIN 记 title_mismatch，但仍算引用。
- * 幂等：重复扫描只会把同一行再标一次。
+ * 把 ab-used 里的 id 与本会话此前注入过的召回条目对上，标 cited；对不上的 id 丢弃（防编造），
+ * 标题与正文重合低于 TITLE_MATCH_MIN 记 title_mismatch 但仍算引用。
+ * 带有效引用的回复归到它之前最近的一次召回（不论命中与否）；那次是命中才把它记为已标注，
+ * 所以一次召回最多算一轮，标注率不会超过 100%。
  */
 export function scanSession(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (propId: string) => string | null, model: string | null, now: Date): ScanResult {
   const res: ScanResult = { marked_turns: 0, cited: 0, dropped: 0, mismatched: 0 };
   const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND path='recall' AND substr(prop_id,1,8)=? AND (? IS NULL OR ts<=?) ORDER BY ts DESC, id DESC LIMIT 1");
   const mark = db.prepare("UPDATE inject_log SET cited=1, cited_at=?, cited_title=?, title_mismatch=? WHERE id=?");
+  const runBefore = db.prepare("SELECT id,outcome FROM recall_runs WHERE host=? AND session_id=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT 1");
+  const marked = new Set<number>();
   for (const t of turns) {
     if (t.role !== "assistant") continue;
     const cites = parseAbUsed(t.text);
@@ -175,15 +189,20 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
       if (bad) res.mismatched++;
       any = true;
     }
-    if (any) res.marked_turns++;
+    if (!any || !t.ts) continue;
+    const run = runBefore.get(host, sessionId, t.ts) as { id: number; outcome: string } | undefined;
+    if (run?.outcome === "hit") marked.add(run.id);
   }
+  db.prepare("UPDATE recall_runs SET marked=0 WHERE host=? AND session_id=?").run(host, sessionId);
+  const setMarked = db.prepare("UPDATE recall_runs SET marked=1 WHERE id=?");
+  for (const id of marked) setMarked.run(id);
+  res.marked_turns = marked.size;
   markFailedTurns(db, host, sessionId, turns);
-  db.prepare("INSERT INTO cite_scan(host,session_id,model,marked_turns,scanned_at) VALUES(?,?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, marked_turns=excluded.marked_turns, scanned_at=excluded.scanned_at")
-    .run(host, sessionId, model, res.marked_turns, now.toISOString());
+  db.prepare("INSERT INTO cite_scan(host,session_id,model,scanned_at) VALUES(?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, scanned_at=excluded.scanned_at")
+    .run(host, sessionId, model, now.toISOString());
   return res;
 }
 
-/** 有过召回注入、要扫描引用的会话。 */
 export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: string; transcript: string | null }[] {
   return db.prepare("SELECT host,session_id,MAX(transcript) AS transcript FROM inject_log WHERE path='recall' AND host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id").all() as any;
 }

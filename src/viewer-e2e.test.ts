@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -55,18 +55,18 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.match(off, new RegExp(`\\[${id}\\] 坑:`));
   assert.doesNotMatch(off, /ab-used/);
   let d = db();
-  const inj = d.prepare("SELECT host,session_id,path,rank,substr(prop_id,1,8) AS p FROM inject_log WHERE path='recall'").all() as any[];
-  assert.deepEqual(inj.map((r) => ({ ...r })), [{ host: "pi", session_id: SESSION, path: "recall", rank: 1, p: id }]);
+  const inj = d.prepare("SELECT host,session_id,path,substr(prop_id,1,8) AS p FROM inject_log WHERE path='recall'").all() as any[];
+  assert.deepEqual(inj.map((r) => ({ ...r })), [{ host: "pi", session_id: SESSION, path: "recall", p: id }]);
   assert.deepEqual({ ...(d.prepare("SELECT host,outcome,n_hits,cite FROM recall_runs").get() as any) }, { host: "pi", outcome: "hit", n_hits: 1, cite: 0 });
   d.close();
   // 模型回答了这一轮（没有回复的回合会被当成模型调用失败，不进统计）
   appendFileSync(transcript, line({ type: "message", id: "a0", parentId: "u1", timestamp: new Date().toISOString(),
     message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: "先按账户加锁。" }] } }));
 
-  // 2. 打开开关：宿主指令文件写入托管块（含 ab-used 说明），召回块末尾多一行指令
+  // 2. 打开开关：召回块末尾多一行指令，宿主指令文件不动
   const setup = ab(["setup", "--cite", "on"]);
   assert.match(setup, /引用指令：开/);
-  assert.match(readFileSync(join(fakeHome, ".config/opencode/AGENTS.md"), "utf8"), /ab-used: 简短标题 \(id\)/);
+  assert.equal(existsSync(join(fakeHome, ".config/opencode/AGENTS.md")), false);
   const on = hook();
   assert.match(on, /ab-used: 简短标题 \(id\)，多条用；分隔。没用上就不写。）\n<\/agentbrain-recall>$/);
 
@@ -86,10 +86,6 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.deepEqual(pi, { host: "pi", model: "cpa/glm-5.3", sessions: 1, recall_turns: 1, marked_turns: 1 });
   assert.equal(data.telemetry.recall_runs.hit, 2);
 
-  // 4. 抽取输入里没有 ab-used 行
-  // （work 用 stripAbUsed；这里直接检查看板没把标记行当内容）
-  assert.ok(!data.entries.some((x: any) => /ab-used/.test(x.text)));
-
   // 5. 分享版：正文过脱敏、去会话 id；排除 beta 项目
   const share = join(dir, "share.html");
   const sv = ab(["view", "--no-open", "--share", "--exclude-project", "beta", "--out", share]);
@@ -103,10 +99,9 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   assert.equal(sd.share, true);
   assert.ok(dataOf(out).entries.some((x: any) => x.project === "beta"), "普通版不受影响");
 
-  // 6. 关掉开关：召回块不再带指令，托管块回到三条
+  // 6. 关掉开关：召回块不再带指令
   ab(["setup", "--cite", "off"]);
   assert.doesNotMatch(hook(), /ab-used/);
-  assert.doesNotMatch(readFileSync(join(fakeHome, ".config/opencode/AGENTS.md"), "utf8"), /ab-used/);
 });
 
 test("库被别的进程占着写锁时，召回 hook 照常输出，统计放弃不等", () => {

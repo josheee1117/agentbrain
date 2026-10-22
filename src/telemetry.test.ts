@@ -46,9 +46,9 @@ test("scanSession：只认本会话此前注入过的召回条目；标题不符
   const b = s.remember(null, null, false, { kind: "pitfall", text: "不要在有全局软链的目录跑 npm i", confirmed: true, source: src });
   const c = s.remember(null, null, false, { kind: "rule", text: "别的会话才注入的条目", confirmed: true, source: src });
   const p = s.remember(null, null, false, { kind: "rule", text: "常驻偏好", confirmed: true, source: src });
+  logRecallRun(s.workDb, { host: "pi", session_id: "s1", transcript: null, project_id: null }, "hit", 2, 10, true, new Date("2026-10-21T01:00:00Z"));
   const ctx = { host: "pi" as const, session_id: "s1", transcript: null, project_id: null };
   logInjections(s.workDb, ctx, "recall", [a, b], new Date("2026-10-21T01:00:00Z"));
-  logInjections(s.workDb, ctx, "pref", [p], new Date("2026-10-21T01:00:00Z"));
   logInjections(s.workDb, { ...ctx, session_id: "other" }, "recall", [c], new Date("2026-10-21T01:00:00Z"));
   const turns = [
     // 注入之前的回复引用 a：时间上不可能依据它，不算
@@ -64,11 +64,12 @@ test("scanSession：只认本会话此前注入过的召回条目；标题不符
   assert.equal(by.get(a).title_mismatch, 0);
   assert.equal(by.get(b).cited, 1);
   assert.equal(by.get(b).title_mismatch, 1, "标题与正文无关：仍算引用，但标出不符");
-  assert.equal(by.get(p).cited, 0, "常驻偏好不参与引用");
+  assert.equal(by.has(p), false, "常驻偏好不记注入，也就不会被算成引用");
   const again = scanSession(s.workDb, "pi", "s1", turns, (id) => s.project().props.get(id)?.text ?? null, "cpa/glm-5.3", new Date("2026-10-21T02:00:00Z"));
   assert.equal(again.cited, 2);
   assert.equal((s.workDb.prepare("SELECT COUNT(*) AS n FROM inject_log WHERE cited=1").get() as any).n, 2);
-  assert.deepEqual({ ...(s.workDb.prepare("SELECT model,marked_turns FROM cite_scan WHERE session_id='s1'").get() as any) }, { model: "cpa/glm-5.3", marked_turns: 1 });
+  assert.deepEqual({ ...(s.workDb.prepare("SELECT model FROM cite_scan WHERE session_id='s1'").get() as any) }, { model: "cpa/glm-5.3" });
+  assert.equal(again.marked_turns, 1, "重复扫描不会把同一轮记两次");
 });
 
 test("prune：只删 90 天前的统计行", () => {

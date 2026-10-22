@@ -81,21 +81,17 @@ CREATE TABLE IF NOT EXISTS verify_queue(prop_id TEXT PRIMARY KEY, at TEXT NOT NU
 CREATE TABLE IF NOT EXISTS prop_usage(prop_id TEXT PRIMARY KEY, last_used TEXT NOT NULL, uses INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS inject_log(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, host TEXT, session_id TEXT, transcript TEXT, project_id TEXT,
-  prop_id TEXT NOT NULL, path TEXT NOT NULL, rank INTEGER NOT NULL,
-  cited INTEGER NOT NULL DEFAULT 0, cited_at TEXT, cited_title TEXT, title_mismatch INTEGER NOT NULL DEFAULT 0);
+  prop_id TEXT NOT NULL, path TEXT NOT NULL,
+  cited INTEGER NOT NULL DEFAULT 0, cited_at TEXT, cited_title TEXT, title_mismatch INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS inject_log_session ON inject_log(host, session_id);
 CREATE INDEX IF NOT EXISTS inject_log_prop ON inject_log(prop_id);
 CREATE TABLE IF NOT EXISTS recall_runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, host TEXT, session_id TEXT, project_id TEXT,
-  outcome TEXT NOT NULL, n_hits INTEGER NOT NULL, ms INTEGER NOT NULL, cite INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, marked_turns INTEGER NOT NULL, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
+  outcome TEXT NOT NULL, n_hits INTEGER NOT NULL, ms INTEGER NOT NULL, cite INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0, marked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS recall_runs_session ON recall_runs(host, session_id);
+CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
 `;
-
-/** 旧库补列（CREATE TABLE IF NOT EXISTS 不会给已有表加列）。 */
-function addColumn(db: DatabaseSync, table: string, col: string, decl: string): void {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
-  if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
-}
 
 export interface PendingAppend {
   kind: EventKind;
@@ -138,8 +134,6 @@ export class Store {
   constructor(storePath: string, indexPath: string) {
     this.db = openDb(storePath);
     this.db.exec(SCHEMA);
-    addColumn(this.db, "recall_runs", "failed", "INTEGER NOT NULL DEFAULT 0");
-    addColumn(this.db, "inject_log", "failed", "INTEGER NOT NULL DEFAULT 0");
     this.fts = openDb(indexPath);
     this.fts.exec(FTS_SCHEMA);
   }

@@ -1,6 +1,6 @@
 /**
  * ab view：把 L2 投影 + 已存向量导出成一个自包含的 HTML 页面（§21 2026-10-13 ab view）。
- * 只读 store；不发网络请求；页面里只有 store 里已有的内容（引文只存了哈希，页面也只显示定位点）。
+ * 本文件只读 store（ab view 生成前的引用扫描在 cli.ts，会写统计表）；不发网络请求；引文只存了哈希，页面也只显示定位点。
  */
 import type { DatabaseSync } from "node:sqlite";
 import type { Store } from "./store.ts";
@@ -37,7 +37,6 @@ export interface ViewEntry {
   links: { type: LinkType; id: string }[];
   /** 注入与引用统计（§11.8）；legacy_uses 是 prop_usage 的老累计数（含常驻偏好、brief，2026-10-14 起）。 */
   usage: EntryUsage;
-  /** 关联图坐标（只有带关联的条目有）。 */
   g: [number, number] | null;
   neighbors: { id: string; similarity: number }[];
   xy: [number, number] | null;
@@ -54,8 +53,7 @@ export interface EntryUsage {
   mismatched: number;
   legacy_uses: number;
   last_injected: string | null;
-  /** 最近 30 天每天注入次数，按路径。 */
-  daily: { day: string; recall: number; pref: number; brief: number; cited: number }[];
+  daily: { day: string; recall: number; brief: number; cited: number }[];
 }
 
 export interface HostStat {
@@ -124,19 +122,10 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
     if (d && (r.outcome === "hit" || r.outcome === "nohit" || r.outcome === "error")) d[r.outcome]++;
   }
   const hosts = rowsOf<HostStat>(db, `SELECT r.host AS host, COALESCE(c.model,'未知') AS model, COUNT(DISTINCT r.session_id) AS sessions,
-      SUM(CASE WHEN r.outcome='hit' AND r.cite=1 AND r.failed=0 THEN 1 ELSE 0 END) AS recall_turns, COALESCE(MAX(c.marked_turns),0) AS marked_turns
+      SUM(CASE WHEN r.outcome='hit' AND r.cite=1 AND r.failed=0 THEN 1 ELSE 0 END) AS recall_turns,
+      SUM(CASE WHEN r.outcome='hit' AND r.cite=1 AND r.failed=0 AND r.marked=1 THEN 1 ELSE 0 END) AS marked_turns
     FROM recall_runs r LEFT JOIN cite_scan c ON c.host=r.host AND c.session_id=r.session_id
-    WHERE r.host IS NOT NULL GROUP BY r.host, r.session_id`);
-  // 按会话聚合后再按 宿主+模型 汇总（marked_turns 是每会话一个数，不能在上面直接 SUM）
-  const agg = new Map<string, HostStat>();
-  for (const h of hosts) {
-    const k = `${h.host}\u0000${h.model}`;
-    const a = agg.get(k) ?? { host: h.host, model: h.model, sessions: 0, recall_turns: 0, marked_turns: 0 };
-    a.sessions += 1;
-    a.recall_turns += Number(h.recall_turns);
-    a.marked_turns += Number(h.marked_turns);
-    agg.set(k, a);
-  }
+    WHERE r.host IS NOT NULL GROUP BY r.host, COALESCE(c.model,'未知') ORDER BY sessions DESC`);
   const failed = rowsOf<{ host: string; n: number }>(db, "SELECT host, COUNT(*) AS n FROM capture_sessions WHERE error_code IS NOT NULL GROUP BY host");
   const deferred = rowsOf<{ n: number }>(db, "SELECT COUNT(*) AS n FROM capture_windows WHERE state='deferred'")[0]?.n ?? 0;
   const since = rowsOf<{ t: string | null }>(db, "SELECT MIN(ts) AS t FROM (SELECT ts FROM recall_runs UNION ALL SELECT ts FROM inject_log)")[0]?.t ?? null;
@@ -152,7 +141,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
       model_failed: modelFailed,
     },
     recall_daily: [...daily.values()],
-    hosts: [...agg.values()].sort((a, b) => b.sessions - a.sessions),
+    hosts: hosts.map((h) => ({ ...h, sessions: Number(h.sessions), recall_turns: Number(h.recall_turns), marked_turns: Number(h.marked_turns) })),
     capture: { failed_sessions: failed.reduce((n, r) => n + r.n, 0), failed_by_host: Object.fromEntries(failed.map((r) => [r.host, r.n])), deferred_windows: deferred },
     review_due: reviewDue,
   };
@@ -171,21 +160,21 @@ function usageOf(db: DatabaseSync, now: Date): Map<string, Omit<EntryUsage, "leg
       u = { inject_sessions: 0, inject_total: 0, by_path: {}, cited_sessions: 0, cited_total: 0, mismatched: 0, last_injected: null, daily: [] };
       out.set(r.prop_id, u);
     }
-    const key = `${r.host ?? "?"}:${r.session_id ?? `#${r.ts}`}`;
+    const key = `${r.host ?? "?"}:${r.session_id}`;
     u.inject_total++;
     u.by_path[r.path] = (u.by_path[r.path] ?? 0) + 1;
     u.last_injected = r.ts;
-    (sess.get(r.prop_id) ?? sess.set(r.prop_id, new Set()).get(r.prop_id)!).add(key);
+    if (r.session_id) (sess.get(r.prop_id) ?? sess.set(r.prop_id, new Set()).get(r.prop_id)!).add(key);
     if (r.cited) {
       u.cited_total++;
       if (r.title_mismatch) u.mismatched++;
-      (citedSess.get(r.prop_id) ?? citedSess.set(r.prop_id, new Set()).get(r.prop_id)!).add(key);
+      if (r.session_id) (citedSess.get(r.prop_id) ?? citedSess.set(r.prop_id, new Set()).get(r.prop_id)!).add(key);
     }
     const day = r.ts.slice(0, 10);
     if (day >= start) {
       let d = u.daily.find((x) => x.day === day);
-      if (!d) u.daily.push((d = { day, recall: 0, pref: 0, brief: 0, cited: 0 }));
-      if (r.path === "recall" || r.path === "pref" || r.path === "brief") d[r.path]++;
+      if (!d) u.daily.push((d = { day, recall: 0, brief: 0, cited: 0 }));
+      if (r.path === "recall" || r.path === "brief") d[r.path]++;
       if (r.cited) d.cited++;
     }
   }
@@ -441,7 +430,7 @@ const ST={user:'用户确认',code:'代码核验',corroboration:'跨会话印证
 const STATE={active:'有效',archived:'已归档',superseded:'已被替代',candidate:'候选'};
 const LINK={merged_into:'已并入',merged_from:'合并自',refines:'补充了',refined_by:'被补充',conflicts:'冲突',supersedes:'替代了',supersedes_pending:'替代（未生效）',superseded_by:'被替代',pending_correction:'待确认纠正'};
 const EC={refines:'#64748b',refined_by:'#64748b',merged_into:'#60a5fa',merged_from:'#60a5fa',conflicts:'#ef4444',supersedes:'#e2e8f0',superseded_by:'#e2e8f0',supersedes_pending:'#f59e0b',pending_correction:'#f59e0b'};
-const PATH={recall:'相似度召回',pref:'常驻偏好',brief:'brief'};
+const PATH={recall:'相似度召回',brief:'brief'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const $=id=>document.getElementById(id),short=id=>id.slice(0,8),n=x=>Number(x||0).toLocaleString();
 const gen=new Date(D.generated),age=Math.floor((Date.now()-gen.getTime())/864e5);
@@ -455,7 +444,7 @@ function overview(){
 const st=cnt(A,e=>e.status),kd=cnt(A,e=>e.kind),linked=A.filter(e=>e.links.length).length;
 const legacy=A.filter(e=>e.usage.legacy_uses>0).length,inj=A.filter(e=>e.usage.inject_sessions>0).length,never=A.length-inj,cited=A.filter(e=>e.usage.cited_sessions>0).length;
 const lt=cnt(E.flatMap(e=>e.links),l=>l.type);
-const hostRows=T.hosts.map(h=>'<tr><td>'+esc(h.host)+'</td><td>'+esc(h.model)+'</td><td class="num">'+h.sessions+'</td><td class="num">'+h.recall_turns+'</td><td class="num">'+h.marked_turns+'</td><td class="num">'+(h.recall_turns?Math.round(100*Math.min(1,h.marked_turns/h.recall_turns))+'%':'<span class="dim">—</span>')+'</td></tr>').join('');
+const hostRows=T.hosts.map(h=>'<tr><td>'+esc(h.host)+'</td><td>'+esc(h.model)+'</td><td class="num">'+h.sessions+'</td><td class="num">'+h.recall_turns+'</td><td class="num">'+h.marked_turns+'</td><td class="num">'+(h.recall_turns?Math.round(100*h.marked_turns/h.recall_turns)+'%':'<span class="dim">—</span>')+'</td></tr>').join('');
 const maxK=Math.max(1,...Object.values(kd));
 const days=T.recall_daily,mx=Math.max(1,...days.map(d=>d.hit+d.nohit+d.error));
 const chart='<svg viewBox="0 0 600 120" width="100%">'+days.map((d,i)=>{let y=110,s='';[['hit','#7c5cff'],['nohit','#334155'],['error','#ef4444']].forEach(([k,c])=>{const h=100*d[k]/mx;if(h>0){s+='<rect x="'+(i*20+2)+'" y="'+(y-h).toFixed(1)+'" width="16" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"><title>'+d.day+' '+k+' '+d[k]+'</title></rect>';y-=h}});return s}).join('')+'</svg>';
@@ -504,12 +493,12 @@ function visible(){const q=$('q').value.trim().toLowerCase(),u=$('fu').value;ret
 function list(){const v=visible();$('shown').textContent='显示 '+v.length+' 条';$('list').innerHTML=v.slice(0,600).map(e=>'<div class="item'+(e.id===sel?' sel':'')+'" data-go="'+e.id+'"><div class="t"><span class="pill k-'+e.kind+'">'+KIND[e.kind]+'</span>'+esc(e.text.split('\\n')[0])+'</div><div class="sub">['+short(e.id)+'] '+esc(e.project)+' · <span class="s-'+e.status+'">'+ST[e.status]+'</span>'+(e.state!=='active'?' · '+STATE[e.state]:'')+' · 注入 '+e.usage.inject_sessions+' 会话 · 引用 '+e.usage.cited_sessions+'</div></div>').join('')+(v.length>600?'<div class="sub" style="padding:10px">只列前 600 条，请用筛选缩小</div>':'')}
 function ref(id){const e=byId.get(id);return '<a data-go="'+id+'">['+short(id)+']</a> '+(e?esc(e.text.split('\\n')[0].slice(0,60))+(e.state!=='active'?' <span class="dim">('+STATE[e.state]+')</span>':''):'')}
 function detail(id){const e=byId.get(id);if(!e)return;sel=id;const u=e.usage;
-const days=[];for(let i=29;i>=0;i--)days.push(new Date(gen.getTime()-i*864e5).toISOString().slice(0,10));const dm=new Map(u.daily.map(d=>[d.day,d]));const mx=Math.max(1,...u.daily.map(d=>d.recall+d.pref+d.brief));
-const tl='<svg viewBox="0 0 600 100" width="100%">'+days.map((day,i)=>{const d=dm.get(day);if(!d)return '';let y=92,s='';[['recall','#7c5cff'],['pref','#2dd4bf'],['brief','#fbbf24']].forEach(([k,c])=>{const h=80*d[k]/mx;if(h>0){s+='<rect x="'+(i*20+2)+'" y="'+(y-h).toFixed(1)+'" width="16" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"><title>'+day+' '+PATH[k]+' '+d[k]+'</title></rect>';y-=h}});if(d.cited)s+='<circle cx="'+(i*20+10)+'" cy="'+(y-6)+'" r="3.5" fill="#f8fafc"><title>'+day+' 被引用 '+d.cited+'</title></circle>';return s}).join('')+'</svg>';
+const days=[];for(let i=29;i>=0;i--)days.push(new Date(gen.getTime()-i*864e5).toISOString().slice(0,10));const dm=new Map(u.daily.map(d=>[d.day,d]));const mx=Math.max(1,...u.daily.map(d=>d.recall+d.brief));
+const tl='<svg viewBox="0 0 600 100" width="100%">'+days.map((day,i)=>{const d=dm.get(day);if(!d)return '';let y=92,s='';[['recall','#7c5cff'],['brief','#fbbf24']].forEach(([k,c])=>{const h=80*d[k]/mx;if(h>0){s+='<rect x="'+(i*20+2)+'" y="'+(y-h).toFixed(1)+'" width="16" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"><title>'+day+' '+PATH[k]+' '+d[k]+'</title></rect>';y-=h}});if(d.cited)s+='<circle cx="'+(i*20+10)+'" cy="'+(y-6)+'" r="3.5" fill="#f8fafc"><title>'+day+' 被引用 '+d.cited+'</title></circle>';return s}).join('')+'</svg>';
 $('detail').innerHTML='<div class="card"><div><span class="pill k-'+e.kind+'">'+KIND[e.kind]+'</span><span class="sub">['+short(e.id)+'] '+esc(e.project)+' · </span><span class="s-'+e.status+'">● '+ST[e.status]+'</span><span class="sub"> · '+STATE[e.state]+' · '+(e.origin==='extract'?'自动沉淀':e.origin==='import'?'导入':'手动')+' · '+esc(e.host||'未知宿主')+' · 记录于 '+e.created.slice(0,10)+'</span></div>'+
 '<div style="font-size:17px;margin:10px 0;white-space:pre-wrap">'+esc(e.text)+'</div>'+(e.why?'<div class="sub"><b>为什么：</b>'+esc(e.why)+'</div>':'')+(e.trigger?'<div class="sub"><b>触发：</b>'+esc(e.trigger)+'</div>':'')+'<div class="sub"><b>背景：</b>'+esc(e.summary)+'</div>'+
 '<div class="grid" style="grid-template-columns:repeat(4,1fr);margin-top:14px">'+kpi('注入会话',u.inject_sessions,'共 '+u.inject_total+' 次')+kpi('被引用会话',u.cited_sessions,'共 '+u.cited_total+' 次',u.mismatched?'标题不符 '+u.mismatched:'',u.mismatched?'#fbbf24':'')+kpi('按路径',Object.entries(u.by_path).map(([k,v])=>(PATH[k]||k)+' '+v).join(' · ')||'—','')+kpi('老累计（prop_usage）',u.legacy_uses,'含常驻偏好与 brief')+'</div>'+
-'<h3 style="margin-top:14px">注入时间线（近 30 天）</h3>'+tl+'<div class="lg"><span><i style="background:#7c5cff"></i>相似度召回</span><span><i style="background:#2dd4bf"></i>常驻偏好</span><span><i style="background:#fbbf24"></i>brief</span><span><i style="background:#f8fafc;border-radius:50%"></i>被引用</span>'+(u.last_injected?'<span>最近注入 '+esc(u.last_injected.slice(0,16).replace('T',' '))+'</span>':'')+'</div></div>'+
+'<h3 style="margin-top:14px">注入时间线（近 30 天）</h3>'+tl+'<div class="lg"><span><i style="background:#7c5cff"></i>相似度召回</span><span><i style="background:#fbbf24"></i>brief</span><span><i style="background:#f8fafc;border-radius:50%"></i>被引用</span>'+(u.last_injected?'<span>最近注入 '+esc(u.last_injected.slice(0,16).replace('T',' '))+'</span>':'')+'</div></div>'+
 '<div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px"><div class="card"><h3>关联</h3>'+(e.links.length?e.links.map(l=>'<div style="margin:5px 0"><span class="pill" style="background:#1d2650;color:'+EC[l.type]+'">'+LINK[l.type]+'</span>'+ref(l.id)+'</div>').join(''):'<span class="dim">无</span>')+'</div>'+
 '<div class="card"><h3>向量近邻</h3>'+(e.neighbors.length?e.neighbors.map(x=>'<div style="margin:5px 0"><span class="num" style="color:#5eead4">'+x.similarity.toFixed(2)+'</span> '+ref(x.id)+'</div>').join(''):'<span class="dim">无</span>')+'</div></div>'+
 (e.sessions.length||e.evidence.length||e.code?'<div class="card" style="margin-top:16px"><h3>来源与证据</h3>'+e.sessions.map(s=>'<div class="sub">会话 '+esc(s)+'</div>').join('')+e.evidence.map(v=>'<div class="sub">'+esc(v.role)+(v.anchor?' @ '+esc(v.anchor):'')+'</div>').join('')+(e.code?'<div class="sub">'+(e.code.stale?'与代码不符':'代码证据')+'：'+e.code.refs.map(esc).join('<br>')+'</div>':'')+'</div>':'');list()}

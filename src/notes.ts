@@ -1,9 +1,5 @@
-/**
- * 宿主全局指令文件里的 agentbrain 托管块（设计 §11.8.9）。
- * 只动标记块内部；首次运行把与已知原文逐字相同的手写"## 记忆（agentbrain）"段换成托管块，
- * 内容被用户改过的手写段不动、要 --adopt 才换。写前备份，内容不变不写，--remove-notes 只删块。
- */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+/** 宿主全局指令文件里的 agentbrain 托管块（§11.8.9）。用户改过的手写段要 --adopt 才换，免得覆盖用户的话。 */
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -20,23 +16,17 @@ const BASE = [
   "- 怎么用：开工先跑 `ab brief`（子代理跑 `ab brief --worker`）；每轮相关记忆自动注入（`<agentbrain-recall>`）；要查用 `ab search <关键词>`、`ab get <id>`。与现场证据冲突时信现场。",
   "- 干活时不写记忆：后台会从会话里自动抽取候选，由审稿模型决定去留。只有用户明确要你记某件事时，才用 `ab remember --confirmed`（参数见 `ab --help`）。",
 ];
-const CITE = [
-  "- `<agentbrain-recall>` 里每条前面的 `[8 位 id]` 是它的编号。回答若实际依据了其中某条，在回复最后单独一行写：`ab-used: 简短标题 (id)`，多条用；分隔，例如 `ab-used: 调 pi/codex 测试用临时库 (7f3c2a1b)`。没用上就不写，不要为了写而硬套。",
-  "- `<agentbrain-prefs>` 里的常驻偏好不用标。",
-];
-
-/** 2026-10-21 三个宿主文件里逐字相同的手写段（标题 + 空行 + 三条）。 */
+/** 托管块出现前三个宿主文件里逐字相同的手写段，首次运行据此认出可以直接替换的段。 */
 export const LEGACY_SECTION = [HEADING, "", ...BASE].join("\n");
 
-export function managedBlock(cite: boolean): string {
-  return [BEGIN, HEADING, "", ...BASE, ...(cite ? CITE : []), END].join("\n");
+export function managedBlock(): string {
+  return [BEGIN, HEADING, "", ...BASE, END].join("\n");
 }
 
 export type NoteAction = "create" | "append" | "replace-legacy" | "adopt" | "update" | "unchanged" | "needs-adopt" | "remove" | "absent" | "broken";
 
 export interface NotePlan {
   action: NoteAction;
-  /** 写入后的全文；不写为 null。 */
   next: string | null;
 }
 
@@ -50,13 +40,13 @@ function markers(lines: string[]): { begin: number[]; end: number[] } {
   return { begin, end };
 }
 
-/** 手写段：从标题行到下一个 `## ` 标题或文件末尾。 */
+/** 手写段：从标题行到下一个一级或二级标题，或文件末尾。 */
 function legacyRange(lines: string[]): [number, number] | null {
   const s = lines.findIndex((l) => l.trim() === HEADING);
   if (s < 0) return null;
   let e = lines.length;
   for (let i = s + 1; i < lines.length; i++) {
-    if (/^## /.test(lines[i])) {
+    if (/^#{1,2} /.test(lines[i])) {
       e = i;
       break;
     }
@@ -73,8 +63,8 @@ function finish(lines: string[], hadNewline: boolean): string {
   return hadNewline || !t.endsWith("\n") ? t.replace(/\n*$/, "\n") : t;
 }
 
-export function planNotes(content: string | null, cite: boolean, adopt = false): NotePlan {
-  const block = managedBlock(cite);
+export function planNotes(content: string | null, adopt = false): NotePlan {
+  const block = managedBlock();
   if (content === null) return { action: "create", next: block + "\n" };
   const lines = content.split("\n");
   const m = markers(lines);
@@ -89,7 +79,6 @@ export function planNotes(content: string | null, cite: boolean, adopt = false):
     const sec = lines.slice(r[0], r[1]).join("\n");
     const same = norm(sec) === norm(LEGACY_SECTION);
     if (!same && !adopt) return { action: "needs-adopt", next: null };
-    // 段后原有的空行保留，免得和下一个标题粘在一起
     const tail = lines.slice(r[0], r[1]);
     let blanks = 0;
     for (let i = tail.length - 1; i >= 0 && tail[i].trim() === ""; i--) blanks++;
@@ -108,7 +97,6 @@ export function planRemove(content: string | null): NotePlan {
   if (m.begin.length !== 1 || m.end.length !== 1 || m.end[0] < m.begin[0]) return { action: "broken", next: null };
   const before = lines.slice(0, m.begin[0]);
   const after = lines.slice(m.end[0] + 1);
-  // 去掉块后多出来的连续空行
   while (before.length && before[before.length - 1].trim() === "" && (after.length === 0 || after[0].trim() === "")) before.pop();
   return { action: "remove", next: finish([...before, ...after], content.endsWith("\n")) };
 }
@@ -145,23 +133,33 @@ export interface NoteResult {
   backup: string | null;
 }
 
-/** 对每个宿主文件规划并（非 dry-run 时）写入。写后复读，确认恰好一对标记（删除时为零对）。 */
-export function applyNotes(opts: { cite: boolean; dryRun: boolean; adopt: boolean; remove: boolean; home?: string; now?: Date }): NoteResult[] {
-  const out: NoteResult[] = [];
-  for (const t of noteTargets(opts.home)) {
+/** 先在同目录写临时文件再改名替换，写到一半中断时宿主文件不会是半截的。软链写到它指向的文件。 */
+function writeAtomic(path: string, text: string): void {
+  const real = existsSync(path) ? realpathSync(path) : path;
+  mkdirSync(dirname(real), { recursive: true });
+  const tmp = `${real}.agentbrain-tmp-${process.pid}`;
+  writeFileSync(tmp, text, existsSync(real) ? { mode: statSync(real).mode & 0o777 } : {});
+  renameSync(tmp, real);
+}
+
+export function applyNotes(opts: { dryRun: boolean; adopt: boolean; remove: boolean; home?: string; now?: Date }): NoteResult[] {
+  const planned = noteTargets(opts.home).map((t) => {
     const before = existsSync(t.path) ? readFileSync(t.path, "utf8") : null;
-    const plan = opts.remove ? planRemove(before) : planNotes(before, opts.cite, opts.adopt);
+    const plan = opts.remove ? planRemove(before) : planNotes(before, opts.adopt);
+    if (plan.next !== null) {
+      const m = markers(plan.next.split("\n"));
+      const want = opts.remove ? 0 : 1;
+      if (m.begin.length !== want || m.end.length !== want) throw new Error(`${t.path} 改后标记数不对（begin ${m.begin.length} / end ${m.end.length}），没有写任何文件`);
+    }
+    return { t, before, plan };
+  });
+  return planned.map(({ t, before, plan }) => {
     const res: NoteResult = { host: t.host, path: t.path, action: plan.action, diff: plan.next !== null ? unifiedDiff(t.path, before, plan.next) : null, wrote: false, backup: null };
     if (plan.next !== null && !opts.dryRun) {
       res.backup = backup(t.path, opts.now);
-      mkdirSync(dirname(t.path), { recursive: true });
-      writeFileSync(t.path, plan.next);
-      const m = markers(readFileSync(t.path, "utf8").split("\n"));
-      const want = opts.remove ? 0 : 1;
-      if (m.begin.length !== want || m.end.length !== want) throw new Error(`${t.path} 写入后标记数不对（begin ${m.begin.length} / end ${m.end.length}）`);
+      writeAtomic(t.path, plan.next);
       res.wrote = true;
     }
-    out.push(res);
-  }
-  return out;
+    return res;
+  });
 }
