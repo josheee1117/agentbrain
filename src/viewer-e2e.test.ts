@@ -1,7 +1,7 @@
 /**
  * §11.8 端到端：真实 CLI 子进程、临时 AB_HOME 与临时 HOME，不碰真实 ~/.agentbrain 和宿主指令文件。
  * 召回 hook → inject_log/recall_runs；ab setup --cite on → 召回块带指令、宿主文件写托管块；
- * 助手回复写 ab-used → ab view 扫到引用并显示在看板数据里；--share 脱敏、--exclude-project 排除。
+ * 助手回复写 ab-used → ab view 扫到引用并显示在看板数据里。
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -46,7 +46,7 @@ const hook = () => JSON.parse(ab(["recall", "--hook"], alpha, JSON.stringify({ p
 const db = () => new DatabaseSync(join(home, "store.db"), { readOnly: true });
 const dataOf = (file: string) => JSON.parse(/<script id="data" type="application\/json">([\s\S]*?)<\/script>/.exec(readFileSync(file, "utf8"))![1]);
 
-test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏，一条链走通", () => {
+test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走通", () => {
   const id = /\[([0-9a-f]{8})\]/.exec(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 召回里用全局锁，token=abcd1234efgh5678 要换", "--summary", "锁"]))![1];
   ab(["remember", "--confirmed", "--kind", "rule", "--text", "beta 的全局锁规则", "--summary", "beta"], beta);
 
@@ -85,19 +85,6 @@ test("召回记录、引用开关、ab-used 扫描、看板数据、分享脱敏
   const pi = data.telemetry.hosts.find((h: any) => h.host === "pi");
   assert.deepEqual(pi, { host: "pi", model: "cpa/glm-5.3", sessions: 1, recall_turns: 1, marked_turns: 1 });
   assert.equal(data.telemetry.recall_runs.hit, 2);
-
-  // 5. 分享版：正文过脱敏、去会话 id；排除 beta 项目
-  const share = join(dir, "share.html");
-  const sv = ab(["view", "--no-open", "--share", "--exclude-project", "beta", "--out", share]);
-  assert.match(sv, /已排除 beta/);
-  const sd = dataOf(share);
-  const se = sd.entries.find((x: any) => x.id.startsWith(id));
-  assert.match(se.text, /token=\[SECRET:credential\]/);
-  assert.doesNotMatch(readFileSync(share, "utf8"), /abcd1234efgh5678/);
-  assert.deepEqual(se.sessions, []);
-  assert.ok(!sd.entries.some((x: any) => x.project === "beta"));
-  assert.equal(sd.share, true);
-  assert.ok(dataOf(out).entries.some((x: any) => x.project === "beta"), "普通版不受影响");
 
   // 6. 关掉开关：召回块不再带指令
   ab(["setup", "--cite", "off"]);

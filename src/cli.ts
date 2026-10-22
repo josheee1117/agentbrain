@@ -866,16 +866,16 @@ function cmdReview(argv: string[]): void {
 function cmdView(argv: string[]): void {
   const { values } = parseArgs({
     args: argv,
-    options: { out: { type: "string" }, "no-open": { type: "boolean", default: false }, share: { type: "boolean", default: false }, "exclude-project": { type: "string", multiple: true } },
+    options: { out: { type: "string" }, "no-open": { type: "boolean", default: false } },
     strict: true,
   });
-  const out = values.out ?? join(home(), values.share ? "view-share.html" : "view.html");
+  const out = values.out ?? join(home(), "view.html");
   const store = open();
   let data;
   let scan = { sessions: 0, cited: 0, dropped: 0, unreadable: 0 };
   try {
     scan = refreshCitations(store, new Date());
-    data = buildViewData(store, new Date(), { share: values.share, exclude: values["exclude-project"] ?? [] });
+    data = buildViewData(store, new Date());
   } finally {
     store.close();
   }
@@ -883,10 +883,6 @@ function cmdView(argv: string[]): void {
   chmodSync(out, 0o600);
   console.log(`已生成 ${out}：共 ${data.counts.total} 条（有效 ${data.counts.active}），有向量 ${data.counts.vectors} 条`);
   console.log(`引用扫描：${scan.sessions} 个会话，记到 ${scan.cited} 次引用，丢弃 ${scan.dropped} 个对不上注入记录的 id${scan.unreadable ? `，${scan.unreadable} 个会话读不到对话` : ""}`);
-  if (values.share) {
-    const withBody = new Set(data.entries.map((e) => e.project));
-    console.log(`分享版：带正文的项目 ${[...withBody].join("、") || "无"}${data.excluded.length ? `；已排除 ${data.excluded.join("、")}` : ""}。正文已过脱敏（规则匹配，不保证抓全），会话 id、路径、证据定位点已去掉。发出前请自己看一眼。`);
-  }
   if (!values["no-open"]) {
     const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open";
     spawn(opener, [out], { stdio: "ignore", detached: true }).on("error", () => console.log(`没能自动打开，请手动打开 ${out}`)).unref();
@@ -1231,9 +1227,7 @@ const USAGE = `用法:
   ab stage <id 前缀…> [--undo]          把条目移进候选区（用户确认过的不动）；--undo 撤销，移回正式库
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
-  ab view [--out <路径>] [--no-open] [--share] [--exclude-project <名>…]
-      生成记忆看板（概览、关联图、记忆详情、注入/引用统计；默认 ~/.agentbrain/view.html）。只手动生成。
-      --share：内部分享版，正文经脱敏、去掉会话 id 与路径；--exclude-project 去掉整个项目
+  ab view [--out <路径>] [--no-open]  生成记忆看板（概览、关联图、记忆详情、注入/引用统计；默认 ~/.agentbrain/view.html）。只手动生成
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
   ab capture --hook --host <claude|codex|pi|opencode>

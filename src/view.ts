@@ -4,7 +4,6 @@
  */
 import type { DatabaseSync } from "node:sqlite";
 import type { Store } from "./store.ts";
-import { sanitize } from "./sanitize.ts";
 import type { Proposition } from "./l2.ts";
 import { cosine } from "./embed.ts";
 import { reviewList, sourceClock, validDays } from "./expiry.ts";
@@ -75,8 +74,6 @@ export interface Telemetry {
 
 export interface ViewData {
   generated: string;
-  share: boolean;
-  excluded: string[];
   telemetry: Telemetry;
   embed_model: string | null;
   entries: ViewEntry[];
@@ -85,13 +82,6 @@ export interface ViewData {
 
 const NEIGHBORS = 5;
 const DAY = 86_400_000;
-
-export interface ViewOpts {
-  /** 内部分享版：正文过 sanitize（始终开），去掉会话 id、transcript 路径、证据定位点。 */
-  share?: boolean;
-  /** 去掉这些项目（按项目名）的全部条目和指向它们的关联。 */
-  exclude?: readonly string[];
-}
 
 function rowsOf<T>(db: DatabaseSync, sql: string, ...args: (string | number | null)[]): T[] {
   try {
@@ -185,54 +175,51 @@ function usageOf(db: DatabaseSync, now: Date): Map<string, Omit<EntryUsage, "leg
   return out;
 }
 
-/** 关联图布局：只排带关联的条目；确定性的力导向（固定初值、固定轮数）。 */
-export function graphLayout(nodes: readonly string[], edges: readonly [string, string][], iters = 300): Map<string, [number, number]> {
-  const n = nodes.length;
-  const idx = new Map(nodes.map((id, i) => [id, i]));
-  const x = new Float64Array(n);
-  const y = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    const a = i * 2.399963; // 黄金角螺旋初值
-    const r = 10 * Math.sqrt(i + 1);
-    x[i] = Math.cos(a) * r;
-    y[i] = Math.sin(a) * r;
+/** 关联图布局：每个连通块一个圆，块按大小排成网格。O(点+边)，条目多也不会卡住 ab view。 */
+export function graphLayout(nodes: readonly string[], edges: readonly [string, string][]): Map<string, [number, number]> {
+  const adj = new Map(nodes.map((id) => [id, [] as string[]]));
+  for (const [a, b] of edges) {
+    if (!adj.has(a) || !adj.has(b)) continue;
+    adj.get(a)!.push(b);
+    adj.get(b)!.push(a);
   }
-  const E = edges.flatMap(([a, b]) => (idx.has(a) && idx.has(b) ? [[idx.get(a)!, idx.get(b)!] as [number, number]] : []));
-  const k = 18;
-  for (let it = 0; it < iters; it++) {
-    const dx = new Float64Array(n);
-    const dy = new Float64Array(n);
-    for (let i = 0; i < n; i++)
-      for (let j = i + 1; j < n; j++) {
-        let ex = x[i] - x[j];
-        let ey = y[i] - y[j];
-        let d2 = ex * ex + ey * ey;
-        if (d2 < 0.01) {
-          ex = 0.1;
-          ey = 0;
-          d2 = 0.01;
-        }
-        if (d2 > 40_000) continue;
-        const f = (k * k) / d2;
-        dx[i] += ex * f; dy[i] += ey * f; dx[j] -= ex * f; dy[j] -= ey * f;
-      }
-    for (const [a, b] of E) {
-      const ex = x[a] - x[b];
-      const ey = y[a] - y[b];
-      const d = Math.hypot(ex, ey) || 0.01;
-      const f = d / k;
-      dx[a] -= ex * f * 0.5; dy[a] -= ey * f * 0.5; dx[b] += ex * f * 0.5; dy[b] += ey * f * 0.5;
+  const seen = new Set<string>();
+  const groups: string[][] = [];
+  for (const id of nodes) {
+    if (seen.has(id)) continue;
+    const g: string[] = [];
+    const stack = [id];
+    seen.add(id);
+    while (stack.length) {
+      const cur = stack.pop()!;
+      g.push(cur);
+      for (const n of adj.get(cur)!) if (!seen.has(n)) (seen.add(n), stack.push(n));
     }
-    const t = 6 * (1 - it / iters) + 0.2;
-    for (let i = 0; i < n; i++) {
-      dx[i] -= x[i] * 0.04; // 向心，防止离散的小团飘远，防止离散的小团飘远
-      dy[i] -= y[i] * 0.01;
-      const d = Math.hypot(dx[i], dy[i]) || 1;
-      x[i] += (dx[i] / d) * Math.min(d, t);
-      y[i] += (dy[i] / d) * Math.min(d, t);
-    }
+    groups.push(g);
   }
-  return new Map(nodes.map((id, i) => [id, [Math.round(x[i] * 10) / 10, Math.round(y[i] * 10) / 10] as [number, number]]));
+  groups.sort((a, b) => b.length - a.length);
+  const cell = (g: string[]) => 40 + 12 * Math.sqrt(g.length) * 2;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(groups.length)));
+  const out = new Map<string, [number, number]>();
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  groups.forEach((g, i) => {
+    if (i % cols === 0 && i) {
+      x = 0;
+      y += rowH;
+      rowH = 0;
+    }
+    const size = cell(g);
+    const r = g.length === 1 ? 0 : size / 2 - 15;
+    g.forEach((id, k) => {
+      const a = (2 * Math.PI * k) / g.length;
+      out.set(id, [Math.round((x + size / 2 + r * Math.cos(a)) * 10) / 10, Math.round((y + size / 2 + r * Math.sin(a)) * 10) / 10]);
+    });
+    x += size;
+    rowH = Math.max(rowH, size);
+  });
+  return out;
 }
 
 function statusOf(p: Proposition): ViewStatus {
@@ -275,7 +262,7 @@ export function pca2(vecs: Float32Array[]): [number, number][] {
   return X.map((x) => comps.map((w) => x.reduce((s, xj, j) => s + xj * w[j], 0)) as [number, number]);
 }
 
-export function buildViewData(store: Store, now: Date = new Date(), opts: ViewOpts = {}): ViewData {
+export function buildViewData(store: Store, now: Date = new Date()): ViewData {
   const props = store.project().props;
   const names = new Map(store.listProjects().map((p) => [p.id, p.name]));
   const usage = store.usage();
@@ -347,25 +334,12 @@ export function buildViewData(store: Store, now: Date = new Date(), opts: ViewOp
       g: null as [number, number] | null,
     };
   });
-  const excluded = [...new Set(opts.exclude ?? [])];
-  if (excluded.length) {
-    const drop = new Set(entries.filter((e) => excluded.includes(e.project)).map((e) => e.id));
-    entries = entries.filter((e) => !drop.has(e.id));
-    for (const e of entries) {
-      e.links = e.links.filter((l) => !drop.has(l.id));
-      e.neighbors = e.neighbors.filter((n) => !drop.has(n.id));
-    }
-  }
-  
-  if (opts.share) for (const e of entries) scrubEntry(e);
   const linked = entries.filter((e) => e.links.length);
   const edges: [string, string][] = linked.flatMap((e) => e.links.map((l) => [e.id, l.id] as [string, string]));
   const pos = graphLayout(linked.map((e) => e.id), edges);
   for (const e of entries) e.g = pos.get(e.id) ?? null;
   return {
     generated: now.toISOString(),
-    share: !!opts.share,
-    excluded,
     telemetry: telemetryOf(store.workDb, now, entries.filter((e) => e.review_due).length),
     embed_model: store.vectorStatus().model,
     entries,
@@ -388,7 +362,7 @@ header{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:
 h1{font-size:17px;margin:0}.sub{color:#8a93b2;font-size:12px}
 nav{margin-left:24px;display:flex;gap:4px}nav a{padding:6px 13px;border-radius:8px;color:#9aa3c2;cursor:pointer;font-size:13px}nav a.on{background:#1d2650;color:#fff}
 .meta{margin-left:auto;text-align:right;font-size:12px;color:#8a93b2}.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;margin-left:6px}
-.b-share{background:#3b2a0a;color:#fbbf24}.b-old{background:#4a1d2a;color:#fda4af}
+.b-old{background:#4a1d2a;color:#fda4af}
 main{padding:20px 28px;display:none;gap:16px}main.on{display:grid}
 .grid{display:grid;gap:16px}.card{background:#111830;border:1px solid #1e2742;border-radius:14px;padding:16px}
 .card h3{margin:0 0 10px;font-size:13px;color:#aab3d4;font-weight:600}
@@ -435,7 +409,7 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const $=id=>document.getElementById(id),short=id=>id.slice(0,8),n=x=>Number(x||0).toLocaleString();
 const gen=new Date(D.generated),age=Math.floor((Date.now()-gen.getTime())/864e5);
 $('sub').textContent='本地记忆 · '+D.counts.total+' 条（有效 '+D.counts.active+'）· 向量 '+(D.embed_model||'无');
-$('meta').innerHTML='生成于 '+esc(gen.toLocaleString())+' · <b>'+(age<=0?'今天':'距今 '+age+' 天')+'</b>'+(age>=7?'<span class="badge b-old">数据较旧，重跑 ab view</span>':'')+(D.share?'<span class="badge b-share">分享版 · 已脱敏'+(D.excluded.length?' · 已排除 '+D.excluded.length+' 个项目':'')+'</span>':'');
+$('meta').innerHTML='生成于 '+esc(gen.toLocaleString())+' · <b>'+(age<=0?'今天':'距今 '+age+' 天')+'</b>'+(age>=7?'<span class="badge b-old">数据较旧，重跑 ab view</span>':'');
 document.querySelectorAll('nav a').forEach(a=>a.onclick=()=>tab(a.dataset.tab));
 function tab(t){document.querySelectorAll('nav a').forEach(x=>x.classList.toggle('on',x.dataset.tab===t));document.querySelectorAll('main').forEach(m=>m.classList.toggle('on',m.id===t));if(t==='gr')graph();if(t==='mp')map()}
 function cnt(list,key){const m={};list.forEach(e=>{const k=key(e);m[k]=(m[k]||0)+1});return m}
@@ -508,16 +482,4 @@ const tip=$('tip');document.addEventListener('mousemove',ev=>{const id=ev.target
 overview();list();const first=A.slice().sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions)[0];if(first)detail(first.id);
 const h0=location.hash.slice(1);if(h0.startsWith('m=')){tab('ls');detail(h0.slice(2))}else if(h0.startsWith('tab='))tab(h0.slice(4));window.scrollTo(0,0);
 </script></body></html>`;
-}
-
-/** 分享版脱敏：正文类字段过 sanitize（密钥、token、邮箱、电话、证件号、家目录），去掉会话 id 与证据定位点。 */
-export function scrubEntry(e: ViewEntry): void {
-  const clean = (t: string) => sanitize(t).text;
-  e.text = clean(e.text);
-  e.why = e.why === null ? null : clean(e.why);
-  e.summary = clean(e.summary);
-  e.trigger = e.trigger === null ? null : clean(e.trigger);
-  e.sessions = [];
-  e.evidence = e.evidence.map((v) => ({ role: v.role, anchor: "", quote_sha256: "" }));
-  if (e.code) e.code = { ...e.code, refs: e.code.refs.map(clean) };
 }

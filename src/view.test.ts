@@ -73,18 +73,23 @@ test("buildViewData：没生效的替代单独标出；按会话计注入；排�
   assert.equal(get(old).usage.inject_sessions, 2, "认不出会话的 brief 不算一个会话");
   assert.equal(get(old).usage.inject_total, 4);
   assert.deepEqual(get(old).usage.by_path, { recall: 3, brief: 1 });
-  const ex = buildViewData(s, new Date("2026-10-21T00:00:00Z"), { exclude: ["secret-proj"] });
-  assert.ok(!ex.entries.some((e) => e.id === hidden));
-  assert.ok(!ex.entries.some((e) => e.links.some((l) => l.id === hidden)));
-  assert.ok(ex.entries.find((e) => e.id === old)!.g, "带关联的条目有关联图坐标");
+  assert.ok(get(old).g, "带关联的条目有关联图坐标");
 });
 
-test("graphLayout：确定性、坐标有限、相连的点比不相连的近", () => {
-  const nodes = ["a", "b", "c", "d"];
-  const L1 = graphLayout(nodes, [["a", "b"], ["c", "d"]]);
-  const L2 = graphLayout(nodes, [["a", "b"], ["c", "d"]]);
-  assert.deepEqual([...L1], [...L2]);
-  const dist = (x: string, y: string) => Math.hypot(L1.get(x)![0] - L1.get(y)![0], L1.get(x)![1] - L1.get(y)![1]);
+test("graphLayout：确定性、坐标有限、同一连通块的点比不同块的近", () => {
+  const nodes = ["a", "b", "c", "d", "e"];
+  const edges: [string, string][] = [["a", "b"], ["b", "c"], ["d", "e"]];
+  const L1 = graphLayout(nodes, edges);
+  assert.deepEqual([...L1], [...graphLayout(nodes, edges)]);
+  assert.equal(L1.size, 5);
   assert.ok([...L1.values()].every((p) => p.every(Number.isFinite)));
-  assert.ok(dist("a", "b") < dist("a", "c") && dist("c", "d") < dist("b", "d"));
+  const dist = (x: string, y: string) => Math.hypot(L1.get(x)![0] - L1.get(y)![0], L1.get(x)![1] - L1.get(y)![1]);
+  assert.ok(Math.max(dist("a", "b"), dist("a", "c")) < Math.min(dist("a", "d"), dist("c", "e")));
+});
+
+test("graphLayout：两千个点一条链也很快", () => {
+  const nodes = Array.from({ length: 2000 }, (_, i) => `n${i}`);
+  const t0 = performance.now();
+  graphLayout(nodes, nodes.slice(1).map((n, i) => [nodes[i], n] as [string, string]));
+  assert.ok(performance.now() - t0 < 500);
 });
