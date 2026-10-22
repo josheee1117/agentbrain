@@ -133,3 +133,15 @@ test("Claude：额度用尽等 API 错误时宿主写的 <synthetic> 提示不�
   ]);
   assert.deepEqual(cleanTranscript("claude", p).turns.map((t) => t.role), ["user"]);
 });
+
+test("回答里提到但没闭合的 <agentbrain-recall> 不删后文；闭合的注入块照删", () => {
+  const p = file("mention.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    { type: "message", id: "u", parentId: "h", message: { role: "user", content: "<agentbrain-recall>\n- [abcd1234] 坑: 旧记忆\n</agentbrain-recall>\n召回输出有几行？" } },
+    { type: "message", id: "a", parentId: "u", message: { role: "assistant", content: [{ type: "text", text: "正常输出里 `<agentbrain-recall>` 块只有 1~3 行。\n所以别断言第 4 条。" }] } },
+  ]);
+  assert.deepEqual(cleanTranscript("pi", p).turns.map((t) => t.text), [
+    "召回输出有几行？",
+    "正常输出里 `<agentbrain-recall>` 块只有 1~3 行。\n所以别断言第 4 条。",
+  ]);
+});

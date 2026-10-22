@@ -1,10 +1,11 @@
 import { test } from "node:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { Store } from "./store.ts";
+import { cleanTranscript } from "./transcript.ts";
 import { buildViewData } from "./view.ts";
 import type { RememberBody } from "./l2.ts";
 import { recordRecall, CITE_INSTRUCTION, citeEnabled, logInjections, logRecallRun, markFailedTurns, parseAbUsed, prune, scanSession, setCite, stripAbUsed, titleOverlap, withCiteInstruction } from "./telemetry.ts";
@@ -164,4 +165,57 @@ test("开发期建的统计表（带 rank 列）打开时删掉重建，之后�
   assert.equal((s.workDb.prepare("SELECT COUNT(*) AS n FROM inject_log").get() as { n: number }).n, 1);
   assert.equal((s.workDb.prepare("SELECT marked FROM recall_runs").get() as { marked: number }).marked, 0);
   s.close();
+});
+
+function piSession(name: string, entries: unknown[]): string {
+  const f = join(mkdtempSync(join(tmpdir(), "ab-pi-scan-")), name);
+  writeFileSync(f, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  return f;
+}
+
+function piTurn(id: string, parentId: string, ts: string, message: unknown) {
+  return { type: "message", id, parentId, timestamp: ts, message };
+}
+
+test("调用过工具后模型报错、没有文字回答的那轮记为失败；有文字回答的不算", () => {
+  const s = new Store(":memory:", ":memory:");
+  const a = s.remember(null, null, false, { kind: "rule", text: "两个说明文件要同内容", confirmed: true, source: src });
+  const run = (sid: string, last: unknown) => {
+    const ctx = { host: "pi" as const, session_id: sid, transcript: null, project_id: null };
+    const t0 = new Date("2026-10-22T02:55:20.542Z");
+    logRecallRun(s.workDb, ctx, "hit", 1, 1, true, t0);
+    logInjections(s.workDb, ctx, "recall", [a], t0);
+    const file = piSession(`${sid}.jsonl`, [
+      { type: "session", id: "h", cwd: "/repo" },
+      piTurn("u", "h", "2026-10-22T02:55:20.575Z", { role: "user", content: "改完说明文件了，还有别的要一起改吗？" }),
+      { type: "custom_message", id: "cm", parentId: "u", customType: "agentbrain-recall", content: "<agentbrain-recall>\n- [x] 规则\n</agentbrain-recall>" },
+      piTurn("a1", "cm", "2026-10-22T02:55:22.046Z", { role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "" }, { type: "toolCall", id: "k1", name: "ls", arguments: { path: "/repo" } }, { type: "toolCall", id: "k2", name: "find", arguments: { pattern: "**/*.md" } }] }),
+      piTurn("r1", "a1", "2026-10-22T02:55:22.077Z", { role: "toolResult", toolCallId: "k1", content: [{ type: "text", text: "a.md b.md" }] }),
+      piTurn("a2", "r1", "2026-10-22T02:55:23.319Z", { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "k3", name: "read", arguments: { path: "/repo/a.md" } }] }),
+      piTurn("r2", "a2", "2026-10-22T02:55:23.323Z", { role: "toolResult", toolCallId: "k3", content: [{ type: "text", text: "内容" }] }),
+      piTurn("a3", "r2", "2026-10-22T02:55:24.924Z", last),
+    ]);
+    scanSession(s.workDb, "pi", sid, cleanTranscript("pi", file).turns, () => null, null, new Date("2026-10-22T03:00:00Z"));
+    return (s.workDb.prepare("SELECT failed FROM recall_runs WHERE session_id=?").get(sid) as { failed: number }).failed;
+  };
+  assert.equal(run("err", { role: "assistant", stopReason: "error", errorMessage: "400 bad request", content: [] }), 1);
+  assert.equal(run("ok", { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "还要同步另一个说明文件。" }] }), 0);
+});
+
+test("回答里提到 <agentbrain-recall> 标签不影响后面的 ab-used 行被认出", () => {
+  const s = new Store(":memory:", ":memory:");
+  const a = s.remember(null, null, false, { kind: "pitfall", text: "断言检索结果顺序时别假设按插入顺序", confirmed: true, source: src });
+  const ctx = { host: "pi" as const, session_id: "q11", transcript: null, project_id: null };
+  const t0 = new Date("2026-10-22T02:52:49.632Z");
+  logRecallRun(s.workDb, ctx, "hit", 1, 1, true, t0);
+  logInjections(s.workDb, ctx, "recall", [a], t0);
+  const reply = `不稳。\n1. 第 4 条不存在，所以正常输出里 \`<agentbrain-recall>\` 块的条目行只有 1~3 行。\n2. 顺序按相关度，不按时间。\n\nab-used: 断言顺序别假设插入序 (${a.slice(0, 8)})`;
+  const file = piSession("q11.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    piTurn("u", "h", "2026-10-22T02:52:49.600Z", { role: "user", content: "断言召回输出第 4 条是最新插入的，稳吗？" }),
+    piTurn("a1", "u", "2026-10-22T02:53:02.016Z", { role: "assistant", stopReason: "stop", content: [{ type: "text", text: reply }] }),
+  ]);
+  const r = scanSession(s.workDb, "pi", "q11", cleanTranscript("pi", file).turns, () => "断言检索结果顺序时别假设按插入顺序", null, new Date("2026-10-22T03:00:00Z"));
+  assert.equal(r.cited, 1);
+  assert.equal((s.workDb.prepare("SELECT marked FROM recall_runs").get() as { marked: number }).marked, 1);
 });
