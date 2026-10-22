@@ -173,7 +173,7 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
   const marked = new Set<number>();
   for (const t of turns) {
     if (t.role !== "assistant") continue;
-    const cites = parseAbUsed(t.text);
+    const cites = parseAbUsed(t.reply ?? t.text);
     if (!cites.length) continue;
     let any = false;
     for (const c of cites) {
@@ -212,7 +212,7 @@ export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: stri
  * 看板的标注率分母和注入用量都不算它们。对话里一条带时间的助手回复都没有时判断不了，保持原样。
  */
 export function markFailedTurns(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[]): number {
-  const replies = turns.filter((t) => t.role === "assistant" && t.ts && t.text.trim()).map((t) => t.ts!);
+  const replies = turns.filter((t) => t.role === "assistant" && t.ts && (t.reply ?? t.text).trim()).map((t) => t.ts!);
   const timed = turns.some((t) => t.ts);
   if (!timed) return 0;
   const runs = db.prepare("SELECT id,ts,outcome FROM recall_runs WHERE host=? AND session_id=? ORDER BY ts, id").all(host, sessionId) as { id: number; ts: string; outcome: string }[];

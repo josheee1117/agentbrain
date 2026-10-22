@@ -29,10 +29,10 @@ test("Claude：剥掉 recall 注入、system-reminder 和 ab 调用及其输出�
   assert.equal(c.cwd, "/repo");
   assert.deepEqual(c.turns, [
     { anchor: "u1", role: "user", text: "以后 hook 都用绝对路径" },
-    { anchor: "a1", role: "assistant", text: "好的\n调用 ab（agentbrain 自身的命令，已省略）" },
-    { anchor: "a2", role: "assistant", text: "调用 Bash: npm test" },
+    { anchor: "a1", role: "assistant", text: "好的\n调用 ab（agentbrain 自身的命令，已省略）", reply: "好的<system-reminder>别泄露</system-reminder>" },
+    { anchor: "a2", role: "assistant", text: "调用 Bash: npm test", reply: "" },
     { anchor: "r2", role: "tool", text: "Error: node:sqlite not found" },
-    { anchor: "a3", role: "assistant", text: "调用 Read: /repo/a.ts" },
+    { anchor: "a3", role: "assistant", text: "调用 Read: /repo/a.ts", reply: "" },
     { anchor: "r3", role: "tool", text: "（工具输出 50 字，已省略）" },
   ]);
   assert.equal(c.stripped, 4);
@@ -51,8 +51,8 @@ test("Codex：丢 environment_context 等宿主注入，function_call 压成一�
   assert.equal(c.cwd, "/repo2");
   assert.deepEqual(c.turns, [
     { anchor: "1", role: "user", text: "修一下" },
-    { anchor: "2", role: "assistant", text: "调用 ab（agentbrain 自身的命令，已省略）" },
-    { anchor: "5", role: "assistant", text: "好" },
+    { anchor: "2", role: "assistant", text: "调用 ab（agentbrain 自身的命令，已省略）", reply: "" },
+    { anchor: "5", role: "assistant", text: "好", reply: "好" },
   ]);
 });
 
