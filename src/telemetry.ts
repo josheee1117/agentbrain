@@ -196,11 +196,12 @@ export function markFailedTurns(db: DatabaseSync, host: Host, sessionId: string,
   const replies = turns.filter((t) => t.role === "assistant" && t.ts && t.text.trim()).map((t) => t.ts!);
   const timed = turns.some((t) => t.ts);
   if (!timed) return 0;
-  const runs = db.prepare("SELECT id,ts FROM recall_runs WHERE host=? AND session_id=? AND outcome='hit' ORDER BY ts, id").all(host, sessionId) as { id: number; ts: string }[];
+  const runs = db.prepare("SELECT id,ts,outcome FROM recall_runs WHERE host=? AND session_id=? ORDER BY ts, id").all(host, sessionId) as { id: number; ts: string; outcome: string }[];
   const setRun = db.prepare("UPDATE recall_runs SET failed=? WHERE id=?");
   const setInj = db.prepare("UPDATE inject_log SET failed=? WHERE host=? AND session_id=? AND ts=?");
   let n = 0;
   runs.forEach((r, i) => {
+    if (r.outcome !== "hit") return;
     const end = runs[i + 1]?.ts;
     const t0 = Date.parse(r.ts);
     const answered = replies.some((ts) => Date.parse(ts) >= t0 && (end === undefined || Date.parse(ts) < Date.parse(end)));
