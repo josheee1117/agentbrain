@@ -375,6 +375,14 @@ export function projectContext(deps: WorkDeps, projectName: string | null, proje
 
 // ---------- 近邻 ----------
 
+const QUOTA = /\b429\b|quota|rate.?limit|too many requests/i;
+
+/** embedding 出错：额度/限流归成 http_429（窗口延后、不算失败），其余是 embed_unavailable。 */
+function embedFailure(e: unknown, prefix: string): WorkFailure {
+  const msg = (e as Error).message ?? String(e);
+  return new WorkFailure(QUOTA.test(msg) ? "http_429" : "embed_unavailable", `${prefix}：${msg}`);
+}
+
 async function embedOrDefer(embedder: Embedder | null, texts: string[]): Promise<Float32Array[]> {
   if (!embedder) throw new WorkFailure("embed_unavailable", "未配置 embedding");
   try {
@@ -382,7 +390,7 @@ async function embedOrDefer(embedder: Embedder | null, texts: string[]): Promise
     if (v.length !== texts.length) throw new Error("条数不一致");
     return v;
   } catch (e) {
-    throw new WorkFailure("embed_unavailable", `embedding 不可用：${(e as Error).message}`);
+    throw embedFailure(e, "embedding 不可用");
   }
 }
 
@@ -392,7 +400,7 @@ async function prefetchNeighbors(deps: WorkDeps, turns: Turn[], projectId: strin
   try {
     await deps.store.syncVectors(embedder, embedder.model!);
   } catch (e) {
-    throw new WorkFailure("embed_unavailable", `向量未更新：${(e as Error).message}`);
+    throw embedFailure(e, "向量未更新");
   }
   const queries = turns.filter((t) => t.role === "user").slice(0, NEIGHBOR_QUERIES).map((t) => t.text.slice(0, NEIGHBOR_QUERY_CHARS));
   if (!queries.length) return [];
@@ -729,7 +737,11 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     } catch (e) {
       const code: WorkError = e instanceof WorkFailure ? e.code : "network";
       const config = code === "no_config" || code === "no_key";
-      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config);
+      // 额度/限流不算一次失败尝试：额度要几小时才恢复，不能因此把窗口判成失败、跳过这段内容
+      const limited = code === "http_429";
+      const after = e instanceof WorkFailure ? e.retryAfterMs : undefined;
+      const until = limited && typeof after === "number" ? new Date(deps.now().getTime() + after) : undefined;
+      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until);
       if (terminal) {
         deps.store.commit([], (tx) => intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now()));
         report.windows.failed++;
@@ -1117,7 +1129,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
         intake.dequeueReverify(db, p.id);
         continue;
       }
-    } else if (last && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
+    } else if (last && !last.outcome.startsWith("error:") && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
     done++;
     let result;
     try {
@@ -1125,6 +1137,8 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } catch (e) {
       intake.recordVerify(db, p.id, head, `error:${e instanceof WorkFailure ? e.code : "network"}`, deps.now());
       report.verify.errors++;
+      // 额度用完：后面的条目也会撞上，本轮停下，下次 ab work 从这条接着核验
+      if (e instanceof WorkFailure && e.code === "http_429") break;
       continue;
     } finally {
       intake.renewLease(db, holder, deps.now());
@@ -1169,7 +1183,8 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     }
     if (opts.redo && opts.session && !opts.dryRun) intake.resetSession(db, opts.session.host, opts.session.session_id);
     // hook / 手动登记的会话先处理；扫描补登记的排后面，并受 BACKLOG_WINDOWS_PER_SWEEP 限制
-    const list = intake.sessions(db, opts.session);
+    // 单会话运行（hook 拉起）也顺带重试别的会话里已到期的延后窗口：launchd 没开时它们没有别的机会重跑
+    const list = opts.session ? [...intake.sessions(db, opts.session), ...intake.dueDeferredSessions(db, deps.now(), opts.session)] : intake.sessions(db);
     const ordered = [...list.filter((x) => !isBacklog(x)), ...list.filter(isBacklog)];
     const backlog: Backlog = { left: BACKLOG_WINDOWS_PER_SWEEP };
     for (const s of ordered) await processSession(deps, s, opts, report, holder, backlog);
