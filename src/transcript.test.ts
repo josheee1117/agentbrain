@@ -29,10 +29,10 @@ test("Claude：剥掉 recall 注入、system-reminder 和 ab 调用及其输出�
   assert.equal(c.cwd, "/repo");
   assert.deepEqual(c.turns, [
     { anchor: "u1", role: "user", text: "以后 hook 都用绝对路径" },
-    { anchor: "a1", role: "assistant", text: "好的\n调用 ab（agentbrain 自身的命令，已省略）" },
-    { anchor: "a2", role: "assistant", text: "调用 Bash: npm test" },
+    { anchor: "a1", role: "assistant", text: "好的\n调用 ab（agentbrain 自身的命令，已省略）", reply: "好的<system-reminder>别泄露</system-reminder>" },
+    { anchor: "a2", role: "assistant", text: "调用 Bash: npm test", reply: "" },
     { anchor: "r2", role: "tool", text: "Error: node:sqlite not found" },
-    { anchor: "a3", role: "assistant", text: "调用 Read: /repo/a.ts" },
+    { anchor: "a3", role: "assistant", text: "调用 Read: /repo/a.ts", reply: "" },
     { anchor: "r3", role: "tool", text: "（工具输出 50 字，已省略）" },
   ]);
   assert.equal(c.stripped, 4);
@@ -51,8 +51,8 @@ test("Codex：丢 environment_context 等宿主注入，function_call 压成一�
   assert.equal(c.cwd, "/repo2");
   assert.deepEqual(c.turns, [
     { anchor: "1", role: "user", text: "修一下" },
-    { anchor: "2", role: "assistant", text: "调用 ab（agentbrain 自身的命令，已省略）" },
-    { anchor: "5", role: "assistant", text: "好" },
+    { anchor: "2", role: "assistant", text: "调用 ab（agentbrain 自身的命令，已省略）", reply: "" },
+    { anchor: "5", role: "assistant", text: "好", reply: "好" },
   ]);
 });
 
@@ -124,4 +124,41 @@ test("Claude：上下文压缩后写进来的摘要（isCompactSummary）不当�
   const r = cleanTranscript("claude", p);
   assert.deepEqual(r.turns.map((t) => t.anchor), ["u1", "u2"]);
   assert.equal(r.stripped, 1);
+});
+
+test("Claude：额度用尽等 API 错误时宿主写的 <synthetic> 提示不算助手回复", () => {
+  const p = file("c-err.jsonl", [
+    { type: "user", uuid: "u1", timestamp: "2026-10-21T07:51:20.000Z", message: { role: "user", content: "问题" } },
+    { type: "assistant", uuid: "a1", timestamp: "2026-10-21T07:51:23.317Z", error: "rate_limit", isApiErrorMessage: true, message: { model: "<synthetic>", content: [{ type: "text", text: "You've hit your session limit · resets 7:10pm (Asia/Singapore)" }] } },
+  ]);
+  assert.deepEqual(cleanTranscript("claude", p).turns.map((t) => t.role), ["user"]);
+});
+
+test("回答里提到但没闭合的 <agentbrain-recall> 不删后文；闭合的注入块照删", () => {
+  const p = file("mention.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    { type: "message", id: "u", parentId: "h", message: { role: "user", content: "<agentbrain-recall>\n- [abcd1234] 坑: 旧记忆\n</agentbrain-recall>\n召回输出有几行？" } },
+    { type: "message", id: "a", parentId: "u", message: { role: "assistant", content: [{ type: "text", text: "正常输出里 `<agentbrain-recall>` 块只有 1~3 行。\n所以别断言第 4 条。" }] } },
+  ]);
+  assert.deepEqual(cleanTranscript("pi", p).turns.map((t) => t.text), [
+    "召回输出有几行？",
+    "正常输出里 `<agentbrain-recall>` 块只有 1~3 行。\n所以别断言第 4 条。",
+  ]);
+});
+
+test("工具输出里提到 <agentbrain-recall> 的源码不整段丢：没闭合的照留，闭合的注入块才删", () => {
+  const src = "const open = \"<agentbrain-recall>\"; // 召回块开头\nexport const x = 1;";
+  const p = file("tool-mention.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    { type: "message", id: "u", parentId: "h", message: { role: "user", content: "看下 recall.ts" } },
+    { type: "message", id: "a1", parentId: "u", message: { role: "assistant", content: [{ type: "toolCall", id: "k1", name: "read", arguments: { path: "/repo/src/recall.ts" } }] } },
+    { type: "message", id: "r1", parentId: "a1", message: { role: "toolResult", toolCallId: "k1", content: [{ type: "text", text: src }] } },
+    { type: "message", id: "a2", parentId: "r1", message: { role: "assistant", content: [{ type: "toolCall", id: "k2", name: "bash", arguments: { command: "npm test" } }] } },
+    { type: "message", id: "r2", parentId: "a2", isError: true, message: { role: "toolResult", toolCallId: "k2", isError: true, content: [{ type: "text", text: "<agentbrain-recall>\n- [abcd1234] 坑: 旧记忆\n</agentbrain-recall>\nError: 断言 `<agentbrain-recall>` 开头失败" }] } },
+  ]);
+  const tools = cleanTranscript("pi", p).turns.filter((t) => t.role === "tool").map((t) => [t.anchor, t.text]);
+  assert.deepEqual(tools, [
+    ["r1", `（工具输出 ${src.length} 字，已省略）`],
+    ["r2", "Error: 断言 `<agentbrain-recall>` 开头失败"],
+  ]);
 });
