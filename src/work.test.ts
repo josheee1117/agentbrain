@@ -867,3 +867,30 @@ test("hook 拉起的单会话 ab work：顺带重试别的会话里已到期的�
   assert.equal(r.windows.done, 2, "新会话一个窗口 + 旧会话到期的延后窗口");
   assert.ok(props(e.store).some((p) => p.text === RULE.text));
 });
+
+const sessionRow = (e: Env) => e.store.workDb.prepare("SELECT processed_anchor, error_code FROM capture_sessions").get() as { processed_anchor: string | null; error_code: string | null };
+
+test("升级前进度停在只有 ab-used 的那一轮：续跑不报错，新内容照常抽取", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的"), asst("a2", "ab-used: hook 绝对路径 (deadbeef)")]);
+  e.register("s1", f);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='a2'").run();
+  writeFileSync(f, readFileSync(f, "utf8") + [user("u2", "再说一件事：日志写到 ~/.agentbrain/logs"), asst("a3", "记住了")].map((x) => JSON.stringify(x)).join("\n") + "\n");
+  utimesSync(f, new Date(Date.now() - 3600_000), new Date(Date.now() - 3600_000));
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(sessionRow(e).error_code, null, "进度点没有被剥掉");
+  assert.equal(chat.calls.length, 1, "u2 之后的新内容送去抽取");
+  assert.equal(sessionRow(e).processed_anchor, "a3");
+});
+
+test("ab-used 行不送去抽取", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的\nab-used: hook 绝对路径 (deadbeef)")]));
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.calls.length, 1);
+  assert.doesNotMatch(JSON.stringify(chat.calls[0]), /ab-used|deadbeef/);
+  assert.match(JSON.stringify(chat.calls[0]), /好的/);
+  assert.equal(sessionRow(e).processed_anchor, "a1");
+});

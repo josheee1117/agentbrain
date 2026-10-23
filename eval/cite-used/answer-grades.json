@@ -1,0 +1,862 @@
+[
+ {
+  "id": "codex/q01",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 更贴题地补上了长数据构造的关键点（每条自身可放进预算但总量超预算、加序号保证确定性），并提醒只验证 CLI 接线而不重复 brief.test 已覆盖的预算算法，整体更具体可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 更贴题地补上了长数据构造的关键点（每条自身可放进预算但总量超预算、加序号保证确定性），并提醒只验证 CLI 接线而不重复 brief.test 已覆盖的预算算法，整体更具体可执行。\"}"
+ },
+ {
+  "id": "codex/q02",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B在同样正确诊断sleep竞态的基础上，还按测试目标给出了双连接断言示例与IPC握手方案，并补充exitPromise提前创建、总超时和finally清理，更完整、具体且无错误。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B在同样正确诊断sleep竞态的基础上，还按测试目标给出了双连接断言示例与IPC握手方案，并补充exitPromise提前创建、总超时和finally清理，更完整、具体且无错误。\"}"
+ },
+ {
+  "id": "codex/q03",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 更切题且步骤更稳妥（连接 B 用 BEGIN IMMEDIATE 直接制造写锁竞争并给出预期报错），而 A 结尾混入了与问题无关的 ab 命令提醒。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 更切题且步骤更稳妥（连接 B 用 BEGIN IMMEDIATE 直接制造写锁竞争并给出预期报错），而 A 结尾混入了与问题无关的 ab 命令提醒。\"}"
+ },
+ {
+  "id": "codex/q04",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 在给出 fail-open 处理契约之外，补充了普通非 hook 调用应正常报错与检查实际入口的排查建议，更完整且可执行",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 在给出 fail-open 处理契约之外，补充了普通非 hook 调用应正常报错与检查实际入口的排查建议，更完整且可执行\"}"
+ },
+ {
+  "id": "codex/q05",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 直接给出可执行的 ctx.cwd 优先、process.cwd() 兜底代码示例并附实现与测试位置，信息更具体且无冗余。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 直接给出可执行的 ctx.cwd 优先、process.cwd() 兜底代码示例并附实现与测试位置，信息更具体且无冗余。\"}"
+ },
+ {
+  "id": "codex/q06",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 更具体且验证方式可追溯（引用 includeArchived、项目范围等细节和回归用例），B 自称“纯内存复验”无可核实、有编造嫌疑",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 更具体且验证方式可追溯（引用 includeArchived、项目范围等细节和回归用例），B 自称“纯内存复验”无可核实、有编造嫌疑\"}"
+ },
+ {
+  "id": "codex/q07",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 更具体可执行：给出 200 字截断、脱敏去换行、数据库只存闭集码、日志与持久化边界及补测试的具体要点，并引用 work.ts:736 说明消息丢失点，而 B 细节更泛且仅多出日志落盘路径。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 更具体可执行：给出 200 字截断、脱敏去换行、数据库只存闭集码、日志与持久化边界及补测试的具体要点，并引用 work.ts:736 说明消息丢失点，而 B 细节更泛且仅多出日志落盘路径。\"}"
+ },
+ {
+  "id": "codex/q08",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 与 B 都准确指出 UTF-16 截断问题，但 A 给出可直接使用的码点截断代码，并补充常驻偏好与半条记忆截断语义两个相关坑，更具体可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 与 B 都准确指出 UTF-16 截断问题，但 A 给出可直接使用的码点截断代码，并补充常驻偏好与半条记忆截断语义两个相关坑，更具体可执行。\"}"
+ },
+ {
+  "id": "codex/q09",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 把 SQLite 恰好 5 秒的 busy_timeout 与“偶尔超过 5 秒”的症状对应起来，按概率排序并给出先查并发写库、区分 recall/capture 的具体排查步骤，覆盖卡点比 B 更全且同样准确可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 把 SQLite 恰好 5 秒的 busy_timeout 与“偶尔超过 5 秒”的症状对应起来，按概率排序并给出先查并发写库、区分 recall/capture 的具体排查步骤，覆盖卡点比 B 更全且同样准确可执行。\"}"
+ },
+ {
+  "id": "codex/q10",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 覆盖了 B 的全部关键风险，并以源码行号和具体数值（3秒超时、minSim 不约束 FTS、候选被挤掉、查询预处理退化）给出可验证的拆解，重构方案同样具体可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 覆盖了 B 的全部关键风险，并以源码行号和具体数值（3秒超时、minSim 不约束 FTS、候选被挤掉、查询预处理退化）给出可验证的拆解，重构方案同样具体可执行。\"}"
+ },
+ {
+  "id": "codex/q11",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两者都正确指出最多只输出3条且不按时间排序，但B给出按“- [”解析输出并用唯一关键词断言内容出现的测试代码，更贴合CLI实际输出、更可执行，还区分了真正的时序需求。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都正确指出最多只输出3条且不按时间排序，但B给出按“- [”解析输出并用唯一关键词断言内容出现的测试代码，更贴合CLI实际输出、更可执行，还区分了真正的时序需求。\"}"
+ },
+ {
+  "id": "codex/q12",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 在正确否定决定类的同时更贴合测试意图（明确建议断言 brief 正文包含刚加记忆），且无 A 中多余的引用编号，可执行性更强。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 在正确否定决定类的同时更贴合测试意图（明确建议断言 brief 正文包含刚加记忆），且无 A 中多余的引用编号，可执行性更强。\"}"
+ },
+ {
+  "id": "codex/q13",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B在同样指出环境变量继承问题的同时，补充了父进程链判定的具体例子、无法读取进程链时的兜底策略，并指向项目已有实现，更具体可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B在同样指出环境变量继承问题的同时，补充了父进程链判定的具体例子、无法读取进程链时的兜底策略，并指向项目已有实现，更具体可执行。\"}"
+ },
+ {
+  "id": "codex/q14",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 的 config 写法可直接照做且无事实错误；B 虽补充了后台任务等提醒，但其 profile 路径(~/.codex/ab-test.config.toml)和 `--disable hooks` 用法不准确，照做会踩坑。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 的 config 写法可直接照做且无事实错误；B 虽补充了后台任务等提醒，但其 profile 路径(~/.codex/ab-test.config.toml)和 `--disable hooks` 用法不准确，照做会踩坑。\"}"
+ },
+ {
+  "id": "codex/q15",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两者解释都准确，但B额外覆盖了目标文件尚不存在时先realpath(dirname)再拼文件名的情形并指出仓库现成写法，更完整可落地",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者解释都准确，但B额外覆盖了目标文件尚不存在时先realpath(dirname)再拼文件名的情形并指出仓库现成写法，更完整可落地\"}"
+ },
+ {
+  "id": "codex/q16",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A更切中根因并给出可直接执行的 npm test 与 glob 命令，还指出旧注释误导，且没有 B 中与用户问题无关的 EPERM 内容。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A更切中根因并给出可直接执行的 npm test 与 glob 命令，还指出旧注释误导，且没有 B 中与用户问题无关的 EPERM 内容。\"}"
+ },
+ {
+  "id": "codex/q17",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 在确认 busy_timeout 应先于 WAL 的同时，更精准地定位了每次打开跑 DDL、syncVectors 无条件 BEGIN IMMEDIATE 等真实写锁来源，并给出逐条可落地的修复与测试方案，信息准确且更具操作性。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 在确认 busy_timeout 应先于 WAL 的同时，更精准地定位了每次打开跑 DDL、syncVectors 无条件 BEGIN IMMEDIATE 等真实写锁来源，并给出逐条可落地的修复与测试方案，信息准确且更具操作性。\"}"
+ },
+ {
+  "id": "ds/q01",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 给出具体可执行的注意事项（独立 AB_HOME、用例放末尾、选坑/事实类条目、绕开真实模型、清理临时目录等），切合问题；B 只有工具调用没有实际内容，对开发者无帮助。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 给出具体可执行的注意事项（独立 AB_HOME、用例放末尾、选坑/事实类条目、绕开真实模型、清理临时目录等），切合问题；B 只有工具调用没有实际内容，对开发者无帮助。\"}"
+ },
+ {
+  "id": "ds/q02",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 至少实际定位了测试中 sleep/delay 的具体位置和用法，为诊断提供了真实证据；B 只有项目上下文注入，没有给出任何针对问题的分析或改法。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 至少实际定位了测试中 sleep/delay 的具体位置和用法，为诊断提供了真实证据；B 只有项目上下文注入，没有给出任何针对问题的分析或改法。\"}"
+ },
+ {
+  "id": "ds/q03",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 准确指出 PRAGMA 已是 WAL 时为 no-op，并给出 BEGIN IMMEDIATE 的最小可复现步骤和 WAL 下 deferred 事务提交期才报错的细节，具体可执行；B 结论含糊、缺少可操作示例且对锁行为的描述不够准确。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 准确指出 PRAGMA 已是 WAL 时为 no-op，并给出 BEGIN IMMEDIATE 的最小可复现步骤和 WAL 下 deferred 事务提交期才报错的细节，具体可执行；B 结论含糊、缺少可操作示例且对锁行为的描述不够准确。\"}"
+ },
+ {
+  "id": "ds/q04",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 给出了具体可执行的方案（try/catch、静默退出 0、fail-soft 理由），切中 hook 场景；A 只在反复读文件，没有给出任何结论。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 给出了具体可执行的方案（try/catch、静默退出 0、fail-soft 理由），切中 hook 场景；A 只在反复读文件，没有给出任何结论。\"}"
+ },
+ {
+  "id": "ds/q05",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "tie",
+  "better": "tie",
+  "reason": "两个回答的核心结论、原因和正确做法完全一致，仅 A 多了一条无法验证真实性的内部记录引用，实质帮助没有差别。",
+  "raw": "{\"winner\":\"tie\",\"reason\":\"两个回答的核心结论、原因和正确做法完全一致，仅 A 多了一条无法验证真实性的内部记录引用，实质帮助没有差别。\"}"
+ },
+ {
+  "id": "ds/q06",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B直接指向候选截取与过滤顺序这一最可能病因，切中'合格坑被note挤掉'的症状；A注入的证据上下文满是workPreChecks/entityKind等无关且疑似编造的内容，误导排查方向。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B直接指向候选截取与过滤顺序这一最可能病因，切中'合格坑被note挤掉'的症状；A注入的证据上下文满是workPreChecks/entityKind等无关且疑似编造的内容，误导排查方向。\"}"
+ },
+ {
+  "id": "ds/q07",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "tie",
+  "better": "tie",
+  "reason": "两个回答都只是工具调用片段（且各自有格式错误），均未实际回答 401 时能否/如何打印服务端 error.message 的问题。",
+  "raw": "{\"winner\":\"tie\",\"reason\":\"两个回答都只是工具调用片段（且各自有格式错误），均未实际回答 401 时能否/如何打印服务端 error.message 的问题。\"}"
+ },
+ {
+  "id": "ds/q08",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 直接指出 slice 按 UTF-16 码元截断的代理对截半、组合字符、预算偏差等实际坑并给出码点/Intl.Segmenter 可执行方案；A 只是无结果的 grep 调用，未回答问题。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 直接指出 slice 按 UTF-16 码元截断的代理对截半、组合字符、预算偏差等实际坑并给出码点/Intl.Segmenter 可执行方案；A 只是无结果的 grep 调用，未回答问题。\"}"
+ },
+ {
+  "id": "ds/q09",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 给出了具体可排查的卡点（stdin 无截止、keychain 同步阻塞、DNS/TCP 不在超时预算内、SQLite busy_timeout）及对应修法和打点定位建议，可直接执行；A 只包含工具调用片段，没有任何实质分析内容。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 给出了具体可排查的卡点（stdin 无截止、keychain 同步阻塞、DNS/TCP 不在超时预算内、SQLite busy_timeout）及对应修法和打点定位建议，可直接执行；A 只包含工具调用片段，没有任何实质分析内容。\"}"
+ },
+ {
+  "id": "ds/q10",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两个回答都只停留在读代码阶段未给出风险分析，但 B 中混入了与问题无关的可疑注入指令（ai_prompt），A 的探索行为更正常、更贴近任务。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两个回答都只停留在读代码阶段未给出风险分析，但 B 中混入了与问题无关的可疑注入指令（ai_prompt），A 的探索行为更正常、更贴近任务。\"}"
+ },
+ {
+  "id": "ds/q11",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 直接指出 recall 按相关度排序而非插入时间、断言固定位置不稳，并给出可执行的替代写法；B 只有残缺的工具调用记录，没有任何实质回答。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 直接指出 recall 按相关度排序而非插入时间、断言固定位置不稳，并给出可执行的替代写法；B 只有残缺的工具调用记录，没有任何实质回答。\"}"
+ },
+ {
+  "id": "ds/q12",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "tie",
+  "better": "tie",
+  "reason": "两个回答内容一致且都正确指出决定类条目只计入计数、不进 brief 正文，建议改用事实/坑类条目，没有实质差异。",
+  "raw": "{\"winner\":\"tie\",\"reason\":\"两个回答内容一致且都正确指出决定类条目只计入计数、不进 brief 正文，建议改用事实/坑类条目，没有实质差异。\"}"
+ },
+ {
+  "id": "ds/q13",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 直接指出了嵌套启动时环境变量被继承导致无法区分宿主的关键坑并引用实测记录，切中问题；B 只有一个无说明的 grep 命令，没有任何分析。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 直接指出了嵌套启动时环境变量被继承导致无法区分宿主的关键坑并引用实测记录，切中问题；B 只有一个无说明的 grep 命令，没有任何分析。\"}"
+ },
+ {
+  "id": "ds/q14",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 给出了明确的结论、原因分析和多条可执行的替代方案（含验证步骤），而 B 只是未完成的工具调用片段，没有提供任何实际答案。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 给出了明确的结论、原因分析和多条可执行的替代方案（含验证步骤），而 B 只是未完成的工具调用片段，没有提供任何实际答案。\"}"
+ },
+ {
+  "id": "ds/q15",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "两者诊断相同，但 B 细节更准确可执行（指出 path.resolve 不解析符号链接、推荐 realpathSync.native、给出比相对路径的备选方案），而 A 声称 os.tmpdir() 带尾斜杠对现代 Node 不准确且代码示例含糊。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者诊断相同，但 B 细节更准确可执行（指出 path.resolve 不解析符号链接、推荐 realpathSync.native、给出比相对路径的备选方案），而 A 声称 os.tmpdir() 带尾斜杠对现代 Node 不准确且代码示例含糊。\"}"
+ },
+ {
+  "id": "ds/q16",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "回答 B 准确诊断了 Node 25 中 node --test 把目录路径当作单个测试文件/ glob 处理导致只报一个加载失败的问题，并给出加引号的 glob、shell 展开和固化到 package.json 等具体可执行的修复方案；回答 A 内容为空，没有任何帮助。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"回答 B 准确诊断了 Node 25 中 node --test 把目录路径当作单个测试文件/ glob 处理导致只报一个加载失败的问题，并给出加引号的 glob、shell 展开和固化到 package.json 等具体可执行的修复方案；回答 A 内容为空，没有任何帮助。\"}"
+ },
+ {
+  "id": "ds/q17",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 给出了可执行的结论（busy_timeout 应在 WAL 切换前设置及其原因），虽有关于 node:sqlite 连接池的表述不够准确，但 B 只发起了一次工具调用没有任何实质内容，故 A 更有用。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 给出了可执行的结论（busy_timeout 应在 WAL 切换前设置及其原因），虽有关于 node:sqlite 连接池的表述不够准确，但 B 只发起了一次工具调用没有任何实质内容，故 A 更有用。\"}"
+ },
+ {
+  "id": "ds/q18",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 主动检查 git 状态、AGENTS.md 与 CLAUDE.md 的差异和同步情况，更直接针对“是否还要改其他文件”；A 只是泛泛列目录，缺乏针对性和可执行性。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 主动检查 git 状态、AGENTS.md 与 CLAUDE.md 的差异和同步情况，更直接针对“是否还要改其他文件”；A 只是泛泛列目录，缺乏针对性和可执行性。\"}"
+ },
+ {
+  "id": "ds/q19",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两个回答都只停留在探索阶段未给出结论，但 A 的探索步骤简洁聚焦且无错误，而 B 步骤混乱、暴露了内部思考碎片并反复试错，信息量更低。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两个回答都只停留在探索阶段未给出结论，但 A 的探索步骤简洁聚焦且无错误，而 B 步骤混乱、暴露了内部思考碎片并反复试错，信息量更低。\"}"
+ },
+ {
+  "id": "ds/q20",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 直接给出了多个具体候选标题并按场景给出推荐，切中需求；B 只是一段工具调用片段，没有给出任何实际回答。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 直接给出了多个具体候选标题并按场景给出推荐，切中需求；B 只是一段工具调用片段，没有给出任何实际回答。\"}"
+ },
+ {
+  "id": "ds/q21",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "回答A给出了从夹具、用例、mutation自检到汇报格式的完整可执行方案，且明确标注了需要核实的TODO；回答B只说'先看实现再给方案'，没有任何实质内容。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"回答A给出了从夹具、用例、mutation自检到汇报格式的完整可执行方案，且明确标注了需要核实的TODO；回答B只说'先看实现再给方案'，没有任何实质内容。\"}"
+ },
+ {
+  "id": "ds/q22",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "回答A通过读取项目源码来给出有依据的答案，而回答B只是执行了几条ab search命令、没有列出任何实际坑点，未回答问题。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"回答A通过读取项目源码来给出有依据的答案，而回答B只是执行了几条ab search命令、没有列出任何实际坑点，未回答问题。\"}"
+ },
+ {
+  "id": "ds/q23",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 不仅查看 store.ts 还检查了 package.json 和 tsx/node 可执行环境，针对“在 /tmp 写脚本跑 TS 模块”的实际执行问题更切中且可操作；B 只是浏览仓库结构和文件头部，信息量较少。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 不仅查看 store.ts 还检查了 package.json 和 tsx/node 可执行环境，针对“在 /tmp 写脚本跑 TS 模块”的实际执行问题更切中且可操作；B 只是浏览仓库结构和文件头部，信息量较少。\"}"
+ },
+ {
+  "id": "glm/q01",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "tie",
+  "better": "tie",
+  "reason": "两个回答都只是表示要先查看现有测试，内容几乎相同，同样未切中问题、未给出任何具体可执行的建议",
+  "raw": "{\"winner\":\"tie\",\"reason\":\"两个回答都只是表示要先查看现有测试，内容几乎相同，同样未切中问题、未给出任何具体可执行的建议\"}"
+ },
+ {
+  "id": "glm/q02",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 虽未直接给出结论，但其命令能实际定位 store 与 sleep 相关代码，B 的工具调用失败且附带无关工具定义。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 虽未直接给出结论，但其命令能实际定位 store 与 sleep 相关代码，B 的工具调用失败且附带无关工具定义。\"}"
+ },
+ {
+  "id": "glm/q03",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A除正确否定WAL pragma撞锁外，还提醒busy_timeout会把冲突先变成等待而非立即报错，并指向项目连接初始化代码，对测报错路径更切中要点且可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A除正确否定WAL pragma撞锁外，还提醒busy_timeout会把冲突先变成等待而非立即报错，并指向项目连接初始化代码，对测报错路径更切中要点且可执行。\"}"
+ },
+ {
+  "id": "glm/q04",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 的查找动作聚焦于定位 hook 相关代码，A 的多次 pwd/ls 和暴露思考痕迹是无关噪声且明显迷路、同样未给出解决方案",
+  "raw": "`tags, and model self-talk like \"Ah, the tool results only came through at the end...\" It's clearly corrupted output from the assistant's tool calling. The assistant seems to be flailing — running `ls`, `pwd` repeatedly, not finding the right directory initially, getting confused.\n\nAnswer B: Also shows tool calls but shorter, showing grep commands to find hook-related code, attempting to read the code first. Also appears partly garbled with \"Wait\" artifacts and `</code>` tags, but less chaotic.\n\nBoth answers are actually just the beginning of exploration — neither provides a concrete answer to the developer's question. Both appear to be truncated. The developer asked \"how should it be handled?\" and neither actually answers the question with a solution.\n\nLet me evaluate:\n\nAnswer A: The tool call stream is heavily corrupted — it contains model thinking internals (`</think>` tags, \"Ah, the tool results only came through at the end\"), repeated \"Eingabe命令\" (German?) artifacts, many redundant commands (`pwd && ls` repeated multiple times). It shows the assistant was confused, lost in the filesystem, running redundant commands. It never gets to an answer.\n\nAnswer B: Cleaner, focused grep commands aimed at finding the hook code. Still partly garbled but more purposeful. It doesn't provide an answer either, but it at least directed efforts correctly.\n\nGiven the criteria: \"是否切中问题、具体可执行、没有错误或编造、没有无关内容。长度本身不是优点。\"\n\nNeither provides an actual answer. But A is clearly worse: it's filled with irrelevant/confused content, redundant commands, exposed thinking artifacts, and no direction toward a solution. B at least shows a focused approach to locating the relevant code, though both are far from complete answers.\n\nJudging relative usefulness: B is more useful because it's doing focused investigation (grep for hook in cli.ts) rather than flailing. However, both are incomplete. But the choice must be A or B or tie. Since both are truncated exploration and neither answers the question... but A is clearly worse due to noise and confusion. B is slightly better: fewer wasted commands, targeted grep.\n\nActually, let me reconsider. The \"回答\" are what's shown. Answer A's visible block is a mess of corrupted tool calls and model self-narration, showing the assistant is confused about where it is, repeatedly running `ls` and `pwd`. Answer B's visible block is more compact and targeted (grep for hook in src, cli.ts). Both end without giving the answer, but B is less wasteful and more on-track.\n\nSo winner: B, with the reason that B's investigation is focused on locating hook code while A is noisy and flailing with redundant commands exposed thinking artifacts, wasting effort. But neither gives a final solution — should I call tie? The instruction says judge which is more useful. B is more useful, albeit marginally. I'd say B.</think>{\"winner\":\"B\",\"reason\":\"B 的查找动作聚焦于定位 hook 相关代码，A 的多次 pwd/ls 和暴露思考痕迹是无关噪声且明显迷路、同样未给出解决方案\"}"
+ },
+ {
+  "id": "glm/q05",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两者结论一致，但 A 给出了完整可执行的改法（把 ctx.cwd 作为 runAb 的 spawn 选项传入），B 的代码只声明了 cwd 没展示如何传给 ab recall",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两者结论一致，但 A 给出了完整可执行的改法（把 ctx.cwd 作为 runAb 的 spawn 选项传入），B 的代码只声明了 cwd 没展示如何传给 ab recall\"}"
+ },
+ {
+  "id": "glm/q06",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 给出了切中症状的具体假设（过滤放在 top-N 截断之后）并附上可执行的检索命令，而 B 只是一串损坏的空工具调用，未提供任何诊断或可操作内容。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 给出了切中症状的具体假设（过滤放在 top-N 截断之后）并附上可执行的检索命令，而 B 只是一串损坏的空工具调用，未提供任何诊断或可操作内容。\"}"
+ },
+ {
+  "id": "glm/q07",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "A 只说了要去看代码、未回答任何实质内容；B 定位到具体代码位置、确认可行并用带容错解析的示例代码直接给出了可落地的解决方案，还说明了安全性。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"A 只说了要去看代码、未回答任何实质内容；B 定位到具体代码位置、确认可行并用带容错解析的示例代码直接给出了可落地的解决方案，还说明了安全性。\"}"
+ },
+ {
+  "id": "glm/q08",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 紧扣问题给出可执行的码点/字素截断修复代码且贴合 SQLite/embedding 场景，A 的前两点分析同样正确但陷入混乱的查码流程、迟迟未给出解决方案",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 紧扣问题给出可执行的码点/字素截断修复代码且贴合 SQLite/embedding 场景，A 的前两点分析同样正确但陷入混乱的查码流程、迟迟未给出解决方案\"}"
+ },
+ {
+  "id": "glm/q09",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 给出按嫌疑排序的具体卡点清单、定位步骤和 4s 硬截止兜底方案，具体可执行；A 只是说先看代码，没有提供任何实质信息",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 给出按嫌疑排序的具体卡点清单、定位步骤和 4s 硬截止兜底方案，具体可执行；A 只是说先看代码，没有提供任何实质信息\"}"
+ },
+ {
+  "id": "glm/q10",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 干净直接地切中问题给出三项具体风险（静默降级、阈值误报、排序假设）并附可执行的封装建议，而 B 的内容被大量失败工具调用残渣污染、无关且难以阅读",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 干净直接地切中问题给出三项具体风险（静默降级、阈值误报、排序假设）并附可执行的封装建议，而 B 的内容被大量失败工具调用残渣污染、无关且难以阅读\"}"
+ },
+ {
+  "id": "glm/q11",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 更完整地覆盖了位置断言的全部不稳定因素（含“结果至少 N 条”的隐含假设与状态残留），并给出分层可执行的改写建议，且无 B 中不可验证的记忆引用",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 更完整地覆盖了位置断言的全部不稳定因素（含“结果至少 N 条”的隐含假设与状态残留），并给出分层可执行的改写建议，且无 B 中不可验证的记忆引用\"}"
+ },
+ {
+  "id": "glm/q12",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两答核心结论一致，但B额外说明了可用统计计数断言覆盖决定类条目，测试建议更具体可执行",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两答核心结论一致，但B额外说明了可用统计计数断言覆盖决定类条目，测试建议更具体可执行\"}"
+ },
+ {
+  "id": "glm/q13",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 在正确结论（环境变量会被继承、应看父进程链）之上还给出了可验证的项目内依据（设计文档 §7.1、既有 ab capture --hook 实现、macOS sysctl/proc_pidpath 具体做法），更具可执行性；B 只是泛泛重述同一原理",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 在正确结论（环境变量会被继承、应看父进程链）之上还给出了可验证的项目内依据（设计文档 §7.1、既有 ab capture --hook 实现、macOS sysctl/proc_pidpath 具体做法），更具可执行性；B 只是泛泛重述同一原理\"}"
+ },
+ {
+  "id": "glm/q14",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两答都准确指出Codex shell_environment_policy会过滤自定义环境变量的根因，但B给出了更具体可执行的配置改法（inherit=all）、extract.json迁移提醒和ab doctor验证，信息更完整且防误伤",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两答都准确指出Codex shell_environment_policy会过滤自定义环境变量的根因，但B给出了更具体可执行的配置改法（inherit=all）、extract.json迁移提醒和ab doctor验证，信息更完整且防误伤\"}"
+ },
+ {
+  "id": "glm/q15",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 与 B 的核心诊断都正确，但 A 额外给出了用 fs.realpathSync(os.tmpdir()) 构造 expected 的替代方案，更具体可执行且无错误。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 与 B 的核心诊断都正确，但 A 额外给出了用 fs.realpathSync(os.tmpdir()) 构造 expected 的替代方案，更具体可执行且无错误。\"}"
+ },
+ {
+  "id": "glm/q16",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 用 `src/**/*.test.ts` 或根目录直接 `node --test` 能真正递归跑完整套测试并给出核对思路；A 的单层 glob 容易漏掉子目录测试",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 用 `src/**/*.test.ts` 或根目录直接 `node --test` 能真正递归跑完整套测试并给出核对思路；A 的单层 glob 容易漏掉子目录测试\"}"
+ },
+ {
+  "id": "glm/q17",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 直接给出关键顺序（busy_timeout 需在 WAL 前）及原理解释和可执行代码，且与症状吻合；A 仅表态先看代码，未回答问题。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 直接给出关键顺序（busy_timeout 需在 WAL 前）及原理解释和可执行代码，且与症状吻合；A 仅表态先看代码，未回答问题。\"}"
+ },
+ {
+  "id": "glm/q18",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B不仅指出CLAUDE.md需同步，还实际用diff命令验证当前两份文件是否一致，比A仅口头表示稍后确认更具体可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B不仅指出CLAUDE.md需同步，还实际用diff命令验证当前两份文件是否一致，比A仅口头表示稍后确认更具体可执行。\"}"
+ },
+ {
+  "id": "glm/q19",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "两者都没实际回答，但A更具体地指出要看现有tab结构，B只说'现状'过于笼统。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两者都没实际回答，但A更具体地指出要看现有tab结构，B只说'现状'过于笼统。\"}"
+ },
+ {
+  "id": "glm/q20",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "A 只有一串未完成的工具调用、没给出任何标题文案，而 B 实际给出了记忆详情、Memory Card 等简洁方案及推荐理由。",
+  "raw": "`is malformed XML - it seems the assistant's tool calling failed or the answer is just an incomplete sequence of attempted tool invocations). It doesn't actually provide any title suggestions. It's basically just a fragment of tool calls that don't even contain proper content. It ends without any actual answer to the question.\n\nAnswer B: It also has some \"待运行\" placeholders indicating tool calls that were pending, but then it goes on to provide actual concrete title suggestions: 记忆详情, Memory Card, 记忆 #<id>, 条目详情, L1 记忆详情, Proposition 详情, with a recommendation and reasoning. It's an incomplete execution trace (tool calls pending), but it delivers useful substance.\n\nWait, let me re-read Answer B. It has \"**待运行**\" appearing twice after code blocks, which suggests the assistant was mid-tool-call. But then it gives the answer based on an assumption (\"基于它是「单条记忆详情」页面\"). So it does provide actual value even though execution was incomplete.\n\nAnswer A is essentially useless - it's just a series of malformed tool call attempts (grep receptor, grep view, ls src) with no actual suggestions. There's no title proposed at all.\n\nPotentially there's a concern that Answer B is \"making things up\" because the tool calls are pending - it never actually saw the display content. It says \"我快速看下它实际显示什么再给建议\" but the calls are \"待运行\" (pending), and then it gives suggestions based on an assumption. However, for a naming question like this, the suggestions are on-target regardless, and the assumption (single memory detail page) is a reasonable one given \"view\" and the project description. The risk of being wrong is low and it hedges with multiple options.\n\nAlso, is there anything factually wrong in Answer B? It references `ab brief` and `ab recall` commands existing - from the project description, the CLI has hook recall, so `ab recall` likely exists. It mentions design doc terms L1/L2/Proposition and \"Memory Card\" - those may be from the project's design docs. Given the abortive tool calls, it can't have verified these, but they're plausible details drawn from context (the question mentions the project details). Even if slightly uncertain, it provides useful suggestions.\n\nSo clearly B is more useful: it actually gives title options and recommendations. A gives nothing.\n\nThe winner is B. Reason: A only contains broken tool-call attempts with no actual title suggestions, while B delivers concrete concise title options with a recommendation and rationale.\n\nOne-line Chinese reason: \"A 只有一堆未完成的工具调用没有给出任何文案，而 B 直接给出了简洁的记忆详情/Memory Card 等方案和推荐理由。\"</think>{\"winner\":\"B\",\"reason\":\"A 只有一串未完成的工具调用、没给出任何标题文案，而 B 实际给出了记忆详情、Memory Card 等简洁方案及推荐理由。\"}"
+ },
+ {
+  "id": "glm/q21",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 直接给出从造锁冲突到断言与汇报结果的完整可执行方案，且细节具体正确；B 仅表示要先看代码，未回答任何实质内容。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 直接给出从造锁冲突到断言与汇报结果的完整可执行方案，且细节具体正确；B 仅表示要先看代码，未回答任何实质内容。\"}"
+ },
+ {
+  "id": "glm/q22",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 虽工具调用异常但仍给出5条具体可执行的hook坑点建议，B 全是乱码工具调用且未形成任何有效回答。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 虽工具调用异常但仍给出5条具体可执行的hook坑点建议，B 全是乱码工具调用且未形成任何有效回答。\"}"
+ },
+ {
+  "id": "glm/q23",
+  "judge": "cpa/deepseek-v4-pro",
+  "judge_model": "cpa/deepseek-v4-pro",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 更具体可执行：给出绝对路径、tsx 运行方式和临时库防污染建议及汇报格式，而 B 的“先复制 store.db”在脚本仍指向原库时并不能防污染，指导不够准确。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 更具体可执行：给出绝对路径、tsx 运行方式和临时库防污染建议及汇报格式，而 B 的“先复制 store.db”在脚本仍指向原库时并不能防污染，指导不够准确。\"}"
+ },
+ {
+  "id": "opencode/q01",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "两者都覆盖了隔离库、位置、confirmed/仅rule·pitfall进brief、2000字预算整条跳过等核心点，但 B 给出了精确的文件行号引用、更稳妥的宽松断言和补零等细节，而 A 夹杂'实测11秒''pm目录模式'等难以核实、疑似编造的内容，B 更可靠可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都覆盖了隔离库、位置、confirmed/仅rule·pitfall进brief、2000字预算整条跳过等核心点，但 B 给出了精确的文件行号引用、更稳妥的宽松断言和补零等细节，而 A 夹杂'实测11秒''pm目录模式'等难以核实、疑似编造的内容，B 更可靠可执行。\"}"
+ },
+ {
+  "id": "opencode/q02",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两者都准确指出了 sleep 同步的缺陷并给出信号方案，但 B 的 go 握手设计更严谨（消除了 exit 早于 stdout 的窗口），并补充了同进程双连接因 DatabaseSync 同步阻塞无法模拟等待的关键洞察和 WAL/锁顺序的坑，更切中实际测试场景。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都准确指出了 sleep 同步的缺陷并给出信号方案，但 B 的 go 握手设计更严谨（消除了 exit 早于 stdout 的窗口），并补充了同进程双连接因 DatabaseSync 同步阻塞无法模拟等待的关键洞察和 WAL/锁顺序的坑，更切中实际测试场景。\"}"
+ },
+ {
+  "id": "opencode/q03",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "两者都指出 journal_mode=WAL 在已是 WAL 时是幂等空操作并给出 BEGIN IMMEDIATE 方案，但 B 额外发现该 PRAGMA 即使冲突也立即失败不走 busy_timeout、给出项目专属细节（openDb 每次切 WAL、BUSY_TIMEOUT_MS=5000、测试文件位置）以及用进程握手替代 sleep 等更具体可执行的建议。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都指出 journal_mode=WAL 在已是 WAL 时是幂等空操作并给出 BEGIN IMMEDIATE 方案，但 B 额外发现该 PRAGMA 即使冲突也立即失败不走 busy_timeout、给出项目专属细节（openDb 每次切 WAL、BUSY_TIMEOUT_MS=5000、测试文件位置）以及用进程握手替代 sleep 等更具体可执行的建议。\"}"
+ },
+ {
+  "id": "opencode/q04",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两个回答结论一致且都覆盖了超时、EPIPE 和测试，但 B 引用了疑似编造的记忆 ID 作依据，且对 cli.ts:1424 兜底位置的描述（称 JSON.parse:155 在兜底之外却实测返回 0）自相矛盾；A 的分析更内洽，代码示例和测试清单也更具体可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两个回答结论一致且都覆盖了超时、EPIPE 和测试，但 B 引用了疑似编造的记忆 ID 作依据，且对 cli.ts:1424 兜底位置的描述（称 JSON.parse:155 在兜底之外却实测返回 0）自相矛盾；A 的分析更内洽，代码示例和测试清单也更具体可执行。\"}"
+ },
+ {
+  "id": "opencode/q05",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 与 B 核心结论和依据一致且都正确，但 A 更简洁地命中要点（ctx.cwd 语义差异、hook 从 stdin 取 cwd 的回退链路、错误后果与现有实现/测试佐证），而 B 内容大体重复且冗长，无额外价值。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 与 B 核心结论和依据一致且都正确，但 A 更简洁地命中要点（ctx.cwd 语义差异、hook 从 stdin 取 cwd 的回退链路、错误后果与现有实现/测试佐证），而 B 内容大体重复且冗长，无额外价值。\"}"
+ },
+ {
+  "id": "opencode/q06",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两者都正确指出先截断后过滤的核心问题，但 B 还额外定位了当前版本仍可能偶发空输出的具体缺陷（note 类已确认纠正进入 best 后用相对门槛挤掉合格条目却又不被输出），并给出修正方向和 ab search 路径的排查点，更切中“有时候”这一复现特征且可直接执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都正确指出先截断后过滤的核心问题，但 B 还额外定位了当前版本仍可能偶发空输出的具体缺陷（note 类已确认纠正进入 best 后用相对门槛挤掉合格条目却又不被输出），并给出修正方向和 ab search 路径的排查点，更切中“有时候”这一复现特征且可直接执行。\"}"
+ },
+ {
+  "id": "opencode/q07",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "B 准确指出问题真正出在 ab work 的 catch 丢弃了消息而非 embed.ts 未拼入，并给出多文件落点、日志格式、测试用例和设计文档依据，可执行性更强；A 的核心建议虽类似，但「我们之前复现过 401 回显 key」属于无法核实的编造性表述。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 准确指出问题真正出在 ab work 的 catch 丢弃了消息而非 embed.ts 未拼入，并给出多文件落点、日志格式、测试用例和设计文档依据，可执行性更强；A 的核心建议虽类似，但「我们之前复现过 401 回显 key」属于无法核实的编造性表述。\"}"
+ },
+ {
+  "id": "opencode/q08",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 抓住了最严重的实际缺陷——预算只剩十几个字符时仍截出只有前缀的半行并计入召回统计，且覆盖语义截断和 break 策略不一致等更多切题的坑并给出最小修法；B 主要聚焦 UTF-16 码元问题，虽也正确但面更窄。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 抓住了最严重的实际缺陷——预算只剩十几个字符时仍截出只有前缀的半行并计入召回统计，且覆盖语义截断和 break 策略不一致等更多切题的坑并给出最小修法；B 主要聚焦 UTF-16 码元问题，虽也正确但面更窄。\"}"
+ },
+ {
+  "id": "opencode/q09",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两者对卡点（stdin 无超时、钥匙串+embedding 串行 3+3 秒、SQLite busy_timeout=5 秒、git/ps 无超时）的诊断都准确且相似，但 B 额外给出了用 recall_runs 表区分卡点的排查方法、按剩余预算的优先级修复方案和复现技巧，更具体可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者对卡点（stdin 无超时、钥匙串+embedding 串行 3+3 秒、SQLite busy_timeout=5 秒、git/ps 无超时）的诊断都准确且相似，但 B 额外给出了用 recall_runs 表区分卡点的排查方法、按剩余预算的优先级修复方案和复现技巧，更具体可执行。\"}"
+ },
+ {
+  "id": "opencode/q10",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两个回答都准确切中降级静默、中文检索失效、门槛口径、top-N 截断、副作用等核心风险，但 B 额外指出 degraded 双重含义（同步失败时 dense 仍可用，不能一刀切）、FTS 命中无条件进融合而 minSim 只滤向量路这一隐蔽假复用陷阱，以及查询预处理差异（第 7 点），并给出更具体的共享层拆分方案，略胜一筹。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两个回答都准确切中降级静默、中文检索失效、门槛口径、top-N 截断、副作用等核心风险，但 B 额外指出 degraded 双重含义（同步失败时 dense 仍可用，不能一刀切）、FTS 命中无条件进融合而 minSim 只滤向量路这一隐蔽假复用陷阱，以及查询预处理差异（第 7 点），并给出更具体的共享层拆分方案，略胜一筹。\"}"
+ },
+ {
+  "id": "opencode/q11",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两者都正确指出最多 3 条、按相关度排序且位置会漂移，但 A 用实测复现了断言失败、覆盖了更多具体替代方案（用 shown 断言包含、可控假 embedder 测排第一、ab brief 才是按时间倒序、用独立内存库），对'该断言什么'的指导更完整可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两者都正确指出最多 3 条、按相关度排序且位置会漂移，但 A 用实测复现了断言失败、覆盖了更多具体替代方案（用 shown 断言包含、可控假 embedder 测排第一、ab brief 才是按时间倒序、用独立内存库），对'该断言什么'的指导更完整可执行。\"}"
+ },
+ {
+  "id": "opencode/q12",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两个回答核心结论一致，但开发者明确说要在测试里验证，B 直接给出了可照抄的断言代码（引用 cli.test.ts 的既有写法），更切题且无冗余；A 以 CLI 手动流程为主，测试内容仅一句带过，还夹带了清理、--direct 等额外细节。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两个回答核心结论一致，但开发者明确说要在测试里验证，B 直接给出了可照抄的断言代码（引用 cli.test.ts 的既有写法），更切题且无冗余；A 以 CLI 手动流程为主，测试内容仅一句带过，还夹带了清理、--direct 等额外细节。\"}"
+ },
+ {
+  "id": "opencode/q13",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "两个回答核心论点相同且正确，B 更精炼、有具体函数和行号定位、可直接执行，而 A 夹带较多推测性边角案例和收尾的反问，信息密度略低。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两个回答核心论点相同且正确，B 更精炼、有具体函数和行号定位、可直接执行，而 A 夹带较多推测性边角案例和收尾的反问，信息密度略低。\"}"
+ },
+ {
+  "id": "opencode/q14",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "两者都正确指出了TOML写法错误和hook不读shell_environment_policy的半隔离问题，但B给出经过实测的最简方案（进程环境启动+临时改inherit，不动hooks.json避免重新信任），还额外覆盖了launchd后台sweep泄漏、headless静默跳过、桌面app环境限制等A遗漏的真实风险，更切中且可执行。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者都正确指出了TOML写法错误和hook不读shell_environment_policy的半隔离问题，但B给出经过实测的最简方案（进程环境启动+临时改inherit，不动hooks.json避免重新信任），还额外覆盖了launchd后台sweep泄漏、headless静默跳过、桌面app环境限制等A遗漏的真实风险，更切中且可执行。\"}"
+ },
+ {
+  "id": "opencode/q15",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "问题出在 TypeScript 项目，B 全程用 Node 语境解释 /var 符号链接与 realpath 差异并给出具体可执行的 fixture 规范化写法，而 A 混入大量无关 Python 内容且末尾'Python 3.14 已移除 os.tmpdir'属编造。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"问题出在 TypeScript 项目，B 全程用 Node 语境解释 /var 符号链接与 realpath 差异并给出具体可执行的 fixture 规范化写法，而 A 混入大量无关 Python 内容且末尾'Python 3.14 已移除 os.tmpdir'属编造。\"}"
+ },
+ {
+  "id": "opencode/q16",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "两者都正确诊断了 node --test 把目录当文件加载的问题，但 A 直接给出适配该 TypeScript 项目的 src/**/*.test.ts 写法并补充 transform-types 等相关细节，而 B 的主推命令和 package.json 示例都只针对 .js 文件，对 TS 项目不可直接执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两者都正确诊断了 node --test 把目录当文件加载的问题，但 A 直接给出适配该 TypeScript 项目的 src/**/*.test.ts 写法并补充 transform-types 等相关细节，而 B 的主推命令和 package.json 示例都只针对 .js 文件，对 TS 项目不可直接执行。\"}"
+ },
+ {
+  "id": "opencode/q17",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "A",
+  "better": "on",
+  "reason": "A 准确解释了 PRAGMA 顺序原理，并进一步指出稳态下 WAL 切换是空操作、真正的偶发崩溃更可能在 writeIndex 的 BEGIN IMMEDIATE 排队超时，还给出栈顶行号对照和可执行的修复建议；B 关于『设了 busy_timeout 后 WAL 切换仍 0ms 立即报错』的说法与 SQLite 实际行为不符，可能把开发者引向错误的排查方向。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 准确解释了 PRAGMA 顺序原理，并进一步指出稳态下 WAL 切换是空操作、真正的偶发崩溃更可能在 writeIndex 的 BEGIN IMMEDIATE 排队超时，还给出栈顶行号对照和可执行的修复建议；B 关于『设了 busy_timeout 后 WAL 切换仍 0ms 立即报错』的说法与 SQLite 实际行为不符，可能把开发者引向错误的排查方向。\"}"
+ },
+ {
+  "id": "opencode/q18",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "两者核心结论相同且都准确，但 A 额外覆盖了 package.json（测试命令变化时需同步）和各宿主全局规则文件等边界情况，对'还有别的文件要改吗'回答得更完整、条件化且可执行。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"两者核心结论相同且都准确，但 A 额外覆盖了 package.json（测试命令变化时需同步）和各宿主全局规则文件等边界情况，对'还有别的文件要改吗'回答得更完整、条件化且可执行。\"}"
+ },
+ {
+  "id": "opencode/q19",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "tie",
+  "better": "tie",
+  "reason": "两个回答结论一致且都准确：都建议并入概览页召回卡片、都给出 hit/(hit+nohit) 与 error 分离、样本数灰显等口径提醒；A 多了「宿主侧超时不经过 ab 记录」的命名准确性洞察，B 多了示意图和「客户端/宿主」术语统一提醒，质量相当，难分高下。",
+  "raw": "{\"winner\":\"tie\",\"reason\":\"两个回答结论一致且都准确：都建议并入概览页召回卡片、都给出 hit/(hit+nohit) 与 error 分离、样本数灰显等口径提醒；A 多了「宿主侧超时不经过 ab 记录」的命名准确性洞察，B 多了示意图和「客户端/宿主」术语统一提醒，质量相当，难分高下。\"}"
+ },
+ {
+  "id": "opencode/q20",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "两个回答都推荐「记忆看板」，但 A 给出了具体文件位置（src/view.ts 的 389/416 行）和更贴合页面四个标签页结构的分析，可直接执行；B 内容相近但缺少具体定位信息。",
+  "raw": "{\"winner\":\"A\", \"reason\":\"两个回答都推荐「记忆看板」，但 A 给出了具体文件位置（src/view.ts 的 389/416 行）和更贴合页面四个标签页结构的分析，可直接执行；B 内容相近但缺少具体定位信息。\"}"
+ },
+ {
+  "id": "opencode/q21",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "A",
+  "better": "off",
+  "reason": "A 准确诊断出现有用例覆盖不到 PRAGMA 顺序，用 DELETE 库+子进程 BEGIN EXCLUSIVE 造出真实冲突（等待发生在 journal_mode 语句的锁获取上，busy_timeout 有效），并给出变异反向验证证明测试真能咬住回归、汇报模板严谨且无技术错误；B 的写路径用例虽完整，但其关键论断“库未 WAL 时另一进程持写锁则 PRAGMA journal_mode=WAL 必立即抛 SQLITE_BUSY、不等 busy_timeout”以偏概全（对 BEGIN EXCLUSIVE 持锁者不成立），会误导开发者放弃有效且必要的首开/WAL 切换回归测试，且缺少证明测试可失败的反向验证。",
+  "raw": "{\"winner\":\"A\",\"reason\":\"A 准确诊断出现有用例覆盖不到 PRAGMA 顺序，用 DELETE 库+子进程 BEGIN EXCLUSIVE 造出真实冲突（等待发生在 journal_mode 语句的锁获取上，busy_timeout 有效），并给出变异反向验证证明测试真能咬住回归、汇报模板严谨且无技术错误；B 的写路径用例虽完整，但其关键论断“库未 WAL 时另一进程持写锁则 PRAGMA journal_mode=WAL 必立即抛 SQLITE_BUSY、不等 busy_timeout”以偏概全（对 BEGIN EXCLUSIVE 持锁者不成立），会误导开发者放弃有效且必要的首开/WAL 切换回归测试，且缺少证明测试可失败的反向验证。\"}"
+ },
+ {
+  "id": "opencode/q22",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "off",
+  "winner": "B",
+  "better": "on",
+  "reason": "两者核心要点（EPIPE、静默失败、超时、ctx.cwd、degraded）相近且准确，但 B 额外给出具体文件行号、sendUserMessage/各 hook 等待策略等扩展侧实操细节，并指出当前代码中最值得先补的两处，可执行性更强。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"两者核心要点（EPIPE、静默失败、超时、ctx.cwd、degraded）相近且准确，但 B 额外给出具体文件行号、sendUserMessage/各 hook 等待策略等扩展侧实操细节，并指出当前代码中最值得先补的两处，可执行性更强。\"}"
+ },
+ {
+  "id": "opencode/q23",
+  "judge": "cpa/glm-5.3",
+  "judge_model": "cpa/glm-5.3",
+  "A_is": "on",
+  "winner": "B",
+  "better": "off",
+  "reason": "B 给出了贴合该仓库的具体信息（Store 双路径构造、:memory:、fakeEmbed、幂等复跑等）并附可执行模板，而 A 是泛泛的通用建议（tsx、浏览器全局变量等）与本项目关系不大。",
+  "raw": "{\"winner\":\"B\",\"reason\":\"B 给出了贴合该仓库的具体信息（Store 双路径构造、:memory:、fakeEmbed、幂等复跑等）并附可执行模板，而 A 是泛泛的通用建议（tsx、浏览器全局变量等）与本项目关系不大。\"}"
+ }
+]
