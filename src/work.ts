@@ -3,6 +3,7 @@
  * 会话坐标由 `ab capture` 登记；本文件切窗口 → 去噪 → 脱敏 → 抽取 → 校验 → 近邻复查 → 准入 → 一个事务写 L1。
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
+import { prune as pruneTelemetry, stripAbUsed } from "./telemetry.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
@@ -676,7 +677,8 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       report.windows.skipped++;
       return;
     }
-    turns = cleaned.turns;
+    // 只去掉 ab-used 行、不删轮次：旧进度可能正停在只有这一行的回复上
+    turns = cleaned.turns.map((t) => (t.role === "assistant" ? { ...t, text: stripAbUsed(t.text) } : t));
     stripped = cleaned.stripped;
     worker = cleaned.worker;
     // 旧版把 Claude 压缩摘要当成一轮，处理进度可能停在它上面；现在它被跳过，进度换成它前面那一轮（两种模式都适用）
@@ -1184,7 +1186,10 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
       intake.prune(db, deps.now());
       pruneTopicMarks(db, deps.now());
     }
-    if (!opts.dryRun) intake.setMeta(db, "last_run", deps.now().toISOString());
+    if (!opts.dryRun) {
+      pruneTelemetry(db, deps.now());
+      intake.setMeta(db, "last_run", deps.now().toISOString());
+    }
   } finally {
     if (!opts.dryRun) intake.releaseLease(db, holder);
   }

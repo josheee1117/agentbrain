@@ -1,0 +1,908 @@
+{
+ "_note": "执行代理按回答原文标注，2026-10-21/22；yes=回答实际依据了这条，no=没用到，unclear=说不清；note=refuted 表示回答明说这条记忆过时/不对且没照做（算 no）。_nonanswer=回答只说要去看代码、没给实质内容。evidence 为回答原文摘句，已脚本核对都是原文子串。",
+ "codex-on/q01": {
+  "090a4f27": {
+   "used": "yes",
+   "evidence": "给用例单独的 `AB_HOME`……若保留这种写法，这个用例必须永远放在文件最后"
+  },
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "造正文应使用 `pitfall` 或 `rule`。`decision` 和 `note` 在项目 brief 中只显示数量"
+  },
+  "991b0a3c": {
+   "used": "yes",
+   "evidence": "保留假 `HOME`、假 `ps`、网络 guard，避免碰真实的 `~/.agentbrain`"
+  }
+ },
+ "codex-on/q02": {
+  "3f8e5ce1": {
+   "used": "yes",
+   "evidence": "优先用两个 `Store` 或 `DatabaseSync` 实例直接排列操作，不要起进程或 sleep"
+  },
+  "23e76180": {
+   "used": "yes",
+   "evidence": "持锁超过 `BUSY_TIMEOUT_MS=5000` 时，正确实现也会失败"
+  }
+ },
+ "codex-on/q03": {
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "数据库已经处于 WAL 模式时……通常不会取得写锁，也不会报锁冲突"
+  }
+ },
+ "codex-on/q04": {
+  "0246839d": {
+   "used": "yes",
+   "evidence": "`stdout`、`stderr` 都不输出。退出码为 `0`"
+  }
+ },
+ "codex-on/q05": {
+  "569a3992": {
+   "used": "yes",
+   "evidence": "`process.cwd()` 仍是 Pi 的启动目录，会召回到错误项目。应使用宿主传入的 `ctx.cwd`"
+  }
+ },
+ "codex-on/q06": {
+  "a1dcf0a1": {
+   "used": "yes",
+   "evidence": "根因是“先截 top‑N，后做资格过滤”，顺序反了"
+  }
+ },
+ "codex-on/q08": {
+  "d7581472": {
+   "used": "yes",
+   "evidence": "`.slice()` 可能从代理对中间切开……两个 emoji 的 `.length` 是 4"
+  }
+ },
+ "codex-on/q09": {
+  "2d6b98cc": {
+   "used": "yes",
+   "evidence": "`stdin` 等不到 EOF……`security` 同步调用最多 3 秒，随后 embedding 又有 3 秒"
+  },
+  "0246839d": {
+   "used": "no",
+   "evidence": "只顺带提到“外层 `try/catch` 也救不了”，结论不靠这条"
+  }
+ },
+ "codex-on/q10": {
+  "5844f8eb": {
+   "used": "yes",
+   "evidence": "`searchHybrid` 捕获异常后仍返回 FTS 命中……若 recall 不显式检查，就会把降级结果当正常命中注入"
+  },
+  "a5fb524e": {
+   "used": "no",
+   "evidence": "没有谈结果顺序断言"
+  },
+  "8afca8b7": {
+   "used": "unclear",
+   "evidence": "“调高 `minSim` 也不够……弱字面命中仍可能被注入”与该条的门槛/误报话题相近，但没用它的数字"
+  }
+ },
+ "codex-on/q11": {
+  "a5fb524e": {
+   "used": "yes",
+   "evidence": "结果按相关度分数排序，不按插入时间排序"
+  },
+  "f4c6a2e6": {
+   "used": "no",
+   "evidence": "没涉及 brief/决定类"
+  }
+ },
+ "codex-on/q12": {
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "决定类条目不会出现在 `brief` 正文中，只会让「决定 N 条」计数增加"
+  }
+ },
+ "codex-on/q13": {
+  "2cce8bb4": {
+   "used": "yes",
+   "evidence": "实测从 Claude Code 内启动 Pi 后，两个变量会同时存在……沿父进程链向上查找"
+  }
+ },
+ "codex-on/q14": {
+  "3c398323": {
+   "used": "yes",
+   "evidence": "Codex 配置是 `inherit = \"core\"`，`AB_HOME` 可能被过滤掉"
+  }
+ },
+ "codex-on/q15": {
+  "090a4f27": {
+   "used": "no",
+   "evidence": "回答只讲 /tmp→/private/tmp 与 realpath，与 AB_HOME 用例无关"
+  }
+ },
+ "codex-off/q01": {
+  "090a4f27": {
+   "used": "yes",
+   "evidence": "给它独立的 `AB_HOME`……所以它必须保持最后"
+  },
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "想断言正文时用 `pitfall` 或 `rule`。当前实现里 `decision` 和 `note` 都只显示数量"
+  },
+  "991b0a3c": {
+   "used": "yes",
+   "evidence": "继续沿用假 `HOME`、PATH 前置的假 `ps`"
+  }
+ },
+ "codex-off/q02": {
+  "3f8e5ce1": {
+   "used": "yes",
+   "evidence": "优先用两个 `Store`/`DatabaseSync` 连接，手工交错"
+  },
+  "23e76180": {
+   "used": "yes",
+   "evidence": "锁持有时间若超过 `BUSY_TIMEOUT_MS=5000`……测试失去区分能力"
+  }
+ },
+ "codex-off/q03": {
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "数据库已经是 WAL 时……不会获取写锁，因此也不会报锁冲突"
+  }
+ },
+ "codex-off/q04": {
+  "0246839d": {
+   "used": "yes",
+   "evidence": "stdout、stderr 都不输出。退出码为 `0`"
+  }
+ },
+ "codex-off/q05": {
+  "569a3992": {
+   "used": "yes",
+   "evidence": "`process.cwd()` 仍是 Pi 的启动目录，会导致召回到错误项目的记忆"
+  }
+ },
+ "codex-off/q06": {
+  "a1dcf0a1": {
+   "used": "yes",
+   "evidence": "根因就是资格过滤放晚了"
+  }
+ },
+ "ds-on/q01": {
+  "090a4f27": {
+   "used": "yes",
+   "evidence": "独立 AB_HOME，且用例放文件最后"
+  },
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "验证\"brief 能看到这条记忆\"时，用「坑」或「事实」类条目"
+  },
+  "991b0a3c": {
+   "used": "yes",
+   "evidence": "PATH 前置假 ps 脚本 + 假 HOME，不要读写真实的 `~/.agentbrain`"
+  }
+ },
+ "ds-on/q02": {
+  "_nonanswer": true,
+  "3f8e5ce1": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "23e76180": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q03": {
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "如果库已经是 WAL 模式（很可能就是你现在的情况），这条语句是个 no-op"
+  }
+ },
+ "ds-on/q04": {
+  "_nonanswer": true,
+  "0246839d": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q05": {
+  "569a3992": {
+   "used": "yes",
+   "evidence": "应该把宿主传入的 `ctx.cwd` 传给 `ab recall` 作为召回范围"
+  }
+ },
+ "ds-on/q06": {
+  "_nonanswer": true,
+  "a1dcf0a1": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q08": {
+  "d7581472": {
+   "used": "yes",
+   "evidence": "要按 Unicode 码点截"
+  }
+ },
+ "ds-on/q09": {
+  "2d6b98cc": {
+   "used": "yes",
+   "evidence": "对 stdin read 设置 deadline…keychain 调用必须显式超时"
+  },
+  "0246839d": {
+   "used": "yes",
+   "evidence": "hook 入口要整体 try/catch：任何卡死/异常都静默、退出码 0 输出空"
+  }
+ },
+ "ds-on/q10": {
+  "_nonanswer": true,
+  "5844f8eb": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "a5fb524e": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "8afca8b7": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q11": {
+  "a5fb524e": {
+   "used": "yes",
+   "evidence": "检索结果是按相关度排序的（混合检索 + RRF），不是按插入时间或写入顺序"
+  },
+  "f4c6a2e6": {
+   "used": "no",
+   "evidence": "只断言**条目总数符合预期**、**新插入的内容出现在输出的某处**"
+  }
+ },
+ "ds-on/q12": {
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "决定类条目不会出现在 brief 正文里，只会计入「决定 N 条」的计数"
+  }
+ },
+ "ds-on/q13": {
+  "_nonanswer": true,
+  "2cce8bb4": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q14": {
+  "_nonanswer": true,
+  "3c398323": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q15": {
+  "b5285ae5": {
+   "used": "yes",
+   "evidence": "修法是两边都先 `realpath` 再比"
+  },
+  "583acfa3": {
+   "used": "no",
+   "evidence": "修法是两边都先 `realpath` 再比"
+  },
+  "090a4f27": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q16": {
+  "_nonanswer": true,
+  "7ce131e9": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q17": {
+  "7646de26": {
+   "used": "yes",
+   "evidence": "**busy_timeout 必须放在 journal_mode=WAL 之前**"
+  },
+  "23e76180": {
+   "used": "no",
+   "evidence": "把 busy_timeout 设为 open 后的**第一条语句**"
+  }
+ },
+ "ds-on/q18": {
+  "_nonanswer": true,
+  "8ddf0a11": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q21": {
+  "_nonanswer": true,
+  "3f8e5ce1": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "23e76180": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "f33842dd": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q22": {
+  "_nonanswer": true,
+  "0246839d": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "ds-on/q23": {
+  "_nonanswer": true,
+  "5d95ed9b": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "33cd9779": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "16dcd94a": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q01": {
+  "_nonanswer": true,
+  "090a4f27": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "f4c6a2e6": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "991b0a3c": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q02": {
+  "_nonanswer": true,
+  "3f8e5ce1": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "23e76180": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q03": {
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "`PRAGMA journal_mode=WAL` 在已处于 WAL 的库上执行时**不获取锁也不报错**"
+  }
+ },
+ "glm-on/q04": {
+  "_nonanswer": true,
+  "0246839d": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q05": {
+  "569a3992": {
+   "used": "yes",
+   "evidence": "Pi SDK 支持在同一个进程里创建多个不同 cwd 的会话"
+  }
+ },
+ "glm-on/q06": {
+  "_nonanswer": true,
+  "a1dcf0a1": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q08": {
+  "d7581472": {
+   "used": "yes",
+   "evidence": "正确做法是按码点切"
+  }
+ },
+ "glm-on/q09": {
+  "_nonanswer": true,
+  "2d6b98cc": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "0246839d": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q10": {
+  "5844f8eb": {
+   "used": "yes",
+   "evidence": "`searchHybrid` 会吞掉 embedding 异常并降级为纯 FTS 返回结果"
+  },
+  "a5fb524e": {
+   "used": "yes",
+   "evidence": "检索按相关度排序而非插入时间…测试断言也只应查条目数和内容，不查顺序"
+  },
+  "8afca8b7": {
+   "used": "yes",
+   "evidence": "纯向量 86.7%，门槛 0.45 下仍有 33.3%，0.55 才归零但召回掉到 63.2%"
+  }
+ },
+ "glm-on/q11": {
+  "a5fb524e": {
+   "used": "yes",
+   "evidence": "结果按相关度排序，不是按插入时间。第 4 条这个位置没有任何保证"
+  },
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "选来插入的验证条目用坑或事实类，别用决定类"
+  }
+ },
+ "glm-on/q12": {
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "决定类条目不会出现在 brief 正文里，只计入「决定 N 条」的统计数字"
+  }
+ },
+ "glm-on/q13": {
+  "2cce8bb4": {
+   "used": "yes",
+   "evidence": "正确做法是看**最近的父进程**是什么"
+  }
+ },
+ "glm-on/q14": {
+  "3c398323": {
+   "used": "yes",
+   "evidence": "**Codex 的 `shell_environment_policy` 默认 `inherit=\"core\"`，会过滤掉自定义环境变量**"
+  }
+ },
+ "glm-on/q15": {
+  "b5285ae5": {
+   "used": "yes",
+   "evidence": "比较前把两边都做 `fs.realpathSync()` 再断言"
+  },
+  "583acfa3": {
+   "used": "no",
+   "evidence": "比较前把两边都做 `fs.realpathSync()` 再断言"
+  },
+  "090a4f27": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q16": {
+  "7ce131e9": {
+   "used": "yes",
+   "evidence": "`node --test src/` **不会递归目录**，而是把 `src/` 当成单个测试文件去加载"
+  }
+ },
+ "glm-on/q17": {
+  "_nonanswer": true,
+  "7646de26": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "23e76180": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "glm-on/q18": {
+  "8ddf0a11": {
+   "used": "yes",
+   "evidence": "`AGENTS.md` 和 `CLAUDE.md` 需要保持同内容，改其中一个要同步另一个"
+  }
+ },
+ "glm-on/q21": {
+  "3f8e5ce1": {
+   "used": "yes",
+   "evidence": "造冲突：握手，不赌时序"
+  },
+  "23e76180": {
+   "used": "yes",
+   "evidence": "6–10s 的锁会让“正确顺序”和“错误顺序”都在 ~5.2s 抛锁"
+  },
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "库已是 WAL 时该语句不取锁也不报错"
+  }
+ },
+ "glm-on/q22": {
+  "0246839d": {
+   "used": "yes",
+   "evidence": "hook 子命令必须自己 try/catch，异常不能逃逸"
+  }
+ },
+ "glm-on/q23": {
+  "5d95ed9b": {
+   "used": "yes",
+   "evidence": "给出改动/验证涉及的文件（`文件:行号`）、贴关键命令和输出末尾的统计几行即可，不用贴大段代码"
+  },
+  "33cd9779": {
+   "used": "yes",
+   "evidence": "不要写 `~` 开头的路径——Node 不展开 `~`"
+  },
+  "16dcd94a": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "claude-on/q01": {
+  "090a4f27": {
+   "used": "yes",
+   "evidence": "共享的 `home` 不能用，因为里面有精确断言"
+  },
+  "f4c6a2e6": {
+   "used": "no",
+   "evidence": "召回里\"用坑或事实\"不对，事实也进不了正文",
+   "note": "refuted"
+  },
+  "991b0a3c": {
+   "used": "yes",
+   "evidence": "隔离照旧，全部走 `ab()`/`recall()`。动了共享夹具（`bin/ps`、`repos/*.md`）的话"
+  }
+ },
+ "claude-on/q02": {
+  "3f8e5ce1": {
+   "used": "no",
+   "evidence": "所以\"同一进程开两个连接、手动交错\"的写法（`store.test.ts:189`、`topic.test.ts:564`）在这里用不上"
+  },
+  "23e76180": {
+   "used": "yes",
+   "evidence": "持锁时长必须远小于 `BUSY_TIMEOUT_MS`（`store.ts:17`，5000ms，实测约 5.2 秒报 locked）。超过 5 秒的话，两种 PRAGMA 顺序都会失败"
+  }
+ },
+ "claude-on/q03": {
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "库已经是 WAL 时再设一次 WAL 什么都不做：不拿写锁，不报错"
+  }
+ },
+ "claude-on/q04": {
+  "0246839d": {
+   "used": "yes",
+   "evidence": "在 `ab` 里接住异常，stdout 和 stderr 都不写，退出码 0"
+  }
+ },
+ "claude-on/q05": {
+  "569a3992": {
+   "used": "yes",
+   "evidence": "SDK 的 `createAgentSession` 能在同一个进程里建 cwd 不同的会话"
+  }
+ },
+ "claude-on/q06": {
+  "a1dcf0a1": {
+   "used": "yes",
+   "evidence": "和坑 a1dcf0a1 是同一类错：资格判断放在了截取之后"
+  }
+ },
+ "claude-on/q08": {
+  "d7581472": {
+   "used": "yes",
+   "evidence": "会留下一个孤立的高位代理项"
+  }
+ },
+ "claude-on/q09": {
+  "2d6b98cc": {
+   "used": "yes",
+   "evidence": "之前记下的那条坑说了两件事：钥匙串那一半在 7a60d81 修了，stdin 这一半还没修"
+  },
+  "0246839d": {
+   "used": "no",
+   "evidence": "hook 路径上有好几处同步等待"
+  }
+ },
+ "codex-off/q08": {
+  "d7581472": {
+   "used": "yes",
+   "evidence": "边界刚好落在中间时会产生孤立代理项"
+  }
+ },
+ "codex-off/q09": {
+  "2d6b98cc": {
+   "used": "yes",
+   "evidence": "`readStdin()` 只等 `end`；宿主若写了 JSON 但没有关闭管道"
+  },
+  "0246839d": {
+   "used": "yes",
+   "evidence": "recall/capture 的异常确实会被静默吞掉"
+  }
+ },
+ "codex-off/q10": {
+  "5844f8eb": {
+   "used": "yes",
+   "evidence": "`searchHybrid` 捕获 embedding 异常后仍返回 FTS 命中，并只在 `degraded` 字段说明原因；如果 recall 不检查它，embedding 超时会被记成正常 hit 并注入"
+  },
+  "a5fb524e": {
+   "used": "no",
+   "evidence": "两者的准入语义不同"
+  },
+  "8afca8b7": {
+   "used": "no",
+   "evidence": "`minSim` 只约束向量路，**FTS 命中不会经过它**"
+  }
+ },
+ "codex-off/q11": {
+  "a5fb524e": {
+   "used": "yes",
+   "evidence": "召回按相关度评分排序，不按插入时间"
+  },
+  "f4c6a2e6": {
+   "used": "no",
+   "evidence": "更稳的测试方式是给新条目放一个唯一关键词"
+  }
+ },
+ "codex-off/q12": {
+  "f4c6a2e6": {
+   "used": "yes",
+   "evidence": "决定类不会出现在 `brief` 正文里，只会让「决定 N 条」计数增加"
+  }
+ },
+ "codex-off/q13": {
+  "2cce8bb4": {
+   "used": "yes",
+   "evidence": "实测从 Claude Code 启动 Pi 后，子进程同时存在 `CLAUDE_CODE_SESSION_ID` 和 `PI_SESSION_ID`"
+  }
+ },
+ "codex-off/q14": {
+  "3c398323": {
+   "used": "yes",
+   "evidence": "而 Codex 配置是 `shell_environment_policy.inherit = \"core\"`，`AB_HOME` 可能被过滤，结果 `ab` 会回落到真实的 `~/.agentbrain`"
+  }
+ },
+ "codex-off/q15": {
+  "090a4f27": {
+   "used": "no",
+   "evidence": "因为 macOS 的临时目录常有两种等价写法"
+  }
+ },
+ "codex-off/q17": {
+  "23e76180": {
+   "used": "yes",
+   "evidence": "锁时长必须小于 5 秒，否则两种顺序都会失败"
+  },
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "数据库已经是 WAL 时，再执行 `journal_mode=WAL` 通常不需要模式切换，所以把两个 PRAGMA 对调，测试很可能照样通过。要区分顺序，应让子进程在 DELETE 模式持真正的写锁"
+  }
+ },
+ "codex-on/q17": {
+  "23e76180": {
+   "used": "yes",
+   "evidence": "测试持锁时间应小于 5 秒"
+  },
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "现有测试只锁 `store.db` 400ms，而且数据库已经切成 WAL；它主要验证 schema DDL 能等待"
+  }
+ },
+ "codex-on/q18": {
+  "8ddf0a11": {
+   "used": "yes",
+   "evidence": "需要同步的只有 [CLAUDE.md]"
+  }
+ },
+ "codex-on/q21": {
+  "3f8e5ce1": {
+   "used": "unclear",
+   "evidence": "这里的 400ms 只负责“何时释放锁”，不负责猜测“是否已经拿到锁”；拿锁顺序由 stdout 屏障确定"
+  },
+  "23e76180": {
+   "used": "yes",
+   "evidence": "400ms 明显小于 Store 的 5000ms busy timeout"
+  },
+  "f33842dd": {
+   "used": "yes",
+   "evidence": "库已经是 WAL 时，父进程再次执行 `PRAGMA journal_mode=WAL` 可能不争锁"
+  }
+ },
+ "codex-on/q22": {
+  "0246839d": {
+   "used": "yes",
+   "evidence": "`ab recall/capture --hook` 自己也要 catch，静默无输出并以 0 退出。否则常见结果就是 stderr 打栈、hook 退出 1"
+  }
+ },
+ "codex-on/q23": {
+  "5d95ed9b": {
+   "used": "yes",
+   "evidence": "原样贴出 `node --test` 末尾的 `ℹ tests / ℹ pass / ℹ fail` 几行"
+  }
+ },
+ "opencode-on/q01": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q02": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "7646de26": {
+   "used": "no",
+   "evidence": "`Store` 的 `busy_timeout` 是 5s"
+  }
+ },
+ "opencode-on/q03": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "7646de26": {
+   "used": "no",
+   "evidence": "和 `busy_timeout` 的顺序关系不大，这点值得再核一下你之前那条结论",
+   "note": "refuted"
+  }
+ },
+ "opencode-on/q04": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "0246839d": {
+   "used": "yes",
+   "evidence": "**在 hook 入口自行 try/catch**"
+  },
+  "2d6b98cc": {
+   "used": "yes",
+   "evidence": "**读 stdin 必须设置截止时间**：不能无限等待 `end`"
+  },
+  "0ff3e329": {
+   "used": "yes",
+   "evidence": "`process.stdin`、`process.stdout` 的异步 `error`（例如 EPIPE，宿主提前关闭管道或收到大 prompt 时触发）不会进入 catch"
+  }
+ },
+ "opencode-on/q05": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "33cd9779": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q06": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q07": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q08": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q11": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q13": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q15": {
+  "b5285ae5": {
+   "used": "yes",
+   "evidence": "`/var`、`/tmp`、`/etc` 都是指向 `/private/...` 的符号链接"
+  },
+  "583acfa3": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q16": {
+  "7ce131e9": {
+   "used": "yes",
+   "evidence": "`node --test` 把 `src/` 当成了一个**测试文件**去加载"
+  }
+ },
+ "opencode-on/q17": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "7646de26": {
+   "used": "yes",
+   "evidence": "`busy_timeout` 必须在 `journal_mode=WAL` 之前"
+  }
+ },
+ "opencode-on/q18": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q19": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q22": {
+  "3a291349": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  },
+  "239dc486": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ },
+ "opencode-on/q23": {
+  "33cd9779": {
+   "used": "yes",
+   "evidence": "Node 不展开 `~`，`import x from '~/store'` 会直接抛出 `SyntaxError: The requested module '~/…'` 错误"
+  },
+  "16dcd94a": {
+   "used": "no",
+   "evidence": "（回答未涉及）"
+  }
+ }
+}

@@ -17,7 +17,11 @@ export interface Turn {
   text: string;
   /** 这一轮的时间（宿主记录的 ISO 时间戳）；没有就缺省。 */
   ts?: string;
+  /** 助手轮里模型自己写的文字（原文，不含工具调用行）；只调了工具的轮为空串。 */
+  reply?: string;
 }
+
+type Part = string | { call: string };
 
 export interface Cleaned {
   turns: Turn[];
@@ -75,7 +79,7 @@ const TOOL_KEEP_CHARS = 300;
 const TOOL_CALL_CHARS = 200;
 const ERRORISH = /exit code:?\s*[1-9]|exit status [1-9]|\berror\b|failed|traceback|exception|ERR_|not found|denied|panic|fatal/i;
 const INJECTED_BLOCKS = [
-  /<agentbrain(?:-recall)?(?:\s[^>]*)?>[\s\S]*?(?:<\/agentbrain(?:-recall)?>|$)/g,
+  /<(agentbrain(?:-recall)?)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g,
   /<system-reminder>[\s\S]*?(?:<\/system-reminder>|$)/g,
   /<local-command-(stdout|stderr|caveat)>[\s\S]*?(?:<\/local-command-\1>|$)/g,
   // 宿主注入的 skill 正文、后台任务通知、Codex app 页面事件、Pi 子代理提示（§21 2026-10-13）
@@ -144,31 +148,30 @@ class Builder {
   stripped = 0;
   aliases = new Map<string, string | null>();
   abCalls = new Set<string>();
-  push(anchor: string, role: TurnRole, parts: string[], ts?: unknown): void {
-    const joined = parts.filter(Boolean).join("\n");
+  push(anchor: string, role: TurnRole, parts: Part[], ts?: unknown): void {
+    const joined = parts.map((p) => (typeof p === "string" ? p : p.call)).filter(Boolean).join("\n");
     const s = stripInjected(joined);
     this.stripped += s.stripped;
     const at = typeof ts === "string" && Number.isFinite(Date.parse(ts)) ? new Date(ts).toISOString() : undefined;
-    if (s.text) this.turns.push({ anchor, role, text: s.text, ...(at ? { ts: at } : {}) });
+    const reply = role === "assistant" ? { reply: parts.filter((p): p is string => typeof p === "string").join("\n").trim() } : {};
+    if (s.text) this.turns.push({ anchor, role, text: s.text, ...(at ? { ts: at } : {}), ...reply });
   }
-  call(id: unknown, name: string, input: unknown): string {
+  call(id: unknown, name: string, input: unknown): Part {
     const c = callLine(name, input);
     if (c.ab) {
       this.stripped++;
       if (typeof id === "string") this.abCalls.add(id);
     }
-    return c.line;
+    return { call: c.line };
   }
   output(id: unknown, output: string, isError: boolean): string {
     if (typeof id === "string" && this.abCalls.has(id)) {
       this.stripped++;
       return "";
     }
-    if (/<agentbrain/.test(output)) {
-      this.stripped++;
-      return "";
-    }
-    return compressOutput(output, isError);
+    const s = stripInjected(output);
+    this.stripped += s.stripped;
+    return compressOutput(s.text, isError);
   }
 }
 
@@ -181,6 +184,8 @@ function cwdOf(e: any): string | null {
 function readClaude(lines: any[], b: Builder): void {
   for (const e of lines) {
     if ((e.type !== "user" && e.type !== "assistant") || !e.uuid || e.isMeta || e.isSidechain) continue;
+    // 模型调用失败时宿主自己写的提示（如额度用尽 "You've hit your session limit"），不是模型的回答
+    if (e.type === "assistant" && (e.isApiErrorMessage === true || e.message?.model === "<synthetic>")) continue;
     // 上下文压缩后宿主写进来的摘要（以 user 身份出现，但不是用户的话，内容是前面话题的复述）：不当成新一轮，免得压缩后把前一个话题再抽一遍（§8.6）
     if (e.isCompactSummary === true) {
       b.stripped++;
@@ -193,7 +198,7 @@ function readClaude(lines: any[], b: Builder): void {
       continue;
     }
     if (!Array.isArray(content)) continue;
-    const parts: string[] = [];
+    const parts: Part[] = [];
     let tool = false;
     for (const c of content) {
       if (!c || typeof c !== "object") continue;
@@ -250,7 +255,7 @@ function readPi(lines: any[], b: Builder): void {
     if (m.role === "user") b.push(e.id, "user", [blockText(m.content)], e.timestamp);
     else if (m.role === "assistant") {
       const content = Array.isArray(m.content) ? m.content : [m.content];
-      const parts = content.map((c: any) => {
+      const parts = content.map((c: any): Part => {
         if (typeof c === "string") return c;
         if (c?.type === "text") return String(c.text ?? "");
         if (c?.type === "toolCall") return b.call(c.id, String(c.name ?? "tool"), c.arguments);
