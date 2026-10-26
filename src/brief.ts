@@ -2,7 +2,7 @@
 import type { Store } from "./store.ts";
 import type { PropKind, Proposition } from "./l2.ts";
 import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
-import { active, disputed, projectIdByName, short } from "./present.ts";
+import { active, disputed, short } from "./present.ts";
 
 export const BRIEF_MAX_CHARS = 2000;
 
@@ -69,7 +69,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
 
   if (worker) {
     if (!project) throw new BriefError("--worker 需要已登记项目：在项目目录里运行，或给出项目名");
-    const pid = projectIdByName(store, project.name);
+    const pid = store.ensureProject(project.name);
     const mine = all.filter((p) => p.project_id === pid);
     head = `<agentbrain project="${project.name}" worker>`;
     const rules = global.filter((p) => p.kind === "rule" && p.for_workers);
@@ -98,7 +98,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
     if (overview.length) after.push("各项目概况：\n" + overview.join("\n"));
     noteFor = (n) => `全局还有 ${n} 条放不下，用 ab search --all 查。`;
   } else if (project) {
-    const pid = projectIdByName(store, project.name);
+    const pid = store.ensureProject(project.name);
     const mine = all.filter((p) => p.project_id === pid);
     head = `<agentbrain project="${project.name}">`;
     pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));

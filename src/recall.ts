@@ -5,7 +5,7 @@ import { indexText } from "./store.ts";
 import { isConfirmedCorrection, RECALL_KINDS, recallable } from "./visibility.ts";
 import { resolveProject } from "./registry.ts";
 import { CITE_CHECK_BUDGET_MS, citationsStale } from "./citecheck.ts";
-import { disputed, KIND_LABEL, projectIdByName, short } from "./present.ts";
+import { disputed, KIND_LABEL, short } from "./present.ts";
 import { LexIndex, lexTokens } from "./lexical.ts";
 
 export const RECALL_MAX_ITEMS = 3;
@@ -62,7 +62,7 @@ export async function recall(
   const text = queryText(prompt);
   if ([...text].length < 2) return "";
   const here = resolve(cwd);
-  const projectId = here ? projectIdByName(store, here.name) : null;
+  const projectId = here ? store.ensureProject(here.name) : null;
   const props = store.project().props;
   // 全局条目（不论 for_workers）都进主会话每轮召回；for_workers 只决定子代理能不能看到（§21 2026-10-14 用户批准放宽）
   // 子代理/被委派的 worker 会话（worker=true）仍按旧规矩：全局只看 for_workers，未确认只放有用户原话的规则/决定（D3）

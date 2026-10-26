@@ -16,11 +16,6 @@ export function active(store: Store): Proposition[] {
   return [...store.project().props.values()].filter((p) => p.state === "active");
 }
 
-export function projectIdByName(store: Store, name: string): string {
-  const hit = store.listProjects().find((p) => p.name === name);
-  return hit ? hit.id : store.ensureProject(name);
-}
-
 /** "为什么"在搜索结果里最多显示多少字（§11.5 (ii)）。 */
 export const SEARCH_WHY_MAX_CHARS = 200;
 

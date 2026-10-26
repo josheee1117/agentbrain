@@ -152,8 +152,6 @@ export interface TopicChunk {
   trigger: TopicTrigger;
   /** 话题太长拆开时为 "k/n"，否则 null。 */
   part: string | null;
-  /** 在本窗口结束的压缩标记（窗口处理完就删）。 */
-  marks: string[];
 }
 
 export function windowId(host: Host, sessionId: string, from: string | null, to: string): string {
@@ -188,9 +186,9 @@ export interface TopicCutInput {
 
 /**
  * 从处理进度之后切出已经结束的话题。没结束的最后一段（还在聊）不切。
- * 返回窗口和"已失效的标记"（落在处理进度之前，或没有新轮次可切的），调用方删掉它们。
+ * 返回窗口和压缩标记的首次定锚结果，调用方保存锚点供重跑使用。
  */
-export function topicChunks(host: Host, sessionId: string, all: readonly Turn[], from: string | null, cut: TopicCutInput): { chunks: TopicChunk[]; staleMarks: string[]; bindings: { cut_at: string; anchor: string }[] } | "anchor_missing" {
+export function topicChunks(host: Host, sessionId: string, all: readonly Turn[], from: string | null, cut: TopicCutInput): { chunks: TopicChunk[]; bindings: { cut_at: string; anchor: string }[] } | "anchor_missing" {
   let start = 0;
   if (from !== null) {
     const i = all.findIndex((t) => t.anchor === from);
@@ -206,11 +204,9 @@ export function topicChunks(host: Host, sessionId: string, all: readonly Turn[],
     ts.push(last);
   }
   const ends = new Map<number, TopicTrigger>();
-  const marksAt = new Map<number, string[]>();
   for (let i = start; i < all.length - 1; i++) {
     if (Number.isFinite(ts[i]) && Number.isFinite(ts[i + 1]) && ts[i + 1] - ts[i] >= TOPIC_IDLE_MS) ends.set(i, "idle");
   }
-  const staleMarks: string[] = [];
   const bindings: { cut_at: string; anchor: string }[] = [];
   for (const m of cut.marks) {
     let j = -1;
@@ -229,11 +225,7 @@ export function topicChunks(host: Host, sessionId: string, all: readonly Turn[],
       if (j < 0 && !ts.some(Number.isFinite)) j = all.length - 1;
       if (j >= 0) bindings.push({ cut_at: m.cut_at, anchor: all[j].anchor });
     }
-    if (j < start) staleMarks.push(m.cut_at);
-    else {
-      ends.set(j, "compact");
-      marksAt.set(j, [...(marksAt.get(j) ?? []), m.cut_at]);
-    }
+    if (j >= start) ends.set(j, "compact");
   }
   if (all.length > start && (cut.ended || cut.idleTail) && !ends.has(all.length - 1)) ends.set(all.length - 1, cut.ended ? "session_end" : "idle");
   const chunks: TopicChunk[] = [];
@@ -255,14 +247,13 @@ export function topicChunks(host: Host, sessionId: string, all: readonly Turn[],
         truncated: p.truncated,
         trigger,
         part: parts.length > 1 ? `${k + 1}/${parts.length}` : null,
-        marks: k === parts.length - 1 ? (marksAt.get(end) ?? []) : [],
       });
       prev = to;
       partBegin += p.turns.length;
     });
     begin = end + 1;
   }
-  return { chunks, staleMarks, bindings };
+  return { chunks, bindings };
 }
 
 function splitTopic(turns: readonly Turn[]): { turns: Turn[]; chars: number; truncated: number }[] {

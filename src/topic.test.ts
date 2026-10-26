@@ -67,10 +67,9 @@ test("切窗口：压缩标记切在标记时刻之前的最后一轮；落在�
   const all = [turn("a", 0), turn("b", 1), turn("c", 2), turn("d", 3)];
   const r = topicChunks("claude", "s", all, null, { marks: [{ cut_at: new Date(T0 + 2.5 * MIN).toISOString(), trigger: "compact" }], ended: false, idleTail: false });
   assert.ok(r !== "anchor_missing");
-  assert.deepEqual(r.chunks.map((c) => [c.to, c.trigger, c.marks.length]), [["c", "compact", 1]]);
+  assert.deepEqual(r.chunks.map((c) => [c.to, c.trigger]), [["c", "compact"]]);
   const later = topicChunks("claude", "s", all, "c", { marks: [{ cut_at: new Date(T0 + 2.5 * MIN).toISOString(), trigger: "compact" }], ended: true, idleTail: false });
   assert.ok(later !== "anchor_missing");
-  assert.deepEqual(later.staleMarks.length, 1);
   assert.deepEqual(later.chunks.map((c) => [c.from, c.to, c.trigger]), [["c", "d", "session_end"]]);
 });
 
