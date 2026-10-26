@@ -17,8 +17,8 @@ import { addHits, sanitize } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
 import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
-import { buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
-import { RepoTools, verifyProposition } from "./codeverify.ts";
+import { EXTRACT_PROMPT_VERSION, buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { RepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
 import { buildOnePassMessages, parseOnePass } from "./onepass.ts";
@@ -504,6 +504,7 @@ export function admit(
   projectId: string,
   windowId: string,
   props: Map<string, Proposition>,
+  model: string,
 ): Admission {
   const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
   for (const c of candidates) {
@@ -517,7 +518,7 @@ export function admit(
     const target = c.relation.target ? props.get(c.relation.target) : undefined;
     const pid = c.scope === "global" ? null : projectId;
     if (!c.unreconciled && c.relation.type === "duplicate" && target && target.state === "active") {
-      const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence, window_id: windowId };
+      const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence, window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
@@ -530,6 +531,8 @@ export function admit(
       continue;
     }
     const body: RememberBody = {
+      model,
+      prompt_version: EXTRACT_PROMPT_VERSION,
       kind: c.kind,
       text: c.text,
       why: c.why,
@@ -624,7 +627,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
       unreconciled: hits.some((n) => !shown.has(n.prop.id)) || (cand.relation.type === "new" && hits.some((n) => !handled.has(n.prop.id))),
     };
   });
-  return admit(checked, s, projectId, c.id, deps.store.project().props);
+  return admit(checked, s, projectId, c.id, deps.store.project().props, deps.chat.model);
 }
 
 function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {
@@ -991,7 +994,7 @@ async function onePassWindow(
   const out = emptyAdmission();
   const kept: Float32Array[] = [];
   const lastTs = [...c.turns].reverse().find((x) => x.ts)?.ts;
-  const prov: Omit<TopicProvenance, "class"> = { run: t.run, window_id: c.id, trigger: c.trigger, from: c.from, to: c.to, part: c.part, prompt_version: PROMPT_VERSION, model: chat.model };
+  const prov: Omit<TopicProvenance, "class"> = { run: t.run, window_id: c.id, trigger: c.trigger, from: c.from, to: c.to, part: c.part };
   news.forEach((it, i) => {
     // 同一窗口两条讲同一件事只留第一条
     if (kept.some((v) => cosine(v, vecs[i]) >= SAME_WINDOW_DUP_SIM)) {
@@ -1003,6 +1006,8 @@ async function onePassWindow(
     const hits = deps.store.nearestByVector(vecs[i], projectId, RECHECK_TOP, DUP_CHECK_SIM);
     const unreconciled = hits.length > 0;
     const body: RememberBody = {
+      model: chat.model,
+      prompt_version: PROMPT_VERSION,
       kind: it.kind,
       text: it.text,
       ...(it.why ? { why: it.why } : {}),
@@ -1153,7 +1158,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
     if (result.verdict === "verified" || result.verdict === "contradicted") {
-      const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: deps.chat.model };
+      const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: deps.chat.model, prompt_version: VERIFY_PROMPT_VERSION };
       deps.store.commit([{ kind: "verify", project_id: p.project_id, session_id: null, target_id: p.id, body }], (tx) =>
         intake.recordVerify(tx, p.id, head, result.verdict, deps.now()),
       );

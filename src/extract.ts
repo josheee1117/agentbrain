@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Basis, PropKind, Proposition, RelationType, RememberBody, ValueFlag } from "./l2.ts";
-import type { ChatMessage } from "./llm.ts";
+import { promptVersion, type ChatMessage } from "./llm.ts";
 import { hasSecret, sanitize } from "./sanitize.ts";
 import type { Turn } from "./transcript.ts";
 
@@ -337,6 +337,8 @@ valid_days（可选）：你估计这条多少天内仍然有效（7 到 730 的
 只输出一个 JSON 对象，不要其他文字：
 {"candidates":[{"kind":"pitfall|decision|rule","scope":"project|global","scenario":"当…时","text":"≤200 字，一句话可执行的原则","why":"背景：当时发生了什么、为什么这样定（decision/rule 必填）","durability":"permanent|phase|exploration","findable":false,"guidance":false,"basis":"…","evidence":[{"anchor":"#3","role":"user","quote":"逐字复制的原文片段"}],"relation":{"type":"new","target":null},"valid_days":180}]}
 最多 ${MAX_CANDIDATES_PER_WINDOW} 条。`;
+
+export const EXTRACT_PROMPT_VERSION = promptVersion(SYSTEM);
 
 /** worker 会话附加说明：user 轮是父 agent 写的派活提示。 */
 export const WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话：不能当用户原话证据，basis 不能填 user_directive / user_confirmed，也不要从派活提示里抽规则。只记工具输出证实的坑（observed_failure）。`;

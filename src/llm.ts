@@ -4,9 +4,12 @@
  * 有自己的 baseUrl 时 key 读钥匙串 service agentbrain-extract；没有时沿用 embedding.json 的 baseUrl
  * 与 agentbrain-embedding 的 key。不读环境变量，key 不进文件。
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { KEYCHAIN_SERVICE, loadEmbedConfig } from "./embed.ts";
+
+export const promptVersion = (system: string): string => createHash("sha256").update(system, "utf8").digest("hex").slice(0, 12);
 
 /** extract.json 自带 baseUrl 时用的钥匙串 service。 */
 export const EXTRACT_KEYCHAIN_SERVICE = "agentbrain-extract";
