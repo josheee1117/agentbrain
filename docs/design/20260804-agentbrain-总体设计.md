@@ -1,7 +1,7 @@
 # agentbrain 总体设计
 
 - 状态：**v2.6 宿主无关基线**
-- 最新修订：2026-10-22（补录 10-15 腾讯机制候选设计，未授权实现）
+- 最新修订：2026-10-26（授权实现 §8.8 模型产出的提示词版本，其余三项仍为候选）
 - 实现状态：**切片 1 已实现（仅 Pi，`src/`）；切片 1.5（宿主无关化，2026-10-10 已实现）；切片 2 代码完成（2026-10-10），三宿主接线 2026-10-12 完成，Claude Code 模型侧实测待复验；切片 3（自动沉淀）2026-10-12 代码完成，先于 2.5，尚未接入用户机器、未跑真实模型（§21）**
 - 设计母体：abrain 的 event-first、统一命题、结构性沉淀、确定性投影、分层读取与自治纠错纪律
 - 宿主：Pi、Claude Code、Codex、opencode 平等接入，任一都可作为主体会话（§7）。opencode 接线合同见 §7.5。
@@ -783,15 +783,17 @@ Proposal 被 accepted 只表示它可以进入当前 proposition read model，�
 - 代码核验：原来出错（含 429）后，同一 HEAD 24 小时内不再重试；现在出错的照样在下次重试。撞上 429 时本轮停下，不再给后面的条目逐条发请求。
 - hook 拉起的单会话 `ab work` 顺带重试别的会话里已到期的延后窗口。原来只有 launchd 的 `--sweep` 会去碰别的会话，launchd 没开时这些窗口没有机会重跑。代码核验仍只在 `--sweep` 里跑，launchd 不开就不会跑，这一点没改。
 
-### 8.8 模型产出的提示词版本（CANDIDATE，2026-10-15，10-22 复核）
+### 8.8 模型产出的提示词版本（已授权，2026-10-26 用户授权）
 
 现状：已在 §8.6 第 7、12 点覆盖一步式抽取的版本记录。本节只补齐其他模型写入路径和读取展示，不把已有实现重新标成待实现。`RememberBody.topic.prompt_version` 已存在（`src/l2.ts:87-105`），写入点是 `src/work.ts:994-1028`。普通抽取的 `remember` 与去重追加的 `evidence` 没有模型版本记录（`src/work.ts:501-548`）；`VerifyBody` 与 `RelateBody` 只记 `model`（`src/l2.ts:118-123`、`src/l2.ts:155-160`），代码核验的系统提示词在 `src/codeverify.ts:166`。10-13 的 190 条抽 30 条、严格精确率约 83% 是混合历史结果，不能事后按提示词分组。
 
-候选改动如下，适用于届时启用的抽取器，不绑定两步式或一步式。
+本次改动如下，适用于当前启用的抽取器，不绑定两步式或一步式。只记录，不改抽取、关系判定、核验或准入行为。
+
+范围例外（2026-10-26 主会话决定）：`ab curate --apply`（`src/curate.ts:134`）改写产生的 `remember` 本次不带 `model` / `prompt_version`，`ab get` 显示“未记录”。改写可能来自多位审稿人一致结论、主审或仲裁，记录哪个模型、哪个提示词需要先设计，留到以后单独授权。本单只覆盖普通抽取、一步式、重复追加证据、关系判定和代码核验五条链路。
 
 - 模型写入的 `remember`、`evidence`、`relate`、`verify` 事件体统一带 `model` 与 `prompt_version`。这两个字段是新增的事件元数据，不是新的事件类型。`evidence` 也要带，因为普通抽取判重复时可能只写它、不写新记忆。关系判定供 work 与 Pensieve 导入共用（`src/relate.ts:95-123`），两处都覆盖。确定性派生的 archive、confirm 不冒充新的模型判断，通过同次来源结论追踪。
-- `prompt_version` 取实际发送的系统提示词全文，以 UTF-8 计算 SHA-256，取十六进制前 12 位。不 trim、不去空白、不混入会话或项目正文。模块加载时组装普通版与严格版系统提示词，分别计算一次。§8.9 的严格追加段也在系统提示词内，hash 自然不同，不另加严格模式布尔字段，也不手填版本号。
-- 当前一步式的 hash 口径并不完全符合这条建议。`src/topic.ts:61` 算的是 `ONE_PASS_SYSTEM + 换行 + ONE_PASS_WORKER_NOTE`，而 worker note 在 user 消息里（`src/onepass.ts:52-59`）。候选实现改为仅 hash 实发的 system 内容。旧 hash 仍按旧口径解释，不能重新计算后覆盖。新事件只写统一顶层字段，不再重复写 `topic.prompt_version`；旧事件继续读取原字段。这是读旧格式，不是迁移期双写门。
+- `prompt_version` 取实际发送的系统提示词全文，以 UTF-8 计算 SHA-256，取十六进制前 12 位。不 trim、不去空白、不混入会话或项目正文。模块加载时对当前系统提示词计算一次。§8.9 的严格版尚未授权，本次不组装也不启用。将来获授权后，严格追加段也在系统提示词内，hash 自然不同，不另加严格模式布尔字段，也不手填版本号。
+- 当前一步式的 hash 口径并不完全符合这条建议。`src/topic.ts:61` 算的是 `ONE_PASS_SYSTEM + 换行 + ONE_PASS_WORKER_NOTE`，而 worker note 在 user 消息里（`src/onepass.ts:52-59`）。本次实现改为仅 hash 实发的 system 内容。旧 hash 仍按旧口径解释，不能重新计算后覆盖。新事件只写统一顶层字段，不再重复写 `topic.prompt_version`；旧事件继续读取原字段。这是读旧格式，不是迁移期双写门。
 
 落层：L1 与模型结论原子写入元数据，不能只记在工作报告里。L2 确定性保留每次产出对应的事件 id、类型、模型与版本，不能用最新核验版本覆盖原抽取版本。旧事件缺字段时显示"未记录"；已有 `topic.prompt_version` 原样可读。不回填、不迁移、不自动重抽。L3 如缓存这些展示数据，只从 L1/L2 重建，不从当前提示词猜旧版本。
 
@@ -2011,7 +2013,7 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 | 不同 Agent 不应默认共享整脑 | FixedAssetBinding、injection mode、priority | **改造吸收**为 Loadout/Activation seam；不把绑定当授权 |
 | Capture 与 consolidation 需要解耦 | 每 turn L0 capture + scheduler | **改造吸收**：宿主 adapter 轻量 capture，批量 semantic processing |
 | Harness/自身注入污染来源 | user-query extractor、originalUserMessageCount | **直接吸收纪律**到各宿主 adapter |
-| 模型生成 provenance 不足 | generation input/output refs、prompt/model/hash；`jev-gate.ts:15` 的 `JEV_PROMPT_VERSION` | **CANDIDATE，§8.8**：补齐抽取、关系判定、代码核验的 L1 提示词版本；用系统提示词全文 SHA-256 前 12 位，不照搬手工版本号。一步式已有部分记录 |
+| 模型生成 provenance 不足 | generation input/output refs、prompt/model/hash；`jev-gate.ts:15` 的 `JEV_PROMPT_VERSION` | **已授权，§8.8**：补齐抽取、关系判定、代码核验的 L1 提示词版本；用系统提示词全文 SHA-256 前 12 位，不照搬手工版本号。一步式已有部分记录 |
 | 适用范围变化被当成补充或冲突；历史叙述误报冲突 | `jev-gate.ts:19` 的 `boundary_change` 与 historical statements 规则 | **CANDIDATE，§9.6**：两层共用关系集合；范围变化只挂待确认标记，不改目标；已同步的历史只判重复或补充 |
 | 批量历史会话可能淹没有用记忆 | `skill-review-prompt-strict.ts:4-14` 区分冷启动与实时抽取 | **CANDIDATE，§8.9**：仅 `backfill` 收紧，只收用户原话支撑的规则与决定；不借 Skill 评分体系，不收紧 `scan` |
 | 降级与部分成功不可见 | structured error/partial result | **直接吸收**到 Memory Card/diagnostics |
@@ -2252,6 +2254,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-10-26 用户授权实现 §8.8「模型产出的提示词版本」。普通抽取、一步式、重复追加证据、work 与 Pensieve 共用的关系判定、代码核验在 L1 结论事件顶层记录 model 和 prompt_version。版本只取实发系统提示词全文的 UTF-8 SHA-256 前 12 位。L2 按事件保留产出记录，ab get 展示。旧 topic 的模型与版本只读原值，不回填、不迁移。提示词内容、判断行为、archive 与 confirm 不变。§8.9、§9.6、§11.8 场景目录仍为 CANDIDATE，不做按版本统计或提示词归档。合入 294bfb8 时保留现分支同编号的已批准章节，以章节标题区分，未重编号。实现沿现有事件体和 fold 投影扩展，不新增存储表或配置。2026-10-26 主会话明确本单只覆盖上述五条链路。`ab curate --apply` 改写的 remember 本次不带 model / prompt_version，ab get 显示“未记录”；多位审稿人一致结论、主审与仲裁如何归属模型和提示词，留待设计后单独授权。
 
 - 2026-10-26 用户授权实现 refactor-batch1，仅做四项。① 将 `work.ts` 两处跨会话印证转正的资格与 confirm 事件体生成合为一个函数，以含 `unreconciled` 检查的规则为准。这是行为修正，防止关系未判定的目标被新窗口重复证据自动转正，落实 §8.3。② 一步式输入直接组装并明确传入 worker 说明，公共判断要点与各自输出格式要求分开定义，避免整段替换误改仓库背景或靠正则裁剪规则。正常输入的提示词逐字不变，系统提示哈希 `eea066fc04d0` 与话题版本 `1afa045d9d7c` 保持不变。③ 删除 #69 后无调用方的 `CurateBody`、`StageBody`、`rememberEventsSince`，保留旧事件 kind 的识别和跳过。④ 删除 `projectIdByName` 包装并直接调用 `store.ensureProject`，合并两处宿主会话解析并保留各自错误文案与首个冒号之后的完整 session id，删除话题切块中无人消费的 marks 结果及中间变量。第四项只减少重复和无用数据，不改变外部行为、话题重跑、标记保留或首次定锚。
 - 2026-10-22 去掉候选区（§8.8）。用户 15:03（新加坡时间）选方案 B 并说"直接开始实现"，同意改动 2026-10-15 那条 LOCKED 规矩：agent 不带 `--confirmed` 的 `ab remember` 和自动抽取都直接进正式库、标未确认。依据：62 条候选从 10-15 起没人转正（`ab curate` 无排程、无 `review.json`），搜索和召回看不到它们。同时修了额度用完后的自动恢复（抽取、embedding、代码核验）。
