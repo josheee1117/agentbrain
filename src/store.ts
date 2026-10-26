@@ -248,14 +248,6 @@ export class Store {
     return rows.map((r) => ({ id: r.id, body: JSON.parse(r.body) as RememberBody }));
   }
 
-  /** since 之后写入的 remember 事件（未 purge、非 ephemeral），按写入顺序。 */
-  rememberEventsSince(since: string): { id: string; body: RememberBody }[] {
-    const rows = this.db
-      .prepare("SELECT id, body FROM events WHERE kind='remember' AND ephemeral=0 AND body IS NOT NULL AND ts >= ? ORDER BY seq")
-      .all(since) as { id: string; body: string }[];
-    return rows.map((r) => ({ id: r.id, body: JSON.parse(r.body) as RememberBody }));
-  }
-
   /** 该会话已被 purge。 */
   sessionPurged(sessionId: string): boolean {
     return !!this.db
