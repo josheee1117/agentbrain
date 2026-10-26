@@ -8,4 +8,5 @@
 | recall-hook | [recall-hook.md](recall-hook.md) | 宿主每轮静默召回、上下文注入（Claude Code、Pi、Codex） |
 | opencode-host | [opencode-host.md](opencode-host.md) | OpenCode 宿主接入、v2 插件召回、SQLite 会话捕获与子代理隔离 |
 | work | [work.md](work.md) | 后台会话自动抽取、单实例租约调度、代码核验与转正 |
-| curate / review | [curate.md](curate.md) | 候选区审稿、审稿回滚、暂存区操作与到期复审 |
+| curate / review | [curate.md](curate.md) | 未确认条目审稿建议、审稿回滚、worker 原话审计与到期复审；旧候选区条目只读对照 |
+| view | [view.md](view.md) | 手动生成本地 HTML 记忆看板（概览、关联图、注入/引用统计） |

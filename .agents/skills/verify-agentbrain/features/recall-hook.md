@@ -2,6 +2,7 @@
 
 ## Sub-features
 - 宿主每轮静默召回 (`ab recall --hook`)，根据输入的 prompt 与 cwd 自动匹配相关规则与坑
+- 召回内容：已确认的坑/规则/决定，另可带最多 1 条无争议的未确认条目（标"未确认"，排在已确认之后）；子代理只放有用户原话的未确认规则/决定
 - 宿主集成接口支持：Claude Code hook (UserPromptSubmit)、Pi 扩展 `agentbrain-recall`、Codex 注入
 - 结果格式化输出：生成 `<agentbrain-recall>` 与 `<agentbrain-prefs>` 注入块，支持 `want_count` 参数输出命中条数
 - 容灾与静默退出机制：未命中、超时或内部异常时自动接住，以退出码 0 静默退出，绝不阻断宿主正常对话
@@ -16,3 +17,4 @@
 ## Gotchas
 - 钩子内部必须自我 swallow 异常，异常逃逸会导致宿主阻断，因此必须保证 exit code 0
 - 向量不可用或未命中时，输出可能为空字符串或无 additionalContext，退出码仍必须为 0
+- 去掉候选区后（§8.8），agent 自记和自动抽取的未确认条目也能进召回；有争议的不进（有冲突、待确认纠正、关系未判定、与代码不符、本身是纠正）

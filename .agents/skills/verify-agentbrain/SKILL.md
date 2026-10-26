@@ -16,11 +16,13 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 ## Drive
 `verify.sh run`: `npm test` (node --test src/*.test.ts), `npm run typecheck`, then drives the real CLI in isolated scratch environments:
 - `cli-status`: `status` and `status --line`
-- `cli-memory`: `remember`, `search`, and `get`
-- `cli-brief`: `brief` and `brief --worker`
+- `cli-memory`: `remember` (confirmed and unconfirmed), `confirm`, `search`, `get`
+- `cli-brief`: `brief` before and after confirm, plus `brief --worker` (asserts unconfirmed text stays out until confirm)
 - `cli-recall-hook`: `recall --hook` via stdin JSON
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
-- `cli-curate`: `review` and `audit`
+- `cli-curate`: `review` and `audit worker-quotes`
+- `cli-view`: `view --no-open --out <evidence>/view.html`
+- `cli-staging-report`: `scripts/staging-report.ts` on a seeded legacy candidate event
 
 Run all: `.agents/skills/verify-agentbrain/verify.sh run` (`--dry-run` prints the commands without running).
 
@@ -28,7 +30,7 @@ Run all: `.agents/skills/verify-agentbrain/verify.sh run` (`--dry-run` prints th
 Logs per step + JSON status lines land in `/Users/hejiayuan/.cache/verify-evidence/agentbrain/<timestamp>/`. Cite that path. Proof standards: drive the real user path (CLI/HTTP/UI), not internal setters; capture action + resulting state; check side effects; mock only at existing production boundaries (repo fakes). Never use real secrets or prod endpoints from this skill.
 
 ## Not locally verifiable (stays unverified until a real-target run)
-- Embedding / LLM paths (embed.ts, llm.ts, review, work extraction) need real model keys — not run.
+- Embedding / LLM paths (embed.ts, llm.ts, curate review, work extraction) need real model keys — not run.
 - Host integrations (integrations/, launchd) on the user's real Pi/Claude/Codex — not run.
 
 ## Cleanup

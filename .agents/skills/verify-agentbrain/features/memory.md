@@ -20,5 +20,6 @@
 - Proof: remember 成功写入并投影至 L2，search 返回匹配条目，get 返回该条目正文与元数据
 
 ## Gotchas
-- agent 未带 `--confirmed` 的 remember 默认写入候选区（candidate），不进 brief、search 和 recall，需等待审稿或手动 `confirm`
+- agent 未带 `--confirmed` 的 remember 照常写入并生效（state=active），只标"未确认"：search 能看到（带 `[未确认]`），不进 brief，用户 `ab confirm` 后才进 brief；没争议的坑/规则/决定按 §21 2026-10-14 的规矩进每轮召回（每轮最多 1 条，标"未确认"）
+- 2026-10-22 起没有候选区（§8.8）：`ab stage`、`ab audit agent-remember`、`ab remember --direct` 都已删除；旧库里的候选条目升级后就是有效的未确认条目
 - 纯向量通道依赖 embedding API key，无 key 时自动降级为 FTS5 全文搜索
