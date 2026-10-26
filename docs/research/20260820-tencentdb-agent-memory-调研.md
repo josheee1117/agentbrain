@@ -183,5 +183,28 @@ TAM 主推**反向代理**：把 agent 的 LLM base URL 指向 MemoryProxy，"No
 
 ## 修订记录
 
+- 2026-10-15 增补（2026-10-22 落文并复核）：固定 `feat/server_team` 的 `37b1629`，比原快照多 46 个提交。记录四条机制借鉴与 Skill / SOP 出范围决定，对应总体设计 §8.8、§9.6、§8.9、§11.8，均为 CANDIDATE。一步式已有版本记录，场景目录已评测搁置，补缺口而不重新授权。此前各节仍是 8 月快照的历史结论，不外推到新提交。
 - 2026-08-20 v1.1：复核修订。区分内容抽象层与 authority 层；补 generation provenance、Agent 非 runtime、loadout 执行边界、scope lift 风险、v3 strict 默认关闭、分支测试资产差异；收紧对 SOT、生产成熟度和“零改造”的表述。
 - 2026-08-20 v1：初稿。基于 commit `97f9465`（feat/server_team）只读调研；README 宣称与实现差异、当前 commit 测试资产情况已逐项核对。
+
+## 14. 2026-10-15 增补
+
+本次复核 `TencentCloud/TencentDB-Agent-Memory` 的 `feat/server_team` 提交 `37b1629`。相对原调研 `97f9465` 多 46 个提交，[GitHub 比较页](https://github.com/TencentCloud/TencentDB-Agent-Memory/compare/97f9465...37b1629) 显示 `Commits 46`。2026-10-22 按固定提交读取以下源码，不追随今天的分支头。它们是 feature branch 的机制证据，不证明已发布或效果更好。本次没有重新运行腾讯项目或复核其全部测试。
+
+派活单的四条借鉴实际只引用了三个不同文件，版本和关系两条都来自 `jev-gate.ts`。为核实实时与历史的差异，另读普通版 `skill-review-prompt.ts`，以下明确列为第四个对照文件，不将其冒称为原单独立引用。
+
+| 固定提交下的文件 | 核实内容 | agentbrain 的取舍 |
+|---|---|---|
+| [`MemoryCore/src/core/persona/jev-gate.ts:15-19`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/persona/jev-gate.ts#L15-L19) | `JEV_PROMPT_VERSION` 是手写字符串 `l3-memory-change-v1`。`JEV_INSTRUCTIONS` 区分 boundary_change，并说明已经同步的新结论不能因历史叙述被判冲突 | §8.8 为三类模型产出的 L1 事件补版本，采用系统提示词全文 SHA-256 前 12 位，不照搬手工版本。§9.6 两层共用关系集合，范围变化只记关系与待确认标记；已同步历史判 duplicate 或 refines。不借腾讯的 Persona 触发优先级改写旧记忆 |
+| [`MemoryCore/src/core/skill/prompts/skill-review-prompt-strict.ts:4-24`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/skill/prompts/skill-review-prompt-strict.ts#L4-L24) | 头注释把严格版用于冷启动、批量历史导入，称宽松版会产生大量低价值 Skill，严格版采用 `When in doubt, silence` | §8.9 只对 via=backfill 收紧；scan 是近期漏登记，不收紧。只收用户原话支撑的 rule/decision，不搬 Skill 分类、可执行能力门或 72 分评分标准 |
+| [`MemoryCore/src/core/skill/prompts/skill-review-prompt.ts:4-35`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/skill/prompts/skill-review-prompt.ts#L4-L35) | 普通版 v2 明写优先 capture，接受 SOP、Background、Preference，并去掉严格评分门。这是严格版注释所指的对照 | 只借按输入来源区分标准的理由，不声称腾讯做过 agentbrain 的 backfill/scan 评测。其注释里的 18/39 数字未在本次复现，不作为本项目收益证据 |
+| [`MemoryCore/src/core/prompts/scene-extraction.ts:55-65`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/prompts/scene-extraction.ts#L55-L65)、`:120-123`、`:175-186`、`:560-561` | 场景摘要目录供模型读取；场景正文要求连贯叙事、推断隐性信号，满额时合并删除，并累计 heat | §11.8 只借"目录在前、原条目按需打开"。场景只存标题与成员 id，放 L3 index.db，不写 L1、不成为 canonical writer。不生成叙事、隐性信号，不合并删除原记忆，不重复造热度计数 |
+
+四条均先写设计，状态 CANDIDATE。用户审过并说"开始实现"后，才另行实施。当前设计与代码核对后需要保留以下差异：
+
+- 第 1 条已在 §8.6 覆盖一步式 `prompt_version`，本次补其他路径与 `ab get`。当前 hash 还包含 user 消息里的 worker note（`src/topic.ts:61`、`src/onepass.ts:52-59`），与拟议的 system 全文口径不同。旧版本保留，不回填。
+- 第 2 条不能再假定 refines 条目不进后台第 2 层。当前选择条件没有检查 `unreconciled`，但排除话题条目（`src/work.ts:1028-1037`）。新规则必须分别覆盖当时启用的抽取提示词与后台关系提示词，不改变一步式 merge 只进报告的决定。
+- 第 3 条不能只追加提示词。一步式当前没有引文与 basis，写库时记 agent_inference（`src/work.ts:1000-1003`）。严格路径要先能提供并校验用户原话，不能伪造依据。§8.7 普通版提高召回的已批准修改保持不变。
+- 第 4 条已做过 [场景模拟](../eval/09-scene-simulation.md) 与 [场景目录评测](../eval/10-scene-directory-session-start.md)。目录不如一次搜索，PR #56 搁置。本次仅补可审阅合同与概览任务验收，不因引用腾讯就重开实现。
+
+用户另定可复用做法（Skill / SOP）不归 agentbrain 管。总体设计 §5.5 删除 Procedure View，§20 加范围排除；§4 workflows 的 LOCKED 旧条文保持原样，冲突待用户裁决。记忆中的用户规则仍可保留，但不把它加工成可执行流程。标题目录不改变原始证据，现有无引文条目也不能因此被称作有用户原话支持。
