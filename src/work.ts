@@ -487,6 +487,17 @@ function distinctUserSessions(p: Proposition, extra: { host: Host | null; sessio
   return independent;
 }
 
+function corroborationConfirm(target: Proposition, extra: Pick<EvidenceBody, "source" | "basis" | "evidence">): ConfirmBody | null {
+  if (!CORROBORATE_KINDS.has(target.kind) || target.project_id === null || target.confirmed || target.demoted || target.unreconciled || target.conflicts_with || target.pending_corrections.length || target.supersedes) return null;
+  const sessions = distinctUserSessions(target, {
+    host: extra.source.host,
+    session_id: extra.source.session_id,
+    basis: extra.basis,
+    quote_sha256: extra.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256),
+  });
+  return sessions.length >= 2 ? { by: "corroboration", sessions } : null;
+}
+
 export function admit(
   candidates: (Candidate & { unreconciled: boolean })[],
   s: intake.SessionRow,
@@ -510,14 +521,11 @@ export function admit(
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
-      if (CORROBORATE_KINDS.has(target.kind) && target.project_id !== null && !target.confirmed && !target.demoted && !target.conflicts_with && !target.pending_corrections.length && !target.supersedes) {
-        const sessions = distinctUserSessions(target, { host: s.host, session_id: s.session_id, basis: c.basis, quote_sha256: c.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256) });
-        if (sessions.length >= 2) {
-          const cb: ConfirmBody = { by: "corroboration", sessions };
-          out.appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
-          out.keys.push(`${c.key}:confirm`);
-          out.receipt.corroborated++;
-        }
+      const cb = corroborationConfirm(target, body);
+      if (cb) {
+        out.appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
+        out.keys.push(`${c.key}:confirm`);
+        out.receipt.corroborated++;
       }
       continue;
     }
@@ -1086,12 +1094,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       if (!p || p.state !== "active" || p.confirmed || p.related || (v.target && target?.state !== "active")) continue;
       const { appends, corroborated } = applyVerdict(p, target ?? null, v, deps.chat.model, {
         mode: "absorb-new",
-        corroborate: (np, t, basis) => {
-          if (!CORROBORATE_KINDS.has(t.kind) || t.project_id === null || t.confirmed || t.demoted || t.unreconciled || t.conflicts_with || t.pending_corrections.length || t.supersedes) return null;
-          const userQuotes = np.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256);
-          const sessions = distinctUserSessions(t, { host: np.source.host, session_id: np.source.session_id, basis, quote_sha256: userQuotes });
-          return sessions.length >= 2 ? { by: "corroboration", sessions } : null;
-        },
+        corroborate: (np, t, basis) => corroborationConfirm(t, { source: np.source, basis, evidence: np.evidence }),
       });
       if (corroborated) report.relate.corroborated++;
       deps.store.commit(appends, () => {});
