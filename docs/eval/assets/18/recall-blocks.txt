@@ -1,0 +1,103 @@
+## old q01
+## new q01
+<agentbrain-recall>
+- [35670cf8] 坑（未确认）: 不要改用长期 AccessKey，先修 aliyun CLI 的自动刷新链路：MCP 刷新时会调 aliyun sls list-project --cli-dry-run，需安装 aliyun-cli-sls 插件，并把 ~/.aliyun/config.json 的 region_id 从 0 改成实际地域（如 cn-hangzhou），否则端点解析不了、凭证不会刷新。
+</agentbrain-recall>
+## old q02
+## new q02
+## old q03
+## new q03
+<agentbrain-recall>
+- [684ac1d1] 坑（未确认）: dynamic-datasource 的数据源上下文是线程 ThreadLocal，push 后必须 try/finally 配对 poll；MQ 消费/定时任务入口先 DynamicDataSourceContextHolder.clear() 兜底——ClearTtlDsInterceptor 只清 HTTP 请求线程，线程复用会把上一条消息的数据源残留带进下一条。
+</agentbrain-recall>
+## old q04
+## new q04
+<agentbrain-recall>
+- [ee438d69] 坑（未确认）: 测试环境服务实例只注册内网地址（172.17.x），本机直连超时、SSH 到 172.17 网段需先连 VPN，也没有 kubeconfig/云凭证；取服务日志只能走阿里云 SLS，排障前先向用户要 SLS 只读凭证（region/project/logstore/AK 或 STS）或让其代贴堆栈。
+</agentbrain-recall>
+## old q05
+<agentbrain-recall>
+- [24bf7b77] 规则（未确认）: 用户要求：企微标签组推送时不检查 `sync_wecom=1`，而是推送该企微客户的全部标签；客户标签推送仍只推 `sync_wecom=1` 的标签。
+</agentbrain-recall>
+## new q05
+<agentbrain-recall>
+- [24bf7b77] 规则（未确认）: 用户要求：企微标签组推送时不检查 `sync_wecom=1`，而是推送该企微客户的全部标签；客户标签推送仍只推 `sync_wecom=1` 的标签。
+</agentbrain-recall>
+## old q06
+## new q06
+## old q07
+## new q07
+<agentbrain-recall>
+- [2436f93b] 坑（未确认）: 别给 agent.sqlite 加 ?immutable=1：WAL 里还没 checkpoint 的表会读不到，误报 no such table: events；演练进程停掉后按普通方式打开数据库再查。
+</agentbrain-recall>
+## old q08
+<agentbrain-recall>
+- [f2ca6d1d] 坑: DataAsset 非预期业务故障演练中，缺必填参数导致的 500 属于客户端错误，不能算作非预期业务异常；必须换成真正走 GlobalExceptionHandler/JFR/Starter 链路的触发方式，否则场景验收不成立。
+- [58185e28] 坑（未确认）: 派活说明里要起常驻服务（如 /tmp/w-dwsync-da/start-data-asset.sh、/tmp/w-aidata-local/start-*.sh，它们最后 exec java 不返回）时，写明用 nohup ... & 后台起并轮询端口；pi/Codex 会在前台直接执行，整轮卡死在这条命令上不报错。
+</agentbrain-recall>
+## new q08
+<agentbrain-recall>
+- [b8f16c7a] 坑（未确认）: 跑真实模型诊断前先用容器内的 key 直接请求一次 ARK 接口确认可用；当调查会话全部 FAILED、日志只显示 invalid specialist json 且 tokens=0/0 时，先怀疑 provider 侧错误（如 429 配额）而不是解析代码，因为 provider 的错误体会被当成模型输出去解析。
+</agentbrain-recall>
+## old q09
+## new q09
+<agentbrain-recall>
+- [6d0b35ea] 坑（未确认）: 本项目虚拟环境没有 pytest，跑测试统一用 `uv run --with pytest python -m pytest`：直接 `uv run pytest` 会报找不到 pytest，`uv run --with pytest pytest ...` 又会因 sys.path 不含仓库根报 `No module named 'tests'`。
+</agentbrain-recall>
+## old q10
+## new q10
+<agentbrain-recall>
+- [6a1e53ce] 决定（未确认）: 多版本证据仍一起交给模型看，但结论以 productVersionId 最大的最新版本为准：与最新版本一致即判 PASSED，旧版本取值不同不算证据冲突、不作判定依据，只在说明里提一句旧版本取值；版本顺序判断不出时判 UNJUDGEABLE。
+</agentbrain-recall>
+## old q11
+<agentbrain-recall>
+- [c5f89129] 坑（未确认）: 直查 Polar 结果表 dm_order_metric_xa_df 时 period_date 是 varchar，不能与 DATE 字面量比较，否则 Trino 报 TYPE_MISMATCH；按字符串比较/格式化日期。
+</agentbrain-recall>
+## new q11
+<agentbrain-recall>
+- [bd40fe2b] 坑（未确认）: Trino ClickHouse connector 默认把 ClickHouse String 映射成 varbinary，和 varchar 比较报 TYPE_MISMATCH（Cannot check if varbinary is BETWEEN varchar）；catalog 要加 clickhouse.map-string-as-varchar=true。ClickHouse mbkj_ads 指标结果表无 dt/etl_time，period_date 格式随 period_type 变（day yyyy-mm-dd、month yyyy-mm、year yyyy，total/last_1_year 为截至日）。
+</agentbrain-recall>
+## old q12
+<agentbrain-recall>
+- [2add9582] 决定（未确认）: 语义查询里模型可自纠的输入错误（如过滤值非法）不要 throw，改为返回 { ok:false, code, message, details } 并带上出错的那个值（FILTER_VALUE_INVALID，加进 locateErrors），让模型按错误码改一次；只有库表名、id 这类内部不变量才 throw。
+</agentbrain-recall>
+## new q12
+<agentbrain-recall>
+- [c78da7eb] 坑（未确认）: 不能只看结果里有没有「已按你的数据权限过滤」提示：澄清类回答既不出数也不带提示，必须看执行详情/executedSql 是否真的执行并带上条件，才能区分「没过滤」和「没执行」。
+</agentbrain-recall>
+## old q13
+## new q13
+<agentbrain-recall>
+- [245bf740] 坑（未确认）: 自助取数的 SQL 校验走 JSqlParser 4.4，表别名与保留关键字撞车（如 cs）会让解析器在前一个逗号处报错、位置具有误导性；此时先换掉可疑表别名（cs→stg）再验证，不要先去改中文列别名或重排 SQL。
+</agentbrain-recall>
+## old q14
+## new q14
+<agentbrain-recall>
+- [d9c59f8a] 坑（未确认）: 排除 node_modules 要用 --exclude-dir 或锚定行首的 ^\./node_modules，不要用 grep -v node_modules：它过滤的是行内容，会把正文里含 ./node_modules/.bin/tsx 的文档行整行删掉，静默产生「仓库里没有这条说明」的假阴性。
+</agentbrain-recall>
+## old q15
+<agentbrain-recall>
+- [3f79d9fc] 坑: pi（grok）跑长任务会断线（unexpected EOF）或停在半路不汇报；派活拆小，回来先核对文件实际改到哪一步再续。
+- [d7fbd3d6] 决定: 以后派 pi 干活优先尝试 pi --mode rpc（常驻进程，JSONL 收发 prompt/steer/follow_up/abort，事件实时写日志），代替一次性的 pi -p：能实时看进度、中途纠偏、修复轮接着原会话。协议文档在 /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/rpc.md、rpc-commands.md。
+- [f90bb89b] 坑（未确认）: 从 gpt-6.x 切到非 OpenAI 模型前先处理 pi-codex-compact：会话已有 codex 远程压缩记录时，它会静默取消 pi 自身压缩（上下文一直涨、/compact 没反应）；逃生：把 ~/.pi/agent/pi-codex-compact.json 的 enabled 改 false，跑 /compact，再改回 true。
+</agentbrain-recall>
+## new q15
+<agentbrain-recall>
+- [a2584276] 坑（未确认）: 先查并改 ~/.pi/agent/models.json 里该模型的 maxTokens（缺省 16384），按官方上游规格填（grok-latest 对官方 grok-4.7 填 500000），不要归因于 CPA 反代；改完要 /model 或新开会话才生效。
+</agentbrain-recall>
+## old q16
+## new q16
+## old q17
+## new q17
+## old q18
+## new q18
+## old q19
+## new q19
+## old q20
+<agentbrain-recall>
+- [afe72697] 规则（未确认）: 改完测试要汇报：改动文件与用例位置、跑了哪些验证及结果（含临时破坏实现确认新测试确实失败的反向验证，之后恢复并用 `git diff` 确认与开工前一致）、原样贴 `node --test` 末尾 ℹ tests/pass/fail 几行。
+</agentbrain-recall>
+## new q20
+<agentbrain-recall>
+- [afe72697] 规则（未确认）: 改完测试要汇报：改动文件与用例位置、跑了哪些验证及结果（含临时破坏实现确认新测试确实失败的反向验证，之后恢复并用 `git diff` 确认与开工前一致）、原样贴 `node --test` 末尾 ℹ tests/pass/fail 几行。
+</agentbrain-recall>

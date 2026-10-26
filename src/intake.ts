@@ -103,6 +103,16 @@ export function sessions(db: DatabaseSync, only?: { host: Host; session_id: stri
   return db.prepare("SELECT * FROM capture_sessions ORDER BY last_touch").all() as unknown as SessionRow[];
 }
 
+/** 有已到期延后窗口的会话（不含 except）。 */
+export function dueDeferredSessions(db: DatabaseSync, now: Date, except: { host: Host; session_id: string }): SessionRow[] {
+  return db
+    .prepare(
+      `SELECT DISTINCT s.* FROM capture_sessions s JOIN capture_windows w ON w.host=s.host AND w.session_id=s.session_id
+       WHERE w.state='deferred' AND (w.next_at IS NULL OR w.next_at <= ?) AND NOT (s.host=? AND s.session_id=?) ORDER BY s.last_touch`,
+    )
+    .all(now.toISOString(), except.host, except.session_id) as unknown as SessionRow[];
+}
+
 export function knownSession(db: DatabaseSync, host: Host, sessionId: string): boolean {
   return !!db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(host, sessionId);
 }

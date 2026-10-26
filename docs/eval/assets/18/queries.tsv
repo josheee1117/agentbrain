@@ -1,0 +1,20 @@
+q01	~	阿里云 sls mcp 权限登录用什么命令
+q02	~	凭证过期了怎么办
+q03	~/code/insuranceagent	定时任务里切了数据源之后好像没切回来，查到别的库了
+q04	~/code/insuranceagent	测试环境的服务日志怎么看
+q05	~/code/insuranceagent	企微标签一直没同步过去，帮我查一下
+q06	~/code_me/pi-ops	怎么把新版本部署到测试环境
+q07	~/code_me/pi-ops	打开 agent.sqlite 报 no such table: events
+q08	~/code_me/pi-ops	诊断会话全部 FAILED，日志里 tokens=0/0
+q09	~/code/content-verification-agent	跑测试报找不到 pytest
+q10	~/code/content-verification-agent	同一事实在新旧产品版本取值不一样，应该怎么判
+q11	~/code/ai-data	trino 查 clickhouse 报 TYPE_MISMATCH
+q12	~/code/ai-data	去测一下取数的权限过滤是不是生效
+q13	~/code/data-asset	SQL 校验报错，位置指在一个逗号上
+q14	~/code_me/agentbrain	grep 的时候怎么排除 node_modules
+q15	~	pi 里 grok 模型输出老是被截断
+q16	~/code_me/agentbrain	帮我改一下 README 的安装说明
+q17	~/code_me/agentbrain	跑一下单元测试
+q18	~/code_me/pi-ops	今天天气怎么样
+q19	~	帮我写个 python 脚本统计 csv 行数
+q20	~/code_me/agentbrain	把这次改动的验证结果汇报给我

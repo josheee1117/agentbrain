@@ -78,7 +78,6 @@ function env(): Env {
       chat: chat ? { chat, model: "fake-llm" } : { error: "no_config", message: "没有 extract.json" },
       embedder: fakeEmbed,
       registry: [{ name: "alpha", path: repo }],
-      staging: false, // 这些用例测 v2 的正式库流程（印证、纠正、核验）；候选区另有用例
       registryDir: regDir,
       resolveProject: (cwd) => (cwd.startsWith(repo) ? { name: "alpha", path: repo } : null),
       projectId: (name) => store.ensureProject(name),
@@ -782,49 +781,91 @@ test("用前核对排队：已转正的条目代码变了 → 下次 ab work 优
   assert.ok(e.store.project().props.get(id)!.stale, "标与代码不符");
 });
 
-// ---------- v3 第 1 阶段：候选区 ----------
 
-test("候选区（默认）：自动抽取写成候选，不进召回/搜索；重复不给正式条目追加来源；价值标记只记录不丢弃", async () => {
+
+// ---------- 额度用完（429 / AccountQuotaExceeded）：延后、之后自动接着做，不丢、不卡 ----------
+
+const windowRow = (e: Env) => ({ ...e.store.workDb.prepare("SELECT state,error_code FROM capture_windows").get() });
+
+test("抽取模型额度用完：窗口一直延后、不算失败；额度恢复后接着抽完，内容不丢", async () => {
   const e = env();
-  const existing = e.store.remember(e.pid, "s0", false, { kind: "rule", text: "hook 命令写 node 绝对路径，不依赖 PATH", confirmed: false, origin: "extract", basis: "user_directive", evidence: [{ anchor: "u0", role: "user", quote_sha256: "h0" }], source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" } });
-  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的")]));
-  const chat = fakeChat(() => json({ candidates: [
-    { ...RULE, scenario: "当配置宿主 hook 命令时", durability: "phase", findable: false, guidance: true },
-    { ...RULE, text: "另一条重复的", relation: { type: "duplicate", target: "m1" } },
-  ] }));
-  await runWork(e.deps(chat, { staging: true }), { sweep: false, dryRun: false });
-  const all = props(e.store);
-  const cands = all.filter((p) => p.state === "candidate");
-  assert.equal(cands.length, 2, "重复也进候选区");
-  assert.ok(cands.every((p) => p.candidate && !p.confirmed));
-  const first = cands.find((p) => p.text === RULE.text)!;
-  assert.deepEqual(first.value?.flags, ["phase"]);
-  assert.equal(first.value?.scenario, "当配置宿主 hook 命令时");
-  assert.equal(first.guidance, true);
-  assert.deepEqual(e.store.project().props.get(existing)!.extra_sources, [], "正式条目没被追加来源");
-  // 归档再恢复回到候选区；用户确认则进正式库
-  e.store.lifecycle("archive", first.id, null);
-  e.store.lifecycle("reactivate", first.id, null);
-  assert.equal(e.store.project().props.get(first.id)!.state, "candidate");
-  e.store.lifecycle("confirm", first.id, null);
-  assert.equal(e.store.project().props.get(first.id)!.state, "active");
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH"), asst("a1", "好的")]), true);
+  let t = Date.now();
+  const quota = fakeChat(() => {
+    throw new WorkFailure("http_429", "模型接口限流 429: AccountQuotaExceeded", 3_600_000);
+  });
+  for (let i = 0; i < intake.MAX_ATTEMPTS + 3; i++) {
+    await runWork(e.deps(quota, { now: () => new Date(t) }), { sweep: false, dryRun: false });
+    t += 2 * 3_600_000;
+  }
+  assert.deepEqual(windowRow(e), { state: "deferred", error_code: "http_429" });
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, null, "进度没往前跳");
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t) }), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.equal(props(e.store).filter((p) => p.text === RULE.text).length, 1);
 });
 
-test("候选区不外泄：候选不进每轮召回、常驻偏好、brief、全文/向量检索；带 supersedes 的候选不给正式条目挂待确认纠正", async () => {
-  const { recall, guidanceBlock } = await import("./recall.ts");
-  const { active } = await import("./present.ts");
+test("embedding 额度用完：窗口按限流延后、不算失败；恢复后接着做", async () => {
   const e = env();
-  const old = e.store.remember(e.pid, "s0", false, { kind: "rule", text: "hook 命令 lockfile 旧规则", confirmed: true, source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" } });
-  const cand = e.store.remember(null, "s1", false, { kind: "rule", text: "hook 命令 lockfile 候选规则", confirmed: false, candidate: true, guidance: true, supersedes: old, source: { host: "claude", session_id: "s1", transcript: null, anchor: null, summary: "x" } });
-  const props = e.store.project().props;
-  assert.equal(props.get(cand)!.state, "candidate");
-  assert.deepEqual(props.get(old)!.pending_corrections, []);
-  const out = await recall(e.store, "hook 命令 lockfile", e.repo, () => null, [], [], () => ({ name: "alpha", path: e.repo }));
-  assert.ok(!out.includes(cand.slice(0, 8)), out);
-  assert.equal(guidanceBlock(props.values(), false).includes(cand.slice(0, 8)), false);
-  assert.ok(!active(e.store).some((p) => p.id === cand), "brief 读的 active() 不含候选");
-  const { hits } = await e.store.searchHybrid("lockfile", { projects: [e.pid], includeGlobal: true, limit: 10 }, null);
-  assert.ok(!hits.some((h) => h.id === cand));
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]), true);
+  const quota: Embedder = Object.assign(async () => {
+    throw new Error('embedding HTTP 429: {"code":"AccountQuotaExceeded"}');
+  }, { model: "fake-embed" });
+  let t = Date.now();
+  for (let i = 0; i < intake.MAX_ATTEMPTS + 3; i++) {
+    await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { embedder: quota, now: () => new Date(t) }), { sweep: false, dryRun: false });
+    t += 3 * 3_600_000;
+  }
+  assert.deepEqual(windowRow(e), { state: "deferred", error_code: "http_429" });
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t) }), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+});
+
+test("embedding 额度用完时写下的条目：没有向量，之后一次同步补上", async () => {
+  const e = env();
+  const id = unconfirmed(e, "额度用完时记下的坑");
+  const quota: Embedder = Object.assign(async () => {
+    throw new Error("embedding HTTP 429");
+  }, { model: "fake-embed" });
+  await assert.rejects(e.store.syncVectors(quota, "fake-embed"));
+  const has = () => !!(e.store as any).fts.prepare("SELECT 1 AS x FROM vecs WHERE id=?").get(id);
+  assert.equal(has(), false);
+  await e.store.syncVectors(fakeEmbed, "fake-embed");
+  assert.equal(has(), true);
+});
+
+test("核验模型额度用完：本轮停下不再逐条撞 429；下次运行（同一 HEAD、不到 24 小时）照样重试并转正", async () => {
+  const e = env();
+  const a = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
+  unconfirmed(e, "另一个坑 VEC_MIN_SIM 用在召回");
+  let calls = 0;
+  const quota = fakeChat((_m, opts) => {
+    if (!opts?.tools) return json({ candidates: [] });
+    calls++;
+    throw new WorkFailure("http_429", "限流 AccountQuotaExceeded", 3_600_000);
+  });
+  const r1 = await runWork(e.deps(quota), { sweep: true, dryRun: false });
+  assert.equal(calls, 1, "撞上额度就停，不给后面的条目再发请求");
+  assert.equal(r1.verify.errors, 1);
+  const later = new Date(Date.now() + 3_600_000);
+  const ok = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  await runWork(e.deps(ok, { now: () => later }), { sweep: true, dryRun: false });
+  assert.equal(e.store.project().props.get(a)!.confirmed_by, "code");
+});
+
+test("hook 拉起的单会话 ab work：顺带重试别的会话里已到期的延后窗口", async () => {
+  const e = env();
+  e.register("old", e.transcript("old", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH")]), true);
+  let t = Date.now();
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流", 60_000);
+  }), { now: () => new Date(t) }), { sweep: false, dryRun: false });
+  assert.equal(windowRow(e).state, "deferred");
+  e.register("new", e.transcript("new", [user("u2", "随便聊聊天气")]), true);
+  t += 2 * 3_600_000;
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t) }), { sweep: false, dryRun: false, session: { host: "claude", session_id: "new" } });
+  assert.equal(r.windows.done, 2, "新会话一个窗口 + 旧会话到期的延后窗口");
+  assert.ok(props(e.store).some((p) => p.text === RULE.text));
 });
 
 const sessionRow = (e: Env) => e.store.workDb.prepare("SELECT processed_anchor, error_code FROM capture_sessions").get() as { processed_anchor: string | null; error_code: string | null };

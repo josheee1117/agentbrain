@@ -7,6 +7,7 @@ import type { Store } from "./store.ts";
 import type { Proposition } from "./l2.ts";
 import { cosine } from "./embed.ts";
 import { reviewList, sourceClock, validDays } from "./expiry.ts";
+import { trustOf } from "./visibility.ts";
 
 export type ViewStatus = "user" | "code" | "corroboration" | "unconfirmed" | "stale";
 
@@ -224,8 +225,7 @@ export function graphLayout(nodes: readonly string[], edges: readonly [string, s
 
 function statusOf(p: Proposition): ViewStatus {
   if (p.stale) return "stale";
-  if (!p.confirmed) return "unconfirmed";
-  return p.confirmed_by ?? "user";
+  return trustOf(p);
 }
 
 const refText = (r: { path: string; line_start: number; line_end: number; quote: string } | { commit: string; quote: string }) =>
@@ -401,7 +401,7 @@ const D=JSON.parse(document.getElementById('data').textContent),T=D.telemetry;
 const E=D.entries,byId=new Map(E.map(e=>[e.id,e])),A=E.filter(e=>e.state==='active');
 const KIND={rule:'规则',decision:'决定',pitfall:'坑',note:'事实'},KC={decision:'#7c5cff',pitfall:'#f472b6',rule:'#2dd4bf',note:'#fbbf24'};
 const ST={user:'用户确认',code:'代码核验',corroboration:'跨会话印证',unconfirmed:'未确认',stale:'与代码不符'},SC={user:'#22c55e',code:'#38bdf8',corroboration:'#a78bfa',unconfirmed:'#475569',stale:'#ef4444'};
-const STATE={active:'有效',archived:'已归档',superseded:'已被替代',candidate:'候选'};
+const STATE={active:'有效',archived:'已归档',superseded:'已被替代'};
 const LINK={merged_into:'已并入',merged_from:'合并自',refines:'补充了',refined_by:'被补充',conflicts:'冲突',supersedes:'替代了',supersedes_pending:'替代（未生效）',superseded_by:'被替代',pending_correction:'待确认纠正'};
 const EC={refines:'#64748b',refined_by:'#64748b',merged_into:'#60a5fa',merged_from:'#60a5fa',conflicts:'#ef4444',supersedes:'#e2e8f0',superseded_by:'#e2e8f0',supersedes_pending:'#f59e0b',pending_correction:'#f59e0b'};
 const PATH={recall:'相似度召回',brief:'brief'};

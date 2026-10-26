@@ -146,7 +146,9 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 在三个宿主里各做一次：在已登记仓库里 `ab remember --confirmed --kind pitfall …` 记一个坑，开新会话，发一句和这个坑相关的话，确认模型收到了 `<agentbrain-recall>` 块。某个宿主做不到时记为该宿主的显式降级，不算通过。
 
-## v3 第 2 阶段：审稿团 `ab curate` 与上手向导 `ab setup`
+## 审稿团 `ab curate`（可选的建议归档工具）与上手向导 `ab setup`
+
+> 2026-10-22 起没有候选区了（设计 §8.8）：自动抽取和 agent 自记的条目直接生效、标未确认。`ab curate` 只手动跑，审的是"未确认的有效条目"，给出要归档的建议；它不再是转正的路。
 
 - `ab setup` 一步步问快模型、按宿主的审稿人（默认 Claude Haiku 5.5 max、Codex gpt-6-astra max、Pi 默认模型，也可选经 cpa 的 astra）主审稿配置（默认 1 家主审；panel 模式建议 3 家不同厂商加仲裁）、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,reviewers,panel,keys,hosts,test` 只重做其中几步。
 - 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。
@@ -156,16 +158,16 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
     - Pi：`pi -p --no-session --no-tools --no-extensions`，`model` 写 `provider/id`（不写用 Pi 的默认模型），`effort` 走 `--thinking`。
     - 审稿子进程带 `AGENTBRAIN_REVIEWER=1`，`ab capture/recall --hook` 看到就什么都不做，审稿会话不会被登记、抽取或再触发审稿；在空临时目录里跑。
     - `type: "api"`（不写 type 时的默认）照旧直接调 OpenAI 兼容接口，例如经 cpa 的 gpt-6-astra：`{"name":"astra","baseUrl":"http://127.0.0.1:8317/v1","model":"gpt-6-astra","keyService":"codex-cpa-local-api-key","extraBody":{"reasoning_effort":"medium"}}`。
-  - `hostReviewers`：每个宿主一个审稿人。`ab curate --host claude` 只审从 Claude Code 会话抽出来的候选，用这个宿主配的审稿人当唯一主审。没配的宿主、手动 `ab curate`、不属于任何宿主的候选走主配置（`mode`/`panel`）。
+  - `hostReviewers`：每个宿主一个审稿人。`ab curate --host claude` 只审从 Claude Code 会话抽出来的未确认条目，用这个宿主配的审稿人当唯一主审。没配的宿主、手动 `ab curate`、不属于任何宿主的条目走主配置（`mode`/`panel`）。
   - 会话结束自动审稿和多审稿人认领/租约**暂不做**（2026-10-15 用户定）：目标设计改为话题结束时一个后台子模型一次决定新记/并入/不记（见 `src/onepass.ts`），staging 只留作审计和撤销。审稿要几分钟，审完按此刻的库重新规划，期间被用户确认或归档的条目跳过。
   - `mode` 有两种：
     - `primary`（默认）：只有 `primary` 一位主审定结论。panel 里可以另加成员当参考意见（先各自给意见，附给主审、写进报告，不投票，不仲裁）；90 条标注评测里参考意见没带来提升，默认不加。没有参考成员时主审的提示词和普通审稿人一样。主审没给出有效结论的条目算未决，不执行。
     - `panel`：各成员投票，一致就执行，有分歧交仲裁（三票都要留、只是写法不同时，仲裁只定写法）。`arbiter` 可以写 panel 成员的 name，也可以写一个完整的模型对象。不写 `mode` 时按 panel 处理。
   - API 成员的推理强度经 `extraBody.reasoning_effort` 传（cpa 会校验级别）。每个成员可选 `extraBody`（只对 API）。超时（API 300 s、CLI 600 s）、每个成员并发 1、每批 10 条、一次最多 3 批都写死在代码里（设计 §2.2：预算类参数不给配置键），`review.json` 里写了也不读。
-- `ab curate` 默认 dry-run，只把每条候选的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在配置里的审稿成员都连得上时生效（panel 模式还要满 3 家）：
-  - 一致沉淀 → `curate` 事件把候选转正（A 类同时打 guidance 标记）；
-  - 改写 → 新条目（origin=curate，仍未确认），原候选归档并指向新条目；
-  - 并入 → 候选归档并指向目标，**不改目标正文**；目标是用户确认的，合并建议只进报告的复核清单；
+- `ab curate` 默认 dry-run，只把每条未确认条目的三家判决、仲裁结论和要做的动作写进 `~/.agentbrain/curate/<run>.json`。`--apply` 才写库，而且只在配置里的审稿成员都连得上时生效（panel 模式还要满 3 家）：
+  - 留下 → 不写状态事件（条目本来就有效），A 类打 guidance 标记；
+  - 改写 → 新条目（origin=curate，仍未确认），原条目归档并指向新条目；
+  - 并入 → 原条目归档并指向目标，**不改目标正文**；目标是用户确认的，合并建议只进报告的复核清单；
   - 丢弃 → 归档（reason=curate，带理由）。
   - 用户确认过的条目一律跳过。`ab curate --undo <run>` 整次撤销。
 - 离线评测：`AB_HOME=<库副本> node scripts/curate-eval.ts <items.json> <out.json>`，只读。
@@ -192,6 +194,6 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 **写进库的**：一步式判为"新记"的直接写进正式库，未确认、`origin: extract`、依据记为 agent 推断（一步式输出没有逐字引文）；每条带 `topic`（运行、窗口、触发方式、定位点起止、拆分序号、提示词版本、模型）。判为"并入已有某条"的不改目标、不写库，只记在运行报告里给你看。
 
-**审计和撤销**：每次运行一份报告 `~/.agentbrain/topic/<run>.json`；`ab work --runs` 列出运行，`ab work --undo <run>` 整次撤销（只归档本次写入、之后没被动过的条目；你确认过的、已自动转正的、后来被移进候选区/归档过的不动）。单条用 `ab archive <id>` 或 `ab stage <id>`。
+**审计和撤销**：每次运行一份报告 `~/.agentbrain/topic/<run>.json`；`ab work --runs` 列出运行，`ab work --undo <run>` 整次撤销（只归档本次写入、之后没被动过的条目；你确认过的、已自动转正的、后来归档过的不动）。单条用 `ab archive <id>`。
 
 **没有实测的**：三个宿主的压缩事件真的会来（需要在你的机器上装 hook 才能测，本 PR 没装）。已离线核对本机 transcript：Claude（`compact_boundary` + `isCompactSummary` 摘要）、Codex（`compacted`）、Pi（`compaction` 条目）压缩后都保留压缩前的原文，从会话文件补读话题的前提成立；Claude 的压缩摘要不当成用户的一轮。

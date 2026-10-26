@@ -8,6 +8,7 @@
  * 预算类数字全部是代码常量（§2.2），本文件零配置键。
  */
 import { DatabaseSync } from "node:sqlite";
+import { searchable } from "./visibility.ts";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -107,6 +108,8 @@ export interface PendingAppend {
   body: unknown;
 }
 
+const INDEX_VERSION = "2";
+
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS vecs(id TEXT PRIMARY KEY, text_hash TEXT NOT NULL, vec BLOB NOT NULL);
@@ -123,7 +126,8 @@ function openDb(path: string): DatabaseSync {
   return db;
 }
 
-function indexText(p: Proposition): string {
+/** 检索（全文和向量）用的文本：正文加为什么。召回的字面通道也用它。 */
+export function indexText(p: Proposition): string {
   return p.why ? `${p.text}\n${p.why}` : p.text;
 }
 
@@ -265,7 +269,7 @@ export class Store {
     const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
     return rows.flatMap((r) => {
       const p = props.get(r.id);
-      if (!p || p.state !== "active") return [];
+      if (!p || !searchable(p)) return [];
       if (p.project_id !== null && p.project_id !== projectId) return [];
       if (r.text_hash !== textHash(indexText(p))) return [];
       const v = fromBlob(r.vec);
@@ -406,7 +410,10 @@ export class Store {
 
   // ---------- L3：水位不一致就整表重建 ----------
 
+  /** 索引行的形状随投影规则变（§8.8 去掉候选区后 state 不再有 candidate）：版本不对就当没建过，整表重建。 */
   private indexedSeq(): number {
+    const v = this.fts.prepare("SELECT value FROM meta WHERE key='index_version'").get() as { value: string } | undefined;
+    if (v?.value !== INDEX_VERSION) return -1;
     const row = this.fts.prepare("SELECT value FROM meta WHERE key='seq'").get() as { value: string } | undefined;
     return row ? Number(row.value) : -1;
   }
@@ -431,6 +438,7 @@ export class Store {
       }
       this.fts.exec("DELETE FROM vecs WHERE id NOT IN (SELECT id FROM props)");
       this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('seq',?)").run(String(seq));
+      this.fts.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES('index_version',?)").run(INDEX_VERSION);
       this.fts.exec("COMMIT");
       return true;
     } catch (e) {
@@ -518,7 +526,7 @@ export class Store {
     const query = fromBlob(own.vec);
     return rows.flatMap((r) => {
       const n = props.get(r.id);
-      if (!n || n.id === id || n.state !== "active") return [];
+      if (!n || n.id === id || !searchable(n)) return [];
       if (n.project_id !== null && n.project_id !== p.project_id) return [];
       if (r.text_hash !== textHash(indexText(n))) return [];
       const similarity = cosine(query, fromBlob(r.vec));
@@ -569,7 +577,7 @@ export class Store {
         if (!p) continue;
         if (p.project_id === null ? !opts.includeGlobal : opts.projects !== "all" && !opts.projects.includes(p.project_id)) continue;
         if (opts.kind && p.kind !== opts.kind) continue;
-        if (!opts.includeArchived && p.state !== "active") continue;
+        if (!opts.includeArchived && !searchable(p)) continue;
         if (textHash(indexText(p)) !== row.text_hash) continue;
         const similarity = cosine(queryVec, fromBlob(row.vec));
         if (similarity >= (opts.minSim ?? VEC_MIN_SIM)) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });

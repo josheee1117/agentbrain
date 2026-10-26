@@ -51,7 +51,7 @@ export function linkIndex(props: ReadonlyMap<string, Proposition>): Map<string, 
 
 /** 对方的状态标记：有效的不标。 */
 export function stateMark(p: Proposition): string {
-  return p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : p.state === "candidate" ? "（候选）" : "";
+  return p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
 }
 
 /** 搜索结果里一行"关联"：每条最多 max 个，超出提示用 ab get。没有关联返回空串。 */
