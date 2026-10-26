@@ -177,6 +177,20 @@ test("一步式：提示词含标准与新记/并入/不记；输出校验丢掉
   assert.equal(parseOnePass("不是 JSON", []), null);
 });
 
+test("一步式：仓库背景含原版 worker 说明时背景原样保留，只使用一步式 worker 说明", async () => {
+  const { buildOnePassMessages, ONE_PASS_WORKER_NOTE } = await import("./onepass.ts");
+  const { WORKER_NOTE } = await import("./extract.ts");
+  const docs = `仓库说明\n${WORKER_NOTE}\n背景结束`;
+  const [, user] = buildOnePassMessages({ turns: [{ role: "user", text: "派活", anchor: "a1" }], context: [], worker: true }, { name: "x", docs, registry: "", confirmed: "" }, []);
+  assert.equal(user.content, [
+    "项目：x",
+    `<repo_docs>\n${docs}\n</repo_docs>`,
+    "<existing_memories>\n（无）\n</existing_memories>",
+    ONE_PASS_WORKER_NOTE,
+    "<transcript>\n[#1 user] 派活\n</transcript>",
+  ].join("\n\n"));
+});
+
 test("一步式召回修法 §8.7：去掉偏少倾向、含按类清单（含工具输出里的坑）、上限 8 条、标准一字不改", async () => {
   const { ONE_PASS_SYSTEM, ONE_PASS_CHECKLIST, ONE_PASS_MAX_ITEMS, parseOnePass } = await import("./onepass.ts");
   const { GOOD_MEMORY_STANDARD } = await import("./standard.ts");

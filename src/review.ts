@@ -223,8 +223,9 @@ export const JUDGE_RULES = `判断要点：
 - C 类要问：换个项目、换个任务，下一个 agent 还会撞上吗？撞上时报错能不能直接看出原因？只在某个文件/某次改动里出现过、修完就没了的问题，不算。
 - 子代理会话里的"用户"消息是父 agent 的派活提示：它不能单独证明"用户要求"；但其中的通用干活方法（测试写法、验证方式、临时产物放哪）按内容当 A 类判断，只有一次性任务限制才因此 discard。agent 自己从工具输出观察到的坑、或背景里写明的设计理由，照常按 C/B 类判断。
 - merge 只用于候选本身合格、只是和近邻重复的情况；候选本身不合格就 discard，不要因为有相似近邻而 merge。
-- merge 不是折中：拿不准该留还是该丢时，先把去留想清楚；不合格就 discard，合格才考虑 keep/rewrite/merge。
-- 格式硬要求：keep/rewrite/merge 必须给 class（A/B/C）和以"当"开头、含"时"的 scenario；class 为 none 时 verdict 必须是 discard。缺这些的结论会被当成废票。`;
+- merge 不是折中：拿不准该留还是该丢时，先把去留想清楚；不合格就 discard，合格才考虑 keep/rewrite/merge。`;
+
+const JUDGE_FORMAT = `- 格式硬要求：keep/rewrite/merge 必须给 class（A/B/C）和以"当"开头、含"时"的 scenario；class 为 none 时 verdict 必须是 discard。缺这些的结论会被当成废票。`;
 
 export const JUDGE_SYSTEM = `你是记忆库的审稿人。下面是《好记忆的标准》全文，严格按它判断每条候选该不该进正式库。
 
@@ -238,6 +239,7 @@ ${GOOD_MEMORY_STANDARD}
 - discard：不满足标准（流水账、报错自己说明原因的一次性问题、代码/文档里能查到的事实、临时用法、一次性授权、只针对某次任务的派活限制、通用技术常识）。
 
 ${JUDGE_RULES}
+${JUDGE_FORMAT}
 
 ${EVIDENCE_NOTE}
 
@@ -351,6 +353,7 @@ export const ARBITER_SYSTEM = `你是记忆库的仲裁人。审稿团三位审�
 ${GOOD_MEMORY_STANDARD}
 
 ${JUDGE_RULES}
+${JUDGE_FORMAT}
 
 ${EVIDENCE_NOTE}
 
