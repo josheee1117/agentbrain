@@ -114,6 +114,22 @@ test("hook 只注入偏好和提醒，不再检索；search/get/brief 交付带�
   } finally { db.close(); }
 });
 
+test("零结果 search 也记录查询事件，不伪造交付 id", () => {
+  const own = join(dir, "empty-query-store");
+  const result = ab(["search", "nonexistent_unique_query_123"], alpha, own);
+  assert.equal(result.code, 0, result.err);
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    const queries = db.prepare("SELECT host,session_id,path,ts FROM memory_queries").all();
+    assert.equal(queries.length, 1);
+    assert.equal(queries[0].host, "pi");
+    assert.equal(queries[0].session_id, SESSION);
+    assert.equal(queries[0].path, "search");
+    assert.ok(Number.isFinite(Date.parse(String(queries[0].ts))));
+    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM inject_log").get()?.n, 0);
+  } finally { db.close(); }
+});
+
 test("已登记仓库 remember 一个坑后 brief 能看到", () => {
   const r = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 里用全局锁", "--summary", "讨论锁"], alpha);
   assert.equal(r.code, 0, r.err);
