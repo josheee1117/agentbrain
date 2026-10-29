@@ -9,7 +9,7 @@
  * 6. 覆盖 Claude Code、Pi、Codex、OpenCode
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -198,12 +198,141 @@ const piSqlOut = JSON.stringify({ reports: piReports, ids: piReportIds }, null, 
 writeFileSync(join(EV_DIR, "03-pi-sql-results.json"), piSqlOut, "utf8");
 console.log("Pi SQL 扫描统计结果:\n" + piSqlOut);
 
-// ---------- 场景: Codex 实测与状态 ----------
-console.log("\n=== Codex 宿主实测 ===");
-const codexRes = spawnSync("codex", ["exec", "--ephemeral", "Hello"], { encoding: "utf8", timeout: 15000 });
-const codexBlocked = codexRes.stdout.includes("usage limit") || codexRes.stderr.includes("usage limit");
-writeFileSync(join(EV_DIR, "04-codex-live-attempt.log"), codexRes.stdout + "\n" + codexRes.stderr, "utf8");
-console.log(`Codex 真实调用结果: code=${codexRes.status}, blockedByUsageLimit=${codexBlocked}`);
+// ---------- 场景: Codex 真实闭环验证 ----------
+console.log("\n=== 场景 2-5: Codex 真实模型闭环 ===");
+const codexHome = join(SCRATCH, "codex_home");
+mkdirSync(join(codexHome, ".codex"), { recursive: true });
+mkdirSync(join(codexHome, "bin"), { recursive: true });
+
+// 复制认证信息与基础配置
+const userHome = process.env.HOME || "/Users/hejiayuan";
+if (existsSync(join(userHome, ".codex/auth.json"))) {
+  copyFileSync(join(userHome, ".codex/auth.json"), join(codexHome, ".codex/auth.json"));
+}
+if (existsSync(join(userHome, ".codex/version.json"))) {
+  copyFileSync(join(userHome, ".codex/version.json"), join(codexHome, ".codex/version.json"));
+}
+
+// 建立 bin/ab wrapper
+const abWrap = `#!/bin/sh
+export AB_HOME="${AB_HOME}"
+export AB_REGISTRY="${AB_REGISTRY}"
+exec node "${CLI}" "$@"
+`;
+writeFileSync(join(codexHome, "bin/ab"), abWrap, "utf8");
+chmodSync(join(codexHome, "bin/ab"), 0o755);
+
+const zshFile = `export PATH="${codexHome}/bin:$PATH"\nexport AB_HOME="${AB_HOME}"\nexport AB_REGISTRY="${AB_REGISTRY}"\n`;
+writeFileSync(join(codexHome, ".zshenv"), zshFile, "utf8");
+writeFileSync(join(codexHome, ".zshrc"), zshFile, "utf8");
+
+const cdxToml = `
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model = "gpt-5.6-sol"
+model_provider = "custom"
+service_tier = "default"
+
+[features]
+hooks = true
+
+[shell_environment_policy]
+inherit = "all"
+
+[model_providers.custom]
+name = "OpenAI"
+requires_openai_auth = true
+supports_websockets = true
+wire_api = "responses"
+`;
+writeFileSync(join(codexHome, ".codex/config.toml"), cdxToml, "utf8");
+
+const cdxHooks = {
+  hooks: {
+    UserPromptSubmit: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command: `env AB_HOME="${AB_HOME}" AB_REGISTRY="${AB_REGISTRY}" node "${CLI}" capture --hook --host codex`,
+            timeout: 5
+          },
+          {
+            type: "command",
+            command: `env AB_HOME="${AB_HOME}" AB_REGISTRY="${AB_REGISTRY}" node "${CLI}" recall --hook`,
+            timeout: 5
+          }
+        ]
+      }
+    ],
+    SessionEnd: [
+      {
+        hooks: [
+          {
+            type: "command",
+            command: `env AB_HOME="${AB_HOME}" AB_REGISTRY="${AB_REGISTRY}" node "${CLI}" capture --hook --host codex`,
+            timeout: 5
+          }
+        ]
+      }
+    ]
+  }
+};
+writeFileSync(join(codexHome, ".codex/hooks.json"), JSON.stringify(cdxHooks, null, 2), "utf8");
+
+function runCodex(prompt: string) {
+  const env = { ...process.env, HOME: codexHome, AB_HOME, AB_REGISTRY, PATH: `${join(codexHome, "bin")}:${process.env.PATH}` };
+  const r = spawnSync("codex", ["exec", "--dangerously-bypass-hook-trust", prompt], {
+    cwd: REPO,
+    env,
+    input: "",
+    encoding: "utf8",
+    timeout: 60000,
+  });
+  return { code: r.status, out: r.stdout || "", err: r.stderr || "" };
+}
+
+// 探测 Codex 连通性与额度
+const probeCdx = runCodex("Say ready in one word");
+const cdxBlocked = probeCdx.out.includes("usage limit") || probeCdx.err.includes("usage limit");
+if (cdxBlocked || probeCdx.code !== 0) {
+  console.log(`Codex 受限或未就绪: code=${probeCdx.code}, blockedByUsageLimit=${cdxBlocked}`);
+  writeFileSync(join(EV_DIR, "04-codex-live-attempt.log"), probeCdx.out + "\n" + probeCdx.err, "utf8");
+} else {
+  console.log("执行 Codex 场景 2: 主动 search 后采用某条...");
+  const cdx2 = `这是一个测试。请按以下两个步骤操作：
+1. 请在当前仓库执行 shell 命令：node "${CLI}" search 全局锁
+2. 查看输出中的坑记忆，并根据该记忆给出一句简短结论；必须在回答的最后单独一行写：记忆：避免全局锁 (${pitId})`;
+  const cdxRes2 = runCodex(cdx2);
+  writeFileSync(join(EV_DIR, "04-codex-case2-adopted.txt"), cdxRes2.out + "\n" + cdxRes2.err, "utf8");
+  console.log("Codex 场景 2 输出:\n" + cdxRes2.out.trim());
+
+  console.log("\n执行 Codex 场景 3: 只采用常驻偏好...");
+  const cdx3 = `这是一个测试。请不要执行任何 shell 命令。请直接回答一句话“遵循偏好”，并根据常驻偏好在回答最后单独一行写：记忆：简明汇报偏好 (${prefId})`;
+  const cdxRes3 = runCodex(cdx3);
+  writeFileSync(join(EV_DIR, "04-codex-case3-pref.txt"), cdxRes3.out + "\n" + cdxRes3.err, "utf8");
+  console.log("Codex 场景 3 输出:\n" + cdxRes3.out.trim());
+
+  console.log("\n执行 Codex 场景 4: 明确未用...");
+  const cdx4 = `这是一个测试。请直接回答一句话“收到”，并在回答最后单独一行写：记忆：本轮未用`;
+  const cdxRes4 = runCodex(cdx4);
+  writeFileSync(join(EV_DIR, "04-codex-case4-unused.txt"), cdxRes4.out + "\n" + cdxRes4.err, "utf8");
+  console.log("Codex 场景 4 输出:\n" + cdxRes4.out.trim());
+
+  console.log("\n执行 Codex 场景 5: 未报告...");
+  const cdx5 = `Output raw JSON only: {"status":"success"}. No other text or lines.`;
+  const cdxRes5 = runCodex(cdx5);
+  writeFileSync(join(EV_DIR, "04-codex-case5-unreported.txt"), cdxRes5.out + "\n" + cdxRes5.err, "utf8");
+  console.log("Codex 场景 5 输出:\n" + cdxRes5.out.trim());
+
+  runAb(["work", "--sweep"]);
+  const cdxReports = db.prepare("SELECT host, session_id, anchor, cite, status, queried FROM memory_reports WHERE host='codex' ORDER BY ts").all() as any[];
+  const cdxReportIds = db.prepare("SELECT host, session_id, anchor, short_id, prop_id, verified, title_mismatch FROM memory_report_ids WHERE host='codex' ORDER BY rowid").all() as any[];
+
+  const cdxSqlOut = JSON.stringify({ reports: cdxReports, ids: cdxReportIds }, null, 2);
+  writeFileSync(join(EV_DIR, "04-codex-sql-results.json"), cdxSqlOut, "utf8");
+  console.log("Codex SQL 扫描统计结果:\n" + cdxSqlOut);
+}
 
 // ---------- 场景: OpenCode 实测与状态 ----------
 console.log("\n=== OpenCode 宿主实测 ===");
