@@ -68,12 +68,15 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
   const setup = ab(["setup", "--cite", "on"]);
   assert.match(setup, /引用指令：开/);
   assert.equal(existsSync(join(fakeHome, ".config/opencode/AGENTS.md")), false);
+  // 钩子按用户轮归属：新一轮才带开关，上一轮的回复不会借到它
+  appendFileSync(transcript, line({ type: "message", id: "u2", parentId: "a1", timestamp: new Date().toISOString(),
+    message: { role: "user", content: "换成按账户的锁" } }));
   const on = hook();
   assert.match(on, /记忆：简短标题 \(8位id\)；…/);
 
   // 3. 助手回复引用了这条（标题贴切）和一个编造的 id
-  appendFileSync(transcript, line({ type: "message", id: "a1", parentId: "a0", timestamp: new Date(Date.now() + 1000).toISOString(),
-    message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: `换成按账户的锁。\n记忆: alpha 召回别用全局锁 (${id})；编的 (deadbeef)` }] } }));
+  appendFileSync(transcript, line({ type: "message", id: "a2", parentId: "u2", timestamp: new Date(Date.now() + 1000).toISOString(),
+    message: { role: "assistant", provider: "cpa", model: "glm-5.3", stopReason: "stop", content: [{ type: "text", text: `换成按账户的锁。\n记忆: alpha 召回别用全局锁 (${id})；编的 (deadbeef)` }] } }));
   const out = join(dir, "view.html");
   const v = ab(["view", "--no-open", "--out", out]);
   assert.match(v, /记到 1 次引用/);

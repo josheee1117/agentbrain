@@ -4,7 +4,8 @@
 - 生成自包含 HTML 记忆看板 (`ab view [--out <路径>] [--no-open]`)，默认 `~/.agentbrain/view.html`，权限 0600
 - 概览、关联图、记忆详情、注入/引用统计与记忆可见性指标；数据嵌在 HTML 里，离线可开
 - 记忆可见性卡片（§11.9）：展示上次扫描时间、报告率、采用率、主动查询率与无法核对数
-- 引用扫描：读交付记录（brief / search / get / recall）与按轮采用报告，核对模型在回答末尾报告的记忆；未对上的保留并记为无法核对
+- 引用扫描：只结算宿主的最终回答（Claude `end_turn`、Pi `stopReason=stop`、Codex `final_answer` / 无错误 `task_complete`、opencode 已完成无错），进度、工具继续、模型失败、仍在运行的轮不结算；读交付记录（brief / search / get / recall）与按轮采用报告，核对模型在回答末尾报告的记忆；未对上的保留并记为无法核对
+- 查询事件单独记录：`memory_queries` 记 search / get 的宿主、会话、时间与来源路径，零结果搜索也记；主动查询率按查询事件算
 - 扫描时机：除 `ab view` 外，`ab work --sweep` 定时任务结尾也会触发一次引用扫描
 
 ## How to get to it (user POV)

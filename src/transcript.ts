@@ -19,6 +19,7 @@ export interface Turn {
   ts?: string;
   /** 助手轮里模型自己写的文字（原文，不含工具调用行）；只调了工具的轮为空串。 */
   reply?: string;
+  /** 已完成的最终回答；进度、工具继续、模型失败的轮不设（缺省即不是最终回答）。 */
   final?: boolean;
 }
 
@@ -149,12 +150,12 @@ class Builder {
   stripped = 0;
   aliases = new Map<string, string | null>();
   abCalls = new Set<string>();
-  push(anchor: string, role: TurnRole, parts: Part[], ts?: unknown): void {
+  push(anchor: string, role: TurnRole, parts: Part[], ts?: unknown, final = false): void {
     const joined = parts.map((p) => (typeof p === "string" ? p : p.call)).filter(Boolean).join("\n");
     const s = stripInjected(joined);
     this.stripped += s.stripped;
     const at = typeof ts === "string" && Number.isFinite(Date.parse(ts)) ? new Date(ts).toISOString() : undefined;
-    const reply = role === "assistant" ? { reply: parts.filter((p): p is string => typeof p === "string").join("\n").trim() } : {};
+    const reply = role === "assistant" ? { reply: parts.filter((p): p is string => typeof p === "string").join("\n").trim(), ...(final ? { final: true } : {}) } : {};
     if (s.text) this.turns.push({ anchor, role, text: s.text, ...(at ? { ts: at } : {}), ...reply });
   }
   call(id: unknown, name: string, input: unknown): Part {
@@ -195,7 +196,7 @@ function readClaude(lines: any[], b: Builder): void {
     }
     const content = e.message?.content;
     if (typeof content === "string") {
-      b.push(e.uuid, e.type, [content], e.timestamp);
+      b.push(e.uuid, e.type, [content], e.timestamp, e.message?.stop_reason === "end_turn");
       continue;
     }
     if (!Array.isArray(content)) continue;
@@ -210,21 +211,28 @@ function readClaude(lines: any[], b: Builder): void {
         parts.push(b.output(c.tool_use_id, blockText(c.content), c.is_error === true));
       }
     }
-    b.push(e.uuid, tool ? "tool" : e.type, parts, e.timestamp);
+    b.push(e.uuid, tool ? "tool" : e.type, parts, e.timestamp, e.message?.stop_reason === "end_turn");
   }
 }
 
 function readCodex(lines: any[], b: Builder): void {
   lines.forEach((e, i) => {
-    if (e.type !== "response_item" || !e.payload) return;
+    if (!e.payload) return;
     const anchor = typeof e.ordinal === "number" ? String(e.ordinal) : `L${i}`;
     const p = e.payload;
+    if (e.type === "event_msg" && p.type === "task_complete" && !p.error && typeof p.last_agent_message === "string" && p.last_agent_message.trim()) {
+      const last = b.turns.at(-1);
+      if (last?.role === "assistant" && last.reply === p.last_agent_message.trim()) last.final = true;
+      else b.push(anchor, "assistant", [p.last_agent_message], e.timestamp, true);
+      return;
+    }
+    if (e.type !== "response_item") return;
     if (p.type === "message") {
       if (p.role !== "user" && p.role !== "assistant") return;
       const texts = (Array.isArray(p.content) ? p.content : []).map((c: any) => (typeof c?.text === "string" ? c.text : "")).filter(Boolean);
       const kept = p.role === "user" ? texts.filter((t: string) => !CODEX_INJECTED.some((m) => t.trimStart().startsWith(m))) : texts;
       b.stripped += texts.length - kept.length;
-      b.push(anchor, p.role, kept, e.timestamp);
+      b.push(anchor, p.role, kept, e.timestamp, p.phase === "final_answer");
     } else if (p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") {
       b.push(anchor, "assistant", [b.call(p.call_id, String(p.name ?? "shell"), p.arguments ?? p.input ?? p.action)], e.timestamp);
     } else if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
@@ -262,7 +270,7 @@ function readPi(lines: any[], b: Builder): void {
         if (c?.type === "toolCall") return b.call(c.id, String(c.name ?? "tool"), c.arguments);
         return "";
       });
-      b.push(e.id, "assistant", parts, e.timestamp);
+      b.push(e.id, "assistant", parts, e.timestamp, m.stopReason === "stop");
     } else if (m.role === "toolResult") {
       b.push(e.id, "tool", [b.output(m.toolCallId, blockText(m.content), m.isError === true)], e.timestamp);
     }
@@ -275,7 +283,7 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
     const { session, parts } = opencodeParts(file);
     const b = new Builder();
     for (const p of parts) {
-      if (p.data.type === "text" && typeof p.data.text === "string") b.push(p.id, p.role, [p.data.text], p.ts);
+      if (p.data.type === "text" && typeof p.data.text === "string") b.push(p.id, p.role, [p.data.text], p.ts, p.final);
       if (p.data.type === "tool" && p.data.state && typeof p.data.state === "object") {
         const state = p.data.state as Record<string, unknown>;
         const name = typeof p.data.tool === "string" ? p.data.tool : "tool";

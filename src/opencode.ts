@@ -18,6 +18,7 @@ export interface OpencodePart {
   id: string;
   role: "user" | "assistant";
   ts: string;
+  final?: boolean;
   data: Record<string, unknown>;
 }
 
@@ -90,7 +91,9 @@ export function opencodeParts(ref: string): { session: OpencodeSession; parts: O
             const error = object(state.error) && typeof state.error.message === "string" ? state.error.message : "";
             parts.push({ id: `${row.id}:${i}`, role: "assistant", ts, data: { ...data, tool: data.name, state: { ...state, output, error } } });
           } else if (data.type === "text") {
-            parts.push({ id: `${row.id}:${i}`, role: "assistant", ts, data });
+            const final = object(message.time) && typeof message.time.completed === "number" && message.finish === "stop" && !message.error;
+            const completed = final && object(message.time) ? new Date(Number(message.time.completed)).toISOString() : ts;
+            parts.push({ id: `${row.id}:${i}`, role: "assistant", ts: completed, final, data });
           }
         });
       }

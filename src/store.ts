@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS recall_runs(
   failed INTEGER NOT NULL DEFAULT 0, marked INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS recall_runs_session ON recall_runs(host, session_id);
 CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
+CREATE TABLE IF NOT EXISTS memory_queries(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, host TEXT, session_id TEXT, transcript TEXT, project_id TEXT,
+  path TEXT NOT NULL CHECK(path IN ('search','get')));
+CREATE INDEX IF NOT EXISTS memory_queries_session ON memory_queries(host,session_id);
 CREATE TABLE IF NOT EXISTS memory_reports(
   host TEXT NOT NULL, session_id TEXT NOT NULL, anchor TEXT NOT NULL, ts TEXT NOT NULL,
   cite INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('used','unused','unreported')),

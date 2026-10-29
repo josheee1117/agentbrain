@@ -43,6 +43,11 @@ export function logInjections(db: DatabaseSync, ctx: Ctx, path: InjectPath, ids:
   for (const id of ids) st.run(now.toISOString(), ctx.host, ctx.session_id, ctx.transcript, ctx.project_id, id, path);
 }
 
+export function logQuery(db: DatabaseSync, ctx: Ctx, path: "search" | "get", now: Date): void {
+  db.prepare("INSERT INTO memory_queries(ts,host,session_id,transcript,project_id,path) VALUES(?,?,?,?,?,?)")
+    .run(now.toISOString(), ctx.host, ctx.session_id, ctx.transcript, ctx.project_id, path);
+}
+
 export function logRecallRun(db: DatabaseSync, ctx: Ctx, outcome: RecallOutcome, nHits: number, ms: number, cite: boolean, now: Date): void {
   db.prepare("INSERT INTO recall_runs(ts,host,session_id,project_id,outcome,n_hits,ms,cite,transcript) VALUES(?,?,?,?,?,?,?,?,?)")
     .run(now.toISOString(), ctx.host, ctx.session_id, ctx.project_id, outcome, nHits, Math.round(ms), cite ? 1 : 0, ctx.transcript);
@@ -71,6 +76,7 @@ export function prune(db: DatabaseSync, now: Date, days = RETENTION_DAYS): numbe
   n += Number(db.prepare("DELETE FROM recall_runs WHERE ts<?").run(cut).changes);
   n += Number(db.prepare("DELETE FROM cite_scan WHERE scanned_at<?").run(cut).changes);
   n += Number(db.prepare("DELETE FROM memory_reports WHERE ts<?").run(cut).changes);
+  n += Number(db.prepare("DELETE FROM memory_queries WHERE ts<?").run(cut).changes);
   return n;
 }
 
@@ -163,102 +169,102 @@ export interface ScanResult {
   mismatched: number;
 }
 
-/**
- * 把 ab-used 里的 id 与本会话此前注入过的召回条目对上，标 cited；对不上的 id 丢弃（防编造），
- * 标题与正文重合低于 TITLE_MATCH_MIN 记 title_mismatch 但仍算引用。
- * 带有效引用的回复归到它之前最近的一次召回（不论命中与否）；那次是命中才把它记为已标注，
- * 所以一次召回最多算一轮，标注率不会超过 100%。
- */
-export function scanSession(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (propId: string) => string | null, model: string | null, now: Date, preferences: readonly string[] = []): ScanResult {
-  const res: ScanResult = { marked_turns: 0, cited: 0, dropped: 0, mismatched: 0 };
-  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND substr(prop_id,1,8)=? AND (? IS NULL OR ts<=?) ORDER BY ts DESC, id DESC LIMIT 1");
-  const mark = db.prepare("UPDATE inject_log SET cited=1, cited_at=?, cited_title=?, title_mismatch=? WHERE id=?");
-  const runBefore = db.prepare("SELECT id,outcome FROM recall_runs WHERE host=? AND session_id=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT 1");
-  const marked = new Set<number>();
-  for (const t of turns) {
-    if (t.role !== "assistant") continue;
-    const cites = parseAbUsed(t.reply ?? t.text);
-    if (!cites?.length) continue;
-    let any = false;
-    for (const c of cites) {
-      const row = find.get(host, sessionId, c.id, t.ts ?? null, t.ts ?? null) as { id: number; prop_id: string } | undefined;
-      const pref = preferences.filter((id) => id.startsWith(c.id));
-      const propId = row?.prop_id ?? (pref.length === 1 ? pref[0] : null);
-      if (!propId) {
-        res.dropped++;
-        continue;
-      }
-      const body = textOf(propId) ?? "";
-      const bad = c.title !== "" && titleOverlap(c.title, body) < TITLE_MATCH_MIN;
-      if (row) mark.run(t.ts ?? now.toISOString(), c.title || null, bad ? 1 : 0, row.id);
-      res.cited++;
-      if (bad) res.mismatched++;
-      any = true;
-    }
-    if (!any || !t.ts) continue;
-    const run = runBefore.get(host, sessionId, t.ts) as { id: number; outcome: string } | undefined;
-    if (run?.outcome === "hit") marked.add(run.id);
-  }
-  db.prepare("UPDATE recall_runs SET marked=0 WHERE host=? AND session_id=?").run(host, sessionId);
-  const setMarked = db.prepare("UPDATE recall_runs SET marked=1 WHERE id=?");
-  for (const id of marked) setMarked.run(id);
-  res.marked_turns = marked.size;
-  markFailedTurns(db, host, sessionId, turns);
-  scanReports(db, host, sessionId, turns, textOf, now, preferences);
-  db.prepare("INSERT INTO cite_scan(host,session_id,model,scanned_at) VALUES(?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, scanned_at=excluded.scanned_at")
-    .run(host, sessionId, model, now.toISOString());
-  return res;
+interface UserRound {
+  user: Turn;
+  before?: string;
+  firstReply?: string;
+  final?: Turn;
 }
 
-function scanReports(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (id: string) => string | null, now: Date, preferences: readonly string[]): void {
-  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND substr(prop_id,1,8)=? AND ts<=? ORDER BY ts DESC,id DESC LIMIT 1");
-  const runBefore = db.prepare("SELECT ts,cite FROM recall_runs WHERE host=? AND session_id=? AND ts<=? ORDER BY ts DESC,id DESC LIMIT 1");
-  const query = db.prepare("SELECT 1 FROM inject_log WHERE host=? AND session_id=? AND path IN ('search','get') AND ts>=? AND ts<=? LIMIT 1");
-  const report = db.prepare("INSERT INTO memory_reports(host,session_id,anchor,ts,cite,status,queried) VALUES(?,?,?,?,?,?,?)");
-  const idRow = db.prepare("INSERT INTO memory_report_ids(host,session_id,anchor,short_id,prop_id,verified,title_mismatch) VALUES(?,?,?,?,?,?,?)");
-  let userTime: string | undefined;
-  const finals: { turn: Turn; start?: string }[] = [];
-  let candidate: Turn | undefined;
-  const flush = () => {
-    if (candidate) finals.push({ turn: candidate, start: userTime });
-    candidate = undefined;
-  };
-  for (const t of turns) {
-    if (t.role === "user") { flush(); userTime = t.ts; }
-    if (t.role === "assistant" && (t.reply ?? t.text).trim() && t.final !== false) {
-      if (t.final === true) { candidate = t; flush(); }
-      else candidate = t;
+function userRounds(turns: readonly Turn[]): UserRound[] {
+  const rounds: UserRound[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const t = turns[i];
+    if (t.role === "user") rounds.push({ user: t, before: turns[i - 1]?.ts });
+    const round = rounds.at(-1);
+    if (round && t.role === "assistant") {
+      round.firstReply ??= t.ts;
+      if (t.final === true && (t.reply ?? t.text).trim()) round.final = t;
     }
   }
-  flush();
+  return rounds;
+}
+
+/** 钩子可能先于用户消息落盘。只在相邻消息边界内匹配，失败或未完成的轮也占用自己的钩子。 */
+function matchRuns(rounds: readonly UserRound[], runs: readonly { id: number; ts: string; cite: number; outcome: string }[]) {
+  const matches = new Map<UserRound, (typeof runs)[number]>();
+  const used = new Set<number>();
+  const candidates = rounds.flatMap((round, i) => {
+    if (!round.user.ts || round.user.text.trimStart().startsWith("/")) return [];
+    const end = round.firstReply ?? rounds[i + 1]?.user.ts;
+    return runs.filter((r) => (!round.before || r.ts > round.before) && (!end || r.ts <= end))
+      .map((run) => ({ round, run, distance: Math.abs(Date.parse(run.ts) - Date.parse(round.user.ts!)) }));
+  }).sort((a, b) => a.distance - b.distance);
+  for (const { round, run } of candidates) {
+    if (matches.has(round) || used.has(run.id)) continue;
+    matches.set(round, run);
+    used.add(run.id);
+  }
+  return matches;
+}
+
+/** 报告、引用和旧召回统计共用同一组已完成回答，重扫在一个事务中重建派生值。 */
+export function scanSession(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (propId: string) => string | null, model: string | null, now: Date, preferences: readonly string[] = []): ScanResult {
+  const res: ScanResult = { marked_turns: 0, cited: 0, dropped: 0, mismatched: 0 };
+  const rounds = userRounds(turns);
+  const runs = db.prepare("SELECT id,ts,cite,outcome FROM recall_runs WHERE host=? AND session_id=? ORDER BY ts,id").all(host, sessionId) as { id: number; ts: string; cite: number; outcome: string }[];
+  const matches = matchRuns(rounds, runs);
+  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND substr(prop_id,1,8)=? AND ts<=? ORDER BY ts DESC,id DESC LIMIT 1");
+  const query = db.prepare("SELECT 1 FROM memory_queries WHERE host=? AND session_id=? AND ts>=? AND ts<=? UNION ALL SELECT 1 FROM inject_log WHERE host=? AND session_id=? AND path IN ('search','get') AND ts>=? AND ts<=? LIMIT 1");
+  const report = db.prepare("INSERT INTO memory_reports(host,session_id,anchor,ts,cite,status,queried) VALUES(?,?,?,?,?,?,?)");
+  const idRow = db.prepare("INSERT INTO memory_report_ids(host,session_id,anchor,short_id,prop_id,verified,title_mismatch) VALUES(?,?,?,?,?,?,?)");
+  const mark = db.prepare("UPDATE inject_log SET cited=1,cited_at=?,cited_title=?,title_mismatch=? WHERE id=?");
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * 86_400_000).toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
+    db.prepare("UPDATE inject_log SET cited=0,cited_at=NULL,cited_title=NULL,title_mismatch=0 WHERE host=? AND session_id=?").run(host, sessionId);
+    db.prepare("UPDATE recall_runs SET marked=0 WHERE host=? AND session_id=?").run(host, sessionId);
     db.prepare("DELETE FROM memory_reports WHERE host=? AND session_id=?").run(host, sessionId);
-    for (const { turn: t, start } of finals) {
-      if (!t.ts || t.ts < cutoff) continue;
-      const run = runBefore.get(host, sessionId, t.ts) as { ts: string; cite: number } | undefined;
+    for (const round of rounds) {
+      const t = round.final;
+      if (!t?.ts || t.ts < cutoff) continue;
+      const run = matches.get(round);
       const parsed = parseAbUsed(t.reply ?? t.text);
       const status = parsed === null ? "unused" : parsed.length ? "used" : "unreported";
-      const begin = run && (!start || Date.parse(run.ts) >= Date.parse(start) - 5000) ? run.ts : start;
-      const queried = begin ? !!query.get(host, sessionId, begin, t.ts) : false;
+      const begin = run?.ts ?? round.user.ts;
+      const queried = begin ? !!query.get(host, sessionId, begin, t.ts, host, sessionId, begin, t.ts) : false;
       report.run(host, sessionId, t.anchor, t.ts, run?.cite ?? 0, status, queried ? 1 : 0);
+      let cited = false;
       for (const c of parsed ?? []) {
         const delivery = find.get(host, sessionId, c.id, t.ts) as { id: number; prop_id: string } | undefined;
         const pref = preferences.filter((id) => id.startsWith(c.id));
         const propId = delivery?.prop_id ?? (pref.length === 1 ? pref[0] : null);
         const bad = propId !== null && c.title !== "" && titleOverlap(c.title, textOf(propId) ?? "") < TITLE_MATCH_MIN;
         idRow.run(host, sessionId, t.anchor, c.id, propId, propId ? 1 : 0, bad ? 1 : 0);
-        if (delivery) db.prepare("UPDATE inject_log SET cited=1,cited_at=?,cited_title=?,title_mismatch=? WHERE id=?").run(t.ts, c.title, bad ? 1 : 0, delivery.id);
+        if (!propId) { res.dropped++; continue; }
+        if (delivery) mark.run(t.ts, c.title, bad ? 1 : 0, delivery.id);
+        res.cited++;
+        if (bad) res.mismatched++;
+        cited = true;
+      }
+      if (cited && run?.outcome === "hit") {
+        db.prepare("UPDATE recall_runs SET marked=1 WHERE id=?").run(run.id);
+        res.marked_turns++;
       }
     }
+    markFailedTurns(db, host, sessionId, turns);
+    db.prepare("INSERT INTO cite_scan(host,session_id,model,scanned_at) VALUES(?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, scanned_at=excluded.scanned_at")
+      .run(host, sessionId, model, now.toISOString());
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); throw e; }
+  return res;
 }
 
+// ponytail: 保留 90 天会话全量重扫，约千会话实测 12.5 秒；超出可接受耗时时跳过 transcript 未变化的会话。
 export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: string; transcript: string | null }[] {
   return db.prepare(`SELECT host,session_id,MAX(transcript) AS transcript FROM (
     SELECT host,session_id,transcript FROM inject_log
+    UNION ALL SELECT host,session_id,transcript FROM memory_queries
     UNION ALL SELECT host,session_id,transcript FROM recall_runs
     UNION ALL SELECT host,session_id,transcript FROM capture_sessions WHERE ephemeral=0
     UNION ALL SELECT host,session_id,NULL AS transcript FROM memory_reports

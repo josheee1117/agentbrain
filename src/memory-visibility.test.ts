@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
 import { cleanTranscript, type Turn } from "./transcript.ts";
-import { logInjections, logRecallRun, scanSession } from "./telemetry.ts";
+import { logInjections, logQuery, logRecallRun, parseAbUsed, scanSession, sessionsToScan } from "./telemetry.ts";
+import { buildViewData } from "./view.ts";
 
 const ctx = { host: "pi" as const, session_id: "review", transcript: null, project_id: null };
 const ts = (s: number) => new Date(Date.UTC(2026, 9, 29, 1, 0, s));
@@ -19,6 +20,38 @@ function transcript(host: "pi" | "claude" | "codex", entries: unknown[]) {
   return cleanTranscript(host, path).turns;
 }
 
+test("新旧报告行兼容，明确未用与缺报告不同", () => {
+  const expected = [{ id: "abcdef01", title: "临时库" }];
+  assert.deepEqual(parseAbUsed("正文\n记忆：临时库 (abcdef01)"), expected);
+  assert.deepEqual(parseAbUsed("记忆: 临时库（ABCDEF01）"), expected);
+  assert.deepEqual(parseAbUsed("ab-used: 临时库 (abcdef01)"), expected);
+  assert.equal(parseAbUsed("记忆：本轮未用"), null);
+  assert.deepEqual(parseAbUsed("没有报告"), []);
+});
+
+test("交付或按轮记录都能进入扫描范围，不只召回命中", () => {
+  const s = new Store(":memory:", ":memory:");
+  logInjections(s.workDb, ctx, "search", ["abcdef01"], ts(0));
+  logRecallRun(s.workDb, { ...ctx, session_id: "round-only" }, "nohit", 0, 1, true, ts(0));
+  assert.deepEqual(sessionsToScan(s.workDb).map((x) => x.session_id).sort(), ["review", "round-only"]);
+  s.close();
+});
+
+test("无法核对保留，关闭轮不算漏报，重复扫描不增加条数", () => {
+  const s = new Store(":memory:", ":memory:");
+  logRecallRun(s.workDb, ctx, "nohit", 0, 1, true, ts(0));
+  logRecallRun(s.workDb, ctx, "nohit", 0, 1, false, ts(10));
+  const turns = [turn("u1", "user", "问题", 0), turn("a1", "assistant", "记忆：未知 (deadbeef)", 2), turn("u2", "user", "问题2", 10), turn("a2", "assistant", "没有报告", 12)];
+  scan(s, turns);
+  scan(s, turns);
+  assert.equal(s.workDb.prepare("SELECT COUNT(*) AS n FROM memory_report_ids WHERE verified=0").get()?.n, 1);
+  const metrics = buildViewData(s, ts(3600)).telemetry.memory;
+  assert.equal(metrics.total, 1);
+  assert.equal(metrics.adopted, 1);
+  assert.equal(metrics.unverifiable, 1);
+  s.close();
+});
+
 test("final：Pi 进度、工具、失败和仍在运行的轮不结算，只有 stop 回答结算", () => {
   const entries = [
     { type: "message", id: "u", parentId: null, timestamp: ts(0), message: { role: "user", content: "问题" } },
@@ -29,7 +62,7 @@ test("final：Pi 进度、工具、失败和仍在运行的轮不结算，只有
   logRecallRun(s.workDb, ctx, "nohit", 0, 1, true, ts(0));
   for (const end of [[], [{ type: "message", id: "e", parentId: "t", timestamp: ts(3), message: { role: "assistant", stopReason: "error", content: [] } }]]) {
     const turns = transcript("pi", [...entries, ...end]);
-    assert.ok(turns.filter((t) => t.role === "assistant").every((t) => t.final === false));
+    assert.ok(turns.filter((t) => t.role === "assistant").every((t) => t.final !== true));
     scan(s, turns);
     assert.deepEqual(rows(s), []);
   }
@@ -46,9 +79,9 @@ test("final：Claude 只认 end_turn，Codex 只认 final_answer 或无错误 ta
     { type: "assistant", uuid: "p", timestamp: ts(1), message: { content: "进度", stop_reason: "tool_use" } },
     { type: "assistant", uuid: "a", timestamp: ts(2), message: { content: "回答", stop_reason: "end_turn" } },
   ]);
-  assert.deepEqual(claude.filter((t) => t.role === "assistant").map((t) => t.final), [false, true]);
+  assert.deepEqual(claude.filter((t) => t.role === "assistant").map((t) => t.final === true), [false, true]);
   const message = (phase?: string) => ({ type: "response_item", timestamp: ts(1), payload: { type: "message", role: "assistant", phase, content: [{ text: "回答" }] } });
-  assert.equal(transcript("codex", [message("commentary")])[0].final, false);
+  assert.equal(transcript("codex", [message("commentary")])[0].final === true, false);
   assert.equal(transcript("codex", [message("final_answer")])[0].final, true);
   assert.equal(transcript("codex", [message(), { type: "event_msg", timestamp: ts(2), payload: { type: "task_complete", last_agent_message: "回答" } }]).filter((t) => t.final).length, 1);
   assert.equal(transcript("codex", [message("commentary"), { type: "event_msg", timestamp: ts(2), payload: { type: "task_complete", last_agent_message: "回答", error: { message: "quota" } } }]).filter((t) => t.final).length, 0);
@@ -93,6 +126,23 @@ test("引用和报告共用最终回答，重扫清掉上一次派生引用并�
   assert.throws(() => scan(s, [user, turn("a", "assistant", "记忆：本轮未用", 5)]), /test rollback/);
   assert.equal(s.workDb.prepare("SELECT cited FROM inject_log").get()?.cited, 1);
   assert.equal(rows(s)[0].status, "used");
+  s.close();
+});
+
+test("只有零结果查询的会话也扫描，查询不串到紧接的下一轮", () => {
+  const s = new Store(":memory:", ":memory:");
+  logQuery(s.workDb, ctx, "search", ts(1));
+  assert.deepEqual(sessionsToScan(s.workDb).map((r) => r.session_id), ["review"]);
+  scan(s, [turn("u", "user", "问题", 0), turn("a", "assistant", "记忆：本轮未用", 2), turn("u2", "user", "继续", 3), turn("a2", "assistant", "完成", 4)]);
+  assert.deepEqual(rows(s).map((r) => r.queried), [1, 0]);
+  s.close();
+});
+
+test("失败轮占用自己的钩子，下一轮不能借用", () => {
+  const s = new Store(":memory:", ":memory:");
+  logRecallRun(s.workDb, ctx, "nohit", 0, 1, true, ts(1));
+  scan(s, [turn("u1", "user", "问题", 0), turn("p", "assistant", "进度", 2, false), turn("u2", "user", "再试", 3), turn("a", "assistant", "完成", 4)]);
+  assert.deepEqual(rows(s), [{ anchor: "a", cite: 0, status: "unreported", queried: 0 }]);
   s.close();
 });
 

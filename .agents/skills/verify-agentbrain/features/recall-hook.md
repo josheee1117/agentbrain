@@ -16,5 +16,6 @@
 
 ## Gotchas
 - 钩子内部必须自我 swallow 异常，异常逃逸会导致宿主阻断，因此必须保证 exit code 0
+- Pi 扩展的异步回调（状态栏刷新）拿到的 ctx 可能在 newSession / reload 后失效，读 sessionManager 要包 try/catch，否则整个 Pi 进程崩掉
 - 钩子不再自动检索历史坑与规则；模型遇到陌生模块、踩坑或需查历史决定时，由模型主动调用 `ab search` 或 `ab get` 查询
 - 斜杠命令（以 `/` 开头）与审稿子进程环境下钩子静默不输出

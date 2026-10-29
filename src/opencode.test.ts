@@ -71,6 +71,21 @@ test("SQLite transcript reads user and assistant text, excludes synthetic recall
   assert.equal(opencodeParts(ref).parts.length, 2);
 });
 
+test("opencode 最终回答要求 completed 和 stop，进度、失败、工具继续都不算", () => {
+  const connection = new DatabaseSync(path);
+  try {
+    for (const [metadata, final] of [
+      [{ time: { created: now } }, false],
+      [{ time: { completed: now + 100 }, finish: "tool-calls" }, false],
+      [{ time: { completed: now + 100 }, finish: "stop", error: { message: "quota" } }, false],
+      [{ time: { completed: now + 100 }, finish: "stop" }, true],
+    ] as const) {
+      connection.prepare("UPDATE session_message SET data=? WHERE id='a'").run(JSON.stringify({ ...metadata, content: [{ type: "text", text: "记忆：本轮未用" }] }));
+      assert.equal(cleanTranscript("opencode", ref).turns.at(-1)?.final === true, final);
+    }
+  } finally { connection.close(); }
+});
+
 function deps(store: Store): WorkDeps {
   return { store, now: () => new Date(now), chat: { error: "no_config", message: "test" }, embedder: null, registry: [{ name: "test", path: repo }], registryDir: home, resolveProject: (cwd) => cwd === repo ? { name: "test", path: repo } : null, projectId: (name) => store.ensureProject(name) };
 }

@@ -10,3 +10,4 @@
 | work | [work.md](work.md) | 后台会话自动抽取、单实例租约调度、代码核验与转正 |
 | curate / review | [curate.md](curate.md) | 未确认条目审稿建议、审稿回滚、worker 原话审计与到期复审；旧候选区条目只读对照 |
 | view | [view.md](view.md) | 手动生成本地 HTML 记忆看板（概览、关联图、注入/引用统计） |
+| hosts | [hosts.md](hosts.md) | 真实宿主隔离闭环：Claude Code / Codex / Pi / opencode 逐场景断言与正式库核对 |

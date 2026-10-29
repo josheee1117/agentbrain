@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-agentbrain control script. Usage: verify.sh doctor|run|cleanup [--dry-run]
+# verify-agentbrain control script. Usage: verify.sh doctor|run|hosts [claude codex pi opencode]|cleanup [--dry-run]
 # Output: one JSON object per line. Evidence: /Users/hejiayuan/.cache/verify-evidence/agentbrain/<ts>/ (survives cleanup).
 set -u
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
@@ -116,8 +116,18 @@ db.close();
 
     ls -laR "$S" > "$EV/scratch-tree.txt" 2>&1
     emit evidence info "$EV"; exit $FAIL ;;
+  hosts)
+    # 真实宿主闭环（claude / codex / pi / opencode）：独立测试库 + 逐场景断言 + 正式库只读核对。
+    # 需要宿主已登录；401/限额记 BLOCKED。参数留空跑全部宿主。
+    shift || true
+    mkdir -p "$EV"
+    if [ $DRY = 1 ]; then emit hosts dry-run "node .agents/skills/verify-agentbrain/hosts.ts $*"; exit 0; fi
+    node .agents/skills/verify-agentbrain/hosts.ts "$@" >"$EV/hosts.log" 2>&1; c=$?
+    tail -20 "$EV/hosts.log"
+    emit hosts "$([ $c = 0 ] && echo pass || echo fail)" "$EV/hosts.log"
+    exit $c ;;
   cleanup)
     # kills nothing by name; only removes scratch dirs this script created. Evidence kept.
     [ -f "${TMPDIR:-/tmp}/verify-agentbrain.scratch" ] && { d=$(cat "${TMPDIR:-/tmp}/verify-agentbrain.scratch"); [ $DRY = 1 ] && emit cleanup dry-run "rm -r $d" || { rm -rf "$d"; rm "${TMPDIR:-/tmp}/verify-agentbrain.scratch"; emit cleanup pass "removed $d"; }; } || emit cleanup pass nothing-to-clean ;;
-  *) echo "usage: verify.sh doctor|run|cleanup [--dry-run]" >&2; exit 2 ;;
+  *) echo "usage: verify.sh doctor|run|hosts [claude codex pi opencode]|cleanup [--dry-run]" >&2; exit 2 ;;
 esac

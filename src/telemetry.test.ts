@@ -57,9 +57,10 @@ test("scanSession：只认本会话此前注入过的召回条目；标题不符
   logInjections(s.workDb, { ...ctx, session_id: "other" }, "recall", [c], new Date("2026-10-21T01:00:00Z"));
   const turns = [
     // 注入之前的回复引用 a：时间上不可能依据它，不算
-    { anchor: "t0", role: "assistant" as const, text: `ab-used: 早到的 (${a.slice(0, 8)})`, ts: "2026-10-21T00:59:00.000Z" },
+    { anchor: "u0", role: "user" as const, text: "上个问题", ts: "2026-10-21T00:58:00.000Z" },
+    { anchor: "t0", role: "assistant" as const, final: true, text: `ab-used: 早到的 (${a.slice(0, 8)})`, ts: "2026-10-21T00:59:00.000Z" },
     { anchor: "t1", role: "user" as const, text: `ab-used: 用户说的不算 (${a.slice(0, 8)})`, ts: "2026-10-21T01:00:30.000Z" },
-    { anchor: "t2", role: "assistant" as const, text: `好的\nab-used: 测试用临时库 (${a.slice(0, 8)})；数据库迁移先备份 (${b.slice(0, 8)})；别处的 (${c.slice(0, 8)})；编的 (deadbeef)；偏好 (${p.slice(0, 8)})`, ts: "2026-10-21T01:01:00.000Z" },
+    { anchor: "t2", role: "assistant" as const, final: true, text: `好的\nab-used: 测试用临时库 (${a.slice(0, 8)})；数据库迁移先备份 (${b.slice(0, 8)})；别处的 (${c.slice(0, 8)})；编的 (deadbeef)；偏好 (${p.slice(0, 8)})`, ts: "2026-10-21T01:01:00.000Z" },
   ];
   const r = scanSession(s.workDb, "pi", "s1", turns, (id) => s.project().props.get(id)?.text ?? null, "cpa/glm-5.3", new Date("2026-10-21T02:00:00Z"));
   assert.deepEqual(r, { marked_turns: 1, cited: 2, dropped: 4, mismatched: 1 });
@@ -104,7 +105,7 @@ test("模型调用失败的回合（召回后没有助手回复）不进标注�
   const turns = [
     { anchor: "u1", role: "user" as const, text: "问题", ts: "2026-10-21T01:00:00.000Z" },
     { anchor: "u2", role: "user" as const, text: "问题", ts: "2026-10-21T01:05:00.000Z" },
-    { anchor: "a2", role: "assistant" as const, text: `回答\nab-used: 测试用临时库 (${a.slice(0, 8)})`, ts: "2026-10-21T01:06:00.000Z" },
+    { anchor: "a2", role: "assistant" as const, final: true, text: `回答\nab-used: 测试用临时库 (${a.slice(0, 8)})`, ts: "2026-10-21T01:06:00.000Z" },
   ];
   scanSession(s.workDb, "claude", "s9", turns, (id) => s.project().props.get(id)?.text ?? null, "claude-opus-5-5", new Date("2026-10-21T02:00:00Z"));
   const d = buildViewData(s, new Date("2026-10-21T02:00:00Z"));
@@ -146,9 +147,11 @@ test("标注率按召回轮一一对应：一轮里两条回复都写 ab-used �
   logRecallRun(s.workDb, ctx, "nohit", 0, 1, true, new Date("2026-10-21T01:10:00Z"));
   const id = a.slice(0, 8);
   scanSession(s.workDb, "claude", "s7", [
-    { anchor: "x1", role: "assistant", text: `先说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:01:00.000Z" },
-    { anchor: "x2", role: "assistant", text: `再说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:02:00.000Z" },
-    { anchor: "x3", role: "assistant", text: `下一轮没召回\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:11:00.000Z" },
+    { anchor: "u1", role: "user", text: "问题", ts: "2026-10-21T01:00:00.000Z" },
+    { anchor: "x1", role: "assistant", final: false, text: `先说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:01:00.000Z" },
+    { anchor: "x2", role: "assistant", final: true, text: `再说一半\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:02:00.000Z" },
+    { anchor: "u2", role: "user", text: "继续", ts: "2026-10-21T01:10:00.000Z" },
+    { anchor: "x3", role: "assistant", final: true, text: `下一轮没召回\nab-used: 临时库 (${id})`, ts: "2026-10-21T01:11:00.000Z" },
   ], () => "调用 pi 做测试时用临时库", null, new Date("2026-10-21T02:00:00Z"));
   const h = buildViewData(s, new Date("2026-10-21T02:00:00Z")).telemetry.hosts.find((x) => x.host === "claude")!;
   assert.deepEqual({ recall_turns: h.recall_turns, marked_turns: h.marked_turns }, { recall_turns: 1, marked_turns: 1 });

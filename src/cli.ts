@@ -21,7 +21,7 @@ import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM,
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
-import { citeEnabled, setCite, logInjections, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
+import { citeEnabled, setCite, logInjections, logQuery, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
@@ -528,10 +528,12 @@ async function cmdSearch(argv: string[]): Promise<void> {
       }
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
-    if (hits.length) {
-      const ids = hits.map((h) => h.id);
-      telemetry(() => logInjections(store.workDb, detectCtx(store, process.cwd()), "search", ids, new Date()));
-    }
+    telemetry(() => {
+      const ctx = detectCtx(store, process.cwd());
+      const now = new Date();
+      logQuery(store.workDb, ctx, "search", now);
+      logInjections(store.workDb, ctx, "search", hits.map((h) => h.id), now);
+    });
   } finally {
     store.close();
   }
@@ -548,7 +550,12 @@ function cmdGet(argv: string[]): void {
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
-    telemetry(() => logInjections(store.workDb, detectCtx(store, process.cwd()), "get", [p.id], new Date()));
+    telemetry(() => {
+      const ctx = detectCtx(store, process.cwd());
+      const now = new Date();
+      logQuery(store.workDb, ctx, "get", now);
+      logInjections(store.workDb, ctx, "get", [p.id], now);
+    });
     const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [

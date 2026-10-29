@@ -86,7 +86,12 @@ function cwdOf(ctx: unknown): string {
 }
 
 function isSubagent(ctx: unknown): boolean {
-  return !(ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.();
+  // 异步回调拿到的 ctx 可能已被 newSession/reload 换掉，再读就抛；状态栏只是展示，按主会话处理。
+  try {
+    return !(ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.();
+  } catch {
+    return false;
+  }
 }
 
 export function createExtension(raw: Runner) {

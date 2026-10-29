@@ -1551,7 +1551,7 @@ box 上 `/workspace/agentbrain-review/viewer/`：`overview.png`、`graph.png`、
 - 查询发生与条目交付分开记录。`memory_queries` 保存 search/get 的宿主、会话、时间、来源路径；零结果 search 也记录，不在 `inject_log` 里伪造 id。主动查询率按查询事件算。
 - 宿主解析器标记完成回答。Claude Code 认 `stop_reason=end_turn`；Pi 认 `stopReason=stop`；Codex 认 `phase=final_answer` 或无错误 `task_complete.last_agent_message`；opencode 认已完成且无错误、不是工具继续执行的消息。只有这些回答进入报告与引用结算，进度、模型失败、仍在运行的轮不进入。
 - 钩子记录先按用户轮的时间边界一一匹配，包括没有完成回答的轮。没有对应钩子的轮不继承上一轮的显示开关，查询起点不再使用 5 秒容差。报告和引用在同一事务里清除旧派生值后重建。
-- 真实宿主验证统一使用 `.agents/skills/verify-agentbrain/hosts.ts`。它显式隔离测试库，按每次运行的会话断言，并只读核查正式库没有这些测试会话。
+- 真实宿主验证统一使用 `.agents/skills/verify-agentbrain/hosts.ts`（`verify.sh hosts [claude codex pi opencode]`）。它显式隔离测试库，按每次运行的会话断言，并只读核查正式库没有这些测试会话。场景：主动查询、常驻偏好、明确未用、缺报告、零结果搜索；Pi 另用本机 mock 提供商造出“进度 + 工具 + 模型失败”的轮，断言它不结算成报告。宿主没登录或额度用完记 BLOCKED，不冒充通过。
 
 **第一轮实现核对**：
 1. **采用报告持久化结构**：方案 11.9.3 留待实现决定数据落点。实现采用独立工作表 `memory_reports`（按轮记录状态、开关、主动查询标志）与 `memory_report_ids`（按条记录自报 id、对应 prop_id、是否核对通过与标题吻合度），不挤压 `recall_runs`，直接聚合报告率、采用率、主动查询率和无法核对数。

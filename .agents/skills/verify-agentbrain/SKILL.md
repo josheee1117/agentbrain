@@ -26,12 +26,15 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 
 Run all: `.agents/skills/verify-agentbrain/verify.sh run` (`--dry-run` prints the commands without running).
 
+## Real hosts
+`.agents/skills/verify-agentbrain/verify.sh hosts [claude codex pi opencode]` runs `.agents/skills/verify-agentbrain/hosts.ts` against the real hosts with an isolated test store. It asserts per scenario: host exit code, `memory_reports` status / queried, `memory_report_ids` verified, plus a read-only `sqlite3` check that none of this run's session ids reached `~/.agentbrain/store.db`. Scenarios: `search-used`, `preference`, `unused`, `unreported`, `empty-search`, and (Pi only) `progress-then-model-error` via a local mock provider. Hosts that are not logged in, or that hit quota, are reported BLOCKED rather than FAIL. Evidence: `~/.cache/verify-evidence/agentbrain/<timestamp>-hosts/`. Details and gotchas in [features/hosts.md](features/hosts.md).
+
 ## Evidence
 Logs per step + JSON status lines land in `/Users/hejiayuan/.cache/verify-evidence/agentbrain/<timestamp>/`. Cite that path. Proof standards: drive the real user path (CLI/HTTP/UI), not internal setters; capture action + resulting state; check side effects; mock only at existing production boundaries (repo fakes). Never use real secrets or prod endpoints from this skill.
 
 ## Not locally verifiable (stays unverified until a real-target run)
 - Embedding / LLM paths (embed.ts, llm.ts, curate review, work extraction) need real model keys — not run.
-- Host integrations (integrations/, launchd) on the user's real Pi/Claude/Codex — not run.
+- Host integrations beyond the `hosts` driver (installed launchd job, the user's real interactive sessions) — not run.
 
 ## Cleanup
 `.agents/skills/verify-agentbrain/verify.sh cleanup` — removes only scratch this script created; never kills by process name; evidence is kept.
