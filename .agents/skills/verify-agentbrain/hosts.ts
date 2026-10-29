@@ -260,6 +260,9 @@ function main() {
   } finally {
     db.close();
     const production = join(realHome, ".agentbrain/store.db");
+    // 没有正式库（新机器）就谈不上泄漏
+    if (!existsSync(production)) log("production-isolation.json", { production, sessions: [...sessions], skipped: "正式库不存在" });
+    else {
     const sqlIds = [...sessions].map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
     const tables = run("sqlite3", ["-readonly", production, "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('events','inject_log','recall_runs','capture_sessions','memory_queries','memory_reports','memory_report_ids','cite_scan');"]);
     assert.equal(tables.status, 0, tables.stderr);
@@ -267,6 +270,7 @@ function main() {
     const check = run("sqlite3", ["-readonly", production, sql]);
     log("production-isolation.json", { command: "sqlite3 -readonly", production, sessions: [...sessions], sql, code: check.status, output: check.stdout, error: check.stderr });
     if (check.status !== 0 || !check.stdout.trim() || check.stdout.trim().split("\n").some((line) => !line.endsWith("|0"))) failed = true;
+    }
     log("summary.json", { status: failed ? "FAIL" : results.some((r) => (r as { status: string }).status === "BLOCKED") ? "PASS_WITH_BLOCKED" : "PASS", results });
     console.log(`证据 ${ev}`);
   }
