@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS recall_runs(
   failed INTEGER NOT NULL DEFAULT 0, marked INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS recall_runs_session ON recall_runs(host, session_id);
 CREATE TABLE IF NOT EXISTS cite_scan(host TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT, scanned_at TEXT NOT NULL, PRIMARY KEY(host, session_id));
+CREATE TABLE IF NOT EXISTS memory_reports(
+  host TEXT NOT NULL, session_id TEXT NOT NULL, anchor TEXT NOT NULL, ts TEXT NOT NULL,
+  cite INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('used','unused','unreported')),
+  queried INTEGER NOT NULL, PRIMARY KEY(host,session_id,anchor));
+CREATE TABLE IF NOT EXISTS memory_report_ids(
+  host TEXT NOT NULL, session_id TEXT NOT NULL, anchor TEXT NOT NULL, short_id TEXT NOT NULL,
+  prop_id TEXT, verified INTEGER NOT NULL, title_mismatch INTEGER NOT NULL,
+  PRIMARY KEY(host,session_id,anchor,short_id),
+  FOREIGN KEY(host,session_id,anchor) REFERENCES memory_reports(host,session_id,anchor) ON DELETE CASCADE);
 `;
 
 /** 开发期的统计表（带 rank 列）结构不同，又只是可丢的 90 天统计：删掉重建，免得之后的写入和看板查询静默失败。 */
@@ -145,6 +154,8 @@ export class Store {
     this.db = openDb(storePath);
     dropPreviewTelemetry(this.db);
     this.db.exec(SCHEMA);
+    const recallCols = this.db.prepare("PRAGMA table_info(recall_runs)").all();
+    if (!recallCols.some((c) => c.name === "transcript")) this.db.exec("ALTER TABLE recall_runs ADD COLUMN transcript TEXT");
     this.fts = openDb(indexPath);
     this.fts.exec(FTS_SCHEMA);
   }

@@ -52,7 +52,7 @@ export const execRunner: Runner = makeExecRunner(CMD);
 type SessionCtx = { sessionManager?: { getSessionFile?(): string | undefined; getSessionId?(): string | undefined } };
 type UiCtx = { ui?: { setStatus?(key: string, text: string | undefined): void; notify?(m: string, t?: "info" | "warning" | "error"): void } };
 
-export type RecallState = { n: number } | { error: "timeout" | "missing" | "exit" } | null;
+export type RecallState = { error: "timeout" | "missing" | "exit" } | null;
 export type Todo = { review: number; work_failed: number } | null;
 
 /** 状态栏文字。值为 0 的段不显示；pi-cc-extensions 会剥掉颜色，所以状态只靠文字和 ⚠ 区分。 */
@@ -61,7 +61,7 @@ export function renderStatus(recall: RecallState, todo: Todo): string {
   if (recall && "error" in recall) {
     parts.push(recall.error === "missing" ? "⚠ ab 不可用" : recall.error === "timeout" ? "🧠 ab ⚠ 召回超时" : "🧠 ab ⚠ 召回出错");
   } else {
-    parts.push(recall ? `🧠 ab ${recall.n}` : "🧠 ab");
+    parts.push("🧠 ab");
   }
   if (todo?.review) parts.push(`待确认 ${todo.review}`);
   if (todo?.work_failed) parts.push(`⚠ 抽取失败 ${todo.work_failed}`);
@@ -139,8 +139,7 @@ export function createExtension(raw: Runner) {
       if ((e as { messageType?: string }).messageType === "custom") return undefined;
       // 带上 transcript_path：ab 据此认出被委派的 worker 会话，按子代理规矩召回（§21 2026-10-14）
       const file = (ctx as SessionCtx | undefined)?.sessionManager?.getSessionFile?.() ?? null;
-      // want_count：只有 Pi 要条数，ab 只在这时往 hook JSON 里多放一个 agentbrain 字段
-      const r = await run(["recall", "--hook"], { prompt: (e as { prompt?: string }).prompt, cwd: cwdOf(ctx), transcript_path: file, want_count: true }, TIMEOUT_MS, cwdOf(ctx));
+      const r = await run(["recall", "--hook"], { prompt: (e as { prompt?: string }).prompt, cwd: cwdOf(ctx), transcript_path: file }, TIMEOUT_MS, cwdOf(ctx));
       if (!r.ok) {
         recallState = { error: r.reason };
         paint(ctx);
@@ -148,14 +147,12 @@ export function createExtension(raw: Runner) {
       }
       try {
         if (!r.out.trim()) {
-          recallState = { n: 0 }; // 审稿子进程等不输出任何东西
+          recallState = null;
           paint(ctx);
           return undefined;
         }
-        const parsed = JSON.parse(r.out) as { hookSpecificOutput?: { additionalContext?: unknown }; agentbrain?: { recalled?: unknown } };
-        const n = parsed.agentbrain?.recalled;
-        // 旧版 ab 不认 want_count、不给条数：显示不带数字的"🧠 ab"，不冒充 0
-        recallState = typeof n === "number" ? { n } : null;
+        const parsed = JSON.parse(r.out) as { hookSpecificOutput?: { additionalContext?: unknown } };
+        recallState = null;
         paint(ctx);
         const content = parsed.hookSpecificOutput?.additionalContext;
         if (typeof content !== "string" || !content) return undefined;

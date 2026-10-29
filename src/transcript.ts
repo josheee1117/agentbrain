@@ -19,6 +19,7 @@ export interface Turn {
   ts?: string;
   /** 助手轮里模型自己写的文字（原文，不含工具调用行）；只调了工具的轮为空串。 */
   reply?: string;
+  final?: boolean;
 }
 
 type Part = string | { call: string };

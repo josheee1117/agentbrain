@@ -148,8 +148,11 @@ test("ab work --sweep 按仓库代码核验未确认的坑：证据对得上就�
   assert.match(got, /依据: 工具报错/);
   const rule = (await ab(["search", "hook 命令都写"])).out;
   assert.match(rule, /规则\[未确认·自动沉淀\]/, "规则不走代码核验，仍未确认");
+  const plain = await ab(["recall", "宿主子进程环境变量很少，找不到解释器"]);
+  assert.match(plain.out, /找不到解释器就报错退出/, "转正后进文本检索");
   const recall = await ab(["recall", "--hook"], { input: JSON.stringify({ prompt: "宿主子进程环境变量很少，找不到解释器", cwd: repo }) });
-  assert.match(recall.out, /找不到解释器就报错退出/, "转正后进每轮召回");
+  assert.match(recall.out, /要不要查历史记忆由你判断/, "hook 只给提醒");
+  assert.doesNotMatch(recall.out, /找不到解释器就报错退出/, "hook 不再自动检索");
 });
 
 test("ab work --dry-run 只报待处理量，不调模型、不写库", async () => {

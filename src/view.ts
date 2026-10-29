@@ -44,6 +44,15 @@ export interface ViewEntry {
 
 export type LinkType = "merged_into" | "merged_from" | "refines" | "refined_by" | "conflicts" | "supersedes" | "supersedes_pending" | "superseded_by" | "pending_correction";
 
+export interface MemoryMetrics {
+  total: number;
+  reported: number;
+  adopted: number;
+  queried: number;
+  unverifiable: number;
+  last_scanned: string | null;
+}
+
 export interface EntryUsage {
   inject_sessions: number;
   inject_total: number;
@@ -71,6 +80,7 @@ export interface Telemetry {
   hosts: HostStat[];
   capture: { failed_sessions: number; failed_by_host: Record<string, number>; deferred_windows: number };
   review_due: number;
+  memory: MemoryMetrics;
 }
 
 export interface ViewData {
@@ -120,6 +130,18 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
   const failed = rowsOf<{ host: string; n: number }>(db, "SELECT host, COUNT(*) AS n FROM capture_sessions WHERE error_code IS NOT NULL GROUP BY host");
   const deferred = rowsOf<{ n: number }>(db, "SELECT COUNT(*) AS n FROM capture_windows WHERE state='deferred'")[0]?.n ?? 0;
   const since = rowsOf<{ t: string | null }>(db, "SELECT MIN(ts) AS t FROM (SELECT ts FROM recall_runs UNION ALL SELECT ts FROM inject_log)")[0]?.t ?? null;
+  const rep = rowsOf<{ cite: number; status: string; queried: number }>(db, "SELECT cite,status,queried FROM memory_reports");
+  const citeReps = rep.filter((r) => r.cite === 1);
+  const unverifiable = (rowsOf<{ n: number }>(db, "SELECT COUNT(*) AS n FROM memory_report_ids WHERE verified=0")[0]?.n) ?? 0;
+  const lastScanned = (rowsOf<{ t: string | null }>(db, "SELECT MAX(scanned_at) AS t FROM cite_scan")[0]?.t) ?? null;
+  const memory: MemoryMetrics = {
+    total: citeReps.length,
+    reported: citeReps.filter((r) => r.status === "used" || r.status === "unused").length,
+    adopted: citeReps.filter((r) => r.status === "used").length,
+    queried: citeReps.filter((r) => r.queried === 1).length,
+    unverifiable,
+    last_scanned: lastScanned,
+  };
   return {
     since,
     recall_runs: {
@@ -135,6 +157,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
     hosts: hosts.map((h) => ({ ...h, sessions: Number(h.sessions), recall_turns: Number(h.recall_turns), marked_turns: Number(h.marked_turns) })),
     capture: { failed_sessions: failed.reduce((n, r) => n + r.n, 0), failed_by_host: Object.fromEntries(failed.map((r) => [r.host, r.n])), deferred_windows: deferred },
     review_due: reviewDue,
+    memory,
   };
 }
 
@@ -404,7 +427,7 @@ const ST={user:'用户确认',code:'代码核验',corroboration:'跨会话印证
 const STATE={active:'有效',archived:'已归档',superseded:'已被替代'};
 const LINK={merged_into:'已并入',merged_from:'合并自',refines:'补充了',refined_by:'被补充',conflicts:'冲突',supersedes:'替代了',supersedes_pending:'替代（未生效）',superseded_by:'被替代',pending_correction:'待确认纠正'};
 const EC={refines:'#64748b',refined_by:'#64748b',merged_into:'#60a5fa',merged_from:'#60a5fa',conflicts:'#ef4444',supersedes:'#e2e8f0',superseded_by:'#e2e8f0',supersedes_pending:'#f59e0b',pending_correction:'#f59e0b'};
-const PATH={recall:'相似度召回',brief:'brief'};
+const PATH={recall:'相似度召回',brief:'brief',search:'主动搜索',get:'主动查看'};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 const $=id=>document.getElementById(id),short=id=>id.slice(0,8),n=x=>Number(x||0).toLocaleString();
 const gen=new Date(D.generated),age=Math.floor((Date.now()-gen.getTime())/864e5);
@@ -441,6 +464,14 @@ Object.keys(KIND).map(k=>'<div class="row"><span>'+KIND[k]+'</span><div class="b
 '<div class="lg"><span><i style="background:#7c5cff"></i>命中</span><span><i style="background:#334155"></i>没命中</span><span><i style="background:#ef4444"></i>出错</span><span>宿主侧超时不经过 ab，不在这里</span></div></div></div>'+
 '<div class="grid" style="grid-template-columns:1.2fr 1fr"><div class="card"><h3>标注率（按宿主 / 模型）</h3><table><tr><th>宿主</th><th>模型</th><th class="num">会话</th><th class="num">开关打开时有召回的回合</th><th class="num">标了 ab-used 的回合</th><th class="num">标注率</th></tr>'+(hostRows||'<tr><td colspan="6" class="dim">还没有记录</td></tr>')+'</table>'+
 '<div class="sub" style="margin-top:6px">"用上"= 模型在回复末尾自报的 ab-used，未经人工核对；标错请纠正。</div></div>'+
+'<div class="card"><h3>记忆可见性（§11.9）</h3>'+
+'<div style="margin:4px 0 10px 0;font-size:12px;color:#8a93b2">上次扫描：'+esc(T.memory.last_scanned ? T.memory.last_scanned.slice(0, 19).replace('T', ' ') : '未扫描')+'</div>'+
+'<table><tr><th>指标</th><th class="num">数值</th></tr>'+
+'<tr><td>报告率</td><td class="num">'+(T.memory.total ? Math.round(100 * T.memory.reported / T.memory.total) + '%' : '—')+' ('+T.memory.reported+'/'+T.memory.total+')</td></tr>'+
+'<tr><td>采用率</td><td class="num">'+(T.memory.total ? Math.round(100 * T.memory.adopted / T.memory.total) + '%' : '—')+' ('+T.memory.adopted+'/'+T.memory.total+')</td></tr>'+
+'<tr><td>主动查询率</td><td class="num">'+(T.memory.total ? Math.round(100 * T.memory.queried / T.memory.total) + '%' : '—')+' ('+T.memory.queried+'/'+T.memory.total+')</td></tr>'+
+'<tr><td>无法核对数</td><td class="num">'+T.memory.unverifiable+'</td></tr>'+
+'</table></div></div>'+
 '<div class="card"><h3>调优清单（只是建议，不会自动改任何条目）</h3><table>'+
 [['从未被注入的有效条目',never,'fu=never'],['冲突 / 待确认纠正未解决',conflicts,''],['替代未生效（纠正未确认或已归档）',pendingSup,''],['已被替代却仍被注入',supStillInj,''],['标题不符的引用',mism,'fu=mismatch'],['抽取失败会话 / 延后窗口',T.capture.failed_sessions+' / '+T.capture.deferred_windows,''],['到期待复审',T.review_due,'']].map(r=>'<tr><td>'+(r[2]?'<a data-filter="'+r[2]+'">'+r[0]+'</a>':r[0])+'</td><td class="num">'+r[1]+'</td></tr>').join('')+'</table></div></div>'+
 '<div class="card"><h3>注入最多的记忆（按会话数）</h3><table><tr><th>记忆</th><th class="num">注入会话</th><th class="num">注入次数</th><th class="num">被引用会话</th></tr>'+

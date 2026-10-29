@@ -8,6 +8,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-cli-")));
 const home = join(dir, "store");
@@ -90,6 +91,28 @@ function ab(args: string[], cwd: string, storeHome = home, extraEnv: Record<stri
     return { out: err.stdout ?? "", err: err.stderr ?? "", code: err.status ?? -1 };
   }
 }
+
+test("hook 只注入偏好和提醒，不再检索；search/get/brief 交付带会话", () => {
+  const own = join(dir, "visibility-store");
+  const remembered = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "自动检索不应注入的特有旧坑", "--summary", "fixture"], alpha, own);
+  assert.equal(remembered.code, 0);
+  const id = /\[([0-9a-f]{8})\]/.exec(remembered.out)![1];
+  const hook = spawnSync("node", ["--import", networkGuard, CLI, "recall", "--hook"], {
+    cwd: alpha, encoding: "utf8", input: JSON.stringify({ prompt: "自动检索不应注入的特有旧坑", cwd: alpha }),
+    env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION },
+  });
+  assert.equal(hook.status, 0);
+  const content = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext;
+  assert.match(content, /要不要查历史记忆由你判断/);
+  assert.doesNotMatch(content, /自动检索不应注入的特有旧坑/);
+  for (const args of [["brief"], ["search", "特有旧坑"], ["get", id]]) assert.equal(ab(args, alpha, own).code, 0);
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    const rows = db.prepare("SELECT path,host,session_id FROM inject_log WHERE substr(prop_id,1,8)=? ORDER BY id").all(id);
+    assert.deepEqual(rows.map((r) => r.path), ["brief", "search", "get"]);
+    assert.ok(rows.every((r) => r.host === "pi" && r.session_id === SESSION));
+  } finally { db.close(); }
+});
 
 test("已登记仓库 remember 一个坑后 brief 能看到", () => {
   const r = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 里用全局锁", "--summary", "讨论锁"], alpha);
@@ -387,7 +410,7 @@ function recall(args: string[], cwd: string, storeHome: string, stdin?: string):
   return { out: r.stdout ?? "", err: r.stderr ?? "", code: r.status ?? -1 };
 }
 
-test("recall --hook 命中项目坑，排除未确认、归档、事实和未标 for_workers 的全局规则", () => {
+test("recall 保留文本检索，recall --hook 改为偏好和提醒（不自动检索）", () => {
   const own = join(dir, "recall-home");
   const remember = (args: string[], cwd = alpha) => ab(["remember", ...args], cwd, own);
   const pit = remember(["--confirmed", "--kind", "pitfall", "--text", "别在 alpha 召回里用全局锁", "--summary", "召回"]);
@@ -415,34 +438,28 @@ test("recall --hook 命中项目坑，排除未确认、归档、事实和未标
   ]);
   assert.equal(marked.code, 0, marked.err);
 
+  const plain = recall(["recall", "召回 全局锁 子代理"], alpha, own);
+  assert.equal(plain.code, 0, plain.err);
+  assert.match(plain.out, /^<agentbrain-recall>\n/);
+  assert.match(plain.out, /别在 alpha 召回里用全局锁/);
+  assert.match(plain.out, /子代理也要看的召回规则/);
+  assert.doesNotMatch(plain.out, /未确认的召回坑|已归档的召回决定|召回事实|未标 for_workers/);
+
   const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "召回 全局锁 子代理", cwd: alpha, extra: 1 }));
   assert.equal(hit.code, 0, hit.err);
   assert.equal(hit.err, "");
   const json = JSON.parse(hit.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
   assert.equal(json.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   const ctx = json.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /<agentbrain-recall>[\s\S]*别在 alpha 召回里用全局锁[\s\S]*<\/agentbrain-recall>/);
-  assert.match(ctx, /\[[0-9a-f]{8}\] 坑:/);
-  assert.match(ctx, /子代理也要看的召回规则/);
-  assert.match(ctx, /\[[0-9a-f]{8}\] 规则:/);
-  assert.doesNotMatch(ctx, /未确认的召回坑|已归档的召回决定|召回事实|未标 for_workers/);
+  assert.match(ctx, /要不要查历史记忆由你判断/);
+  assert.doesNotMatch(ctx, /别在 alpha 召回里用全局锁/);
 
-  const plain = recall(["recall", "子代理也要看的召回规则"], alpha, own);
-  assert.equal(plain.code, 0, plain.err);
-  assert.match(plain.out, /^<agentbrain-recall>\n/);
-  assert.doesNotMatch(plain.out, /hookSpecificOutput/);
-
-  const short = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "  召  ", cwd: alpha }));
   const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 召回", cwd: alpha }));
   const bad = recall(["recall", "--hook"], alpha, own, "not json");
-  assert.equal(short.code, 0);
-  assert.equal(short.out, "");
-  assert.equal(short.err, "");
   assert.equal(slash.code, 0);
   assert.equal(slash.out, "");
   assert.equal(bad.code, 0);
   assert.equal(bad.out, "");
-  assert.equal(bad.err, "");
 });
 
 test("recall 超过 3 条只出前 3 条", () => {
@@ -455,12 +472,11 @@ test("recall 超过 3 条只出前 3 条", () => {
     );
     assert.equal(r.code, 0, r.err);
   }
-  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "召回限额", cwd: alpha }));
+  const hit = recall(["recall", "召回限额"], alpha, own);
   assert.equal(hit.code, 0, hit.err);
-  const ctx = (JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
-  const lines = ctx.split("\n").filter((l) => l.startsWith("- ["));
+  const lines = hit.out.split("\n").filter((l) => l.startsWith("- ["));
   assert.equal(lines.length, 3);
-  assert.match(ctx, /召回限额第 [0-4] 条坑/);
+  assert.match(hit.out, /召回限额第 [0-4] 条坑/);
 });
 
 test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPromptSubmit 的 additionalContext，capture 命令静默成功", () => {
@@ -497,7 +513,7 @@ test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPrompt
     assert.equal(r.status, 0, file);
     const out = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
     assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit", file);
-    assert.match(out.hookSpecificOutput.additionalContext, /^<agentbrain-recall>\n- \[[0-9a-f]{8}\] 坑: 接线样例要能召回这个坑\n<\/agentbrain-recall>$/, file);
+    assert.match(out.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/, file);
   }
 });
 
@@ -798,7 +814,7 @@ test("ab status --line：只数到期待复审（不数刚记下的和已确认�
   assert.equal(existsSync(keyRead), false, "status --line 不读钥匙串");
 });
 
-test("recall --hook 带 want_count 时多给本轮召回条数（常驻偏好不算），不带时输出不变", () => {
+test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录不注入", () => {
   const own = join(dir, "recall-count-home");
   const remember = (args: string[]) => ab(["remember", ...args], alpha, own);
   assert.equal(remember(["--confirmed", "--kind", "pitfall", "--text", "别在 alpha 计数里用全局锁", "--summary", "计数"]).code, 0);
@@ -806,23 +822,17 @@ test("recall --hook 带 want_count 时多给本轮召回条数（常驻偏好不
   const pref = remember(["--confirmed", "--global", "--kind", "rule", "--text", "说人话", "--summary", "偏好"]);
   const prefId = pref.out.match(/\[([0-9a-f]{8})\]/)![1];
   assert.equal(ab(["guidance", prefId], alpha, own).code, 0);
-  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, want_count: true }));
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha }));
   assert.equal(hit.code, 0, hit.err);
-  const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string }; agentbrain: { recalled: number } };
-  const rows = j.hookSpecificOutput.additionalContext.split("<agentbrain-recall>")[1].split("\n").filter((l) => /^- \[/.test(l));
-  assert.ok(rows.length >= 1);
+  const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } };
   assert.match(j.hookSpecificOutput.additionalContext, /说人话/);
-  assert.equal(j.agentbrain.recalled, rows.length);
-  const plain = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha }));
-  assert.equal("agentbrain" in JSON.parse(plain.out), false, "Claude/Codex 的 hook JSON 不多字段");
-  const miss = recall(["recall", "--hook"], nowhere, join(dir, "recall-count-empty"), JSON.stringify({ prompt: "毫不相干的话", cwd: nowhere, want_count: true }));
-  assert.equal(miss.code, 0, miss.err);
-  assert.deepEqual(JSON.parse(miss.out), { agentbrain: { recalled: 0 } });
-  const missPlain = recall(["recall", "--hook"], nowhere, join(dir, "recall-count-empty"), JSON.stringify({ prompt: "毫不相干的话", cwd: nowhere }));
-  assert.equal(missPlain.out, "");
+  assert.match(j.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/);
+  assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /别在 alpha 计数里用全局锁/);
+  const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 计数", cwd: alpha }));
+  assert.equal(slash.out, "");
 });
 
-test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab 打 ab status", async () => {
+test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab status", async () => {
   const own = join(dir, "pi-ext-home");
   assert.equal(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 扩展里用全局锁", "--summary", "扩展"], alpha, own).code, 0);
   {
@@ -860,10 +870,10 @@ test("Pi 扩展接真 ab：会话开始挂待办，召回后显示条数，/ab �
     await new Promise((r) => setTimeout(r, 1500));
     assert.equal(statuses.at(-1), "🧠 ab · 待确认 1"); // 真 ab status --line 的结果；失败数 0 不显示
     const res = (await handlers.get("before_agent_start")!({ prompt: "扩展 全局锁" }, ctx)) as { message: { content: string } };
-    assert.match(res.message.content, /别在 alpha 扩展里用全局锁/);
-    assert.equal(statuses.at(-1), "🧠 ab 1 · 待确认 1");
+    assert.match(res.message.content, /要不要查历史记忆由你判断/);
+    assert.equal(statuses.at(-1), "🧠 ab · 待确认 1");
     await commands.get("ab")!.handler("", ctx);
-    assert.match(notes.at(-1)!, /^🧠 ab 1 · 待确认 1\n\n[\s\S]*到期待复审: 1/);
+    assert.match(notes.at(-1)!, /^🧠 ab · 待确认 1\n\n[\s\S]*到期待复审: 1/);
   } finally {
     process.chdir(cwd0);
   }

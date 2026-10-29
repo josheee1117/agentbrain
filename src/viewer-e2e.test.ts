@@ -50,15 +50,16 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
   const id = /\[([0-9a-f]{8})\]/.exec(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 召回里用全局锁，token=abcd1234efgh5678 要换", "--summary", "锁"]))![1];
   ab(["remember", "--confirmed", "--kind", "rule", "--text", "beta 的全局锁规则", "--summary", "beta"], beta);
 
-  // 1. 开关默认关：召回块没有指令；注入和召回结果都记下来，带宿主和会话
+  // 1. 开关默认关：召回块只有提醒，没有指令；不自动检索；记录 recall_runs
   const off = hook();
-  assert.match(off, new RegExp(`\\[${id}\\] 坑:`));
-  assert.doesNotMatch(off, /ab-used/);
+  assert.match(off, /要不要查历史记忆由你判断/);
+  assert.doesNotMatch(off, /记忆：|ab-used/);
+  assert.doesNotMatch(off, new RegExp(`\\[${id}\\] 坑:`));
   let d = db();
-  const inj = d.prepare("SELECT host,session_id,path,substr(prop_id,1,8) AS p FROM inject_log WHERE path='recall'").all() as any[];
-  assert.deepEqual(inj.map((r) => ({ ...r })), [{ host: "pi", session_id: SESSION, path: "recall", p: id }]);
-  assert.deepEqual({ ...(d.prepare("SELECT host,outcome,n_hits,cite FROM recall_runs").get() as any) }, { host: "pi", outcome: "hit", n_hits: 1, cite: 0 });
+  assert.deepEqual({ ...(d.prepare("SELECT host,outcome,n_hits,cite FROM recall_runs").get() as any) }, { host: "pi", outcome: "nohit", n_hits: 0, cite: 0 });
   d.close();
+  // 模型主动 search 并交付
+  ab(["search", "全局锁"], alpha);
   // 模型回答了这一轮（没有回复的回合会被当成模型调用失败，不进统计）
   appendFileSync(transcript, line({ type: "message", id: "a0", parentId: "u1", timestamp: new Date().toISOString(),
     message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: "先按账户加锁。" }] } }));
@@ -68,27 +69,27 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
   assert.match(setup, /引用指令：开/);
   assert.equal(existsSync(join(fakeHome, ".config/opencode/AGENTS.md")), false);
   const on = hook();
-  assert.match(on, /ab-used: 简短标题 \(id\)，多条用；分隔。没用上就不写。）\n<\/agentbrain-recall>$/);
+  assert.match(on, /记忆：简短标题 \(8位id\)；…/);
 
   // 3. 助手回复引用了这条（标题贴切）和一个编造的 id
   appendFileSync(transcript, line({ type: "message", id: "a1", parentId: "a0", timestamp: new Date(Date.now() + 1000).toISOString(),
-    message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: `换成按账户的锁。\nab-used: alpha 召回别用全局锁 (${id})；编的 (deadbeef)` }] } }));
+    message: { role: "assistant", provider: "cpa", model: "glm-5.3", content: [{ type: "text", text: `换成按账户的锁。\n记忆: alpha 召回别用全局锁 (${id})；编的 (deadbeef)` }] } }));
   const out = join(dir, "view.html");
   const v = ab(["view", "--no-open", "--out", out]);
-  assert.match(v, /记到 1 次引用，丢弃 1 个/);
+  assert.match(v, /记到 1 次引用/);
   const data = dataOf(out);
   const e = data.entries.find((x: any) => x.id.startsWith(id));
-  assert.equal(e.usage.inject_sessions, 1, "同一会话两次注入只算 1 个会话");
-  assert.equal(e.usage.inject_total, 2);
+  assert.equal(e.usage.inject_sessions, 1);
   assert.equal(e.usage.cited_sessions, 1);
   assert.equal(e.usage.mismatched, 0);
-  const pi = data.telemetry.hosts.find((h: any) => h.host === "pi");
-  assert.deepEqual(pi, { host: "pi", model: "cpa/glm-5.3", sessions: 1, recall_turns: 1, marked_turns: 1 });
-  assert.equal(data.telemetry.recall_runs.hit, 2);
+  assert.equal(data.telemetry.memory.total, 1);
+  assert.equal(data.telemetry.memory.reported, 1);
+  assert.equal(data.telemetry.memory.adopted, 1);
+  assert.equal(data.telemetry.memory.unverifiable, 1);
 
-  // 6. 关掉开关：召回块不再带指令
+  // 4. 关掉开关：召回块不再带指令
   ab(["setup", "--cite", "off"]);
-  assert.doesNotMatch(hook(), /ab-used/);
+  assert.doesNotMatch(hook(), /记忆：简短标题/);
 });
 
 test("库被别的进程占着写锁时，召回 hook 照常输出，统计放弃不等", () => {

@@ -9,9 +9,10 @@ export const RETENTION_DAYS = 90;
 /** 标题与条目正文的字面重合低于此值记为"标题不符"（只做提示，不丢引用）。 */
 export const TITLE_MATCH_MIN = 0.3;
 export const CITE_KEY = "cite";
-export const CITE_INSTRUCTION = "（本轮回答若实际依据了上面某条，在回复最后单独一行写：ab-used: 简短标题 (id)，多条用；分隔。没用上就不写。）";
+export const CITE_INSTRUCTION = "每个最终回答末尾单独一行写「记忆：简短标题 (8位id)；…」，只列实际影响结论或做法的记忆，包括常驻偏好、brief、主动查询和前几轮所得；看过、提到或驳斥的不算。没用上写「记忆：本轮未用」。";
+export const RECALL_REMINDER = "要不要查历史记忆由你判断：涉及以前的决定、陌生模块或可能踩过的坑时，先 ab search；上下文已经够了就不用查。";
 
-export type InjectPath = "recall" | "brief";
+export type InjectPath = "recall" | "brief" | "search" | "get";
 export type RecallOutcome = "hit" | "nohit" | "error";
 
 export interface Ctx {
@@ -43,8 +44,8 @@ export function logInjections(db: DatabaseSync, ctx: Ctx, path: InjectPath, ids:
 }
 
 export function logRecallRun(db: DatabaseSync, ctx: Ctx, outcome: RecallOutcome, nHits: number, ms: number, cite: boolean, now: Date): void {
-  db.prepare("INSERT INTO recall_runs(ts,host,session_id,project_id,outcome,n_hits,ms,cite) VALUES(?,?,?,?,?,?,?,?)")
-    .run(now.toISOString(), ctx.host, ctx.session_id, ctx.project_id, outcome, nHits, Math.round(ms), cite ? 1 : 0);
+  db.prepare("INSERT INTO recall_runs(ts,host,session_id,project_id,outcome,n_hits,ms,cite,transcript) VALUES(?,?,?,?,?,?,?,?,?)")
+    .run(now.toISOString(), ctx.host, ctx.session_id, ctx.project_id, outcome, nHits, Math.round(ms), cite ? 1 : 0, ctx.transcript);
 }
 
 /** 召回 hook 已经输出之后调用：宿主要等 hook 进程退出，所以库被占着时宁可不记，也不按默认的 5 秒等锁。 */
@@ -69,6 +70,7 @@ export function prune(db: DatabaseSync, now: Date, days = RETENTION_DAYS): numbe
   n += Number(db.prepare("DELETE FROM inject_log WHERE ts<?").run(cut).changes);
   n += Number(db.prepare("DELETE FROM recall_runs WHERE ts<?").run(cut).changes);
   n += Number(db.prepare("DELETE FROM cite_scan WHERE scanned_at<?").run(cut).changes);
+  n += Number(db.prepare("DELETE FROM memory_reports WHERE ts<?").run(cut).changes);
   return n;
 }
 
@@ -77,16 +79,18 @@ export interface Citation {
   title: string;
 }
 
-const AB_USED = /^\s*`?\s*ab-used\s*[:：]\s*(.*?)`?\s*$/i;
+const AB_USED = /^\s*`?\s*(?:ab-used|记忆)\s*[:：]\s*(.*?)`?\s*$/i;
 const ID_IN_PARENS = /[(（]\s*([0-9a-f]{8})\s*[)）][\s。．.，,、；;！!？?]*$/i;
 /** 分号总是分隔；顿号和逗号只在紧跟"(id)"时才算分隔，标题里的不切开。 */
 const SEGMENT_END = /[；;]|(?<=[)）])\s*[，,、]/;
 
-export function parseAbUsed(text: string): Citation[] {
+/** null 表示明确未用，空数组表示没有可解析的采用报告。 */
+export function parseAbUsed(text: string): Citation[] | null {
   const lines = text.split(/\r?\n/);
   for (let i = lines.length - 1; i >= 0; i--) {
     const m = AB_USED.exec(lines[i]);
     if (!m) continue;
+    if (/^本轮未用[。.!！]?\s*$/.test(m[1])) return null;
     const out: Citation[] = [];
     for (const seg of m[1].split(SEGMENT_END)) {
       const s = seg.trim();
@@ -165,26 +169,28 @@ export interface ScanResult {
  * 带有效引用的回复归到它之前最近的一次召回（不论命中与否）；那次是命中才把它记为已标注，
  * 所以一次召回最多算一轮，标注率不会超过 100%。
  */
-export function scanSession(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (propId: string) => string | null, model: string | null, now: Date): ScanResult {
+export function scanSession(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (propId: string) => string | null, model: string | null, now: Date, preferences: readonly string[] = []): ScanResult {
   const res: ScanResult = { marked_turns: 0, cited: 0, dropped: 0, mismatched: 0 };
-  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND path='recall' AND substr(prop_id,1,8)=? AND (? IS NULL OR ts<=?) ORDER BY ts DESC, id DESC LIMIT 1");
+  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND substr(prop_id,1,8)=? AND (? IS NULL OR ts<=?) ORDER BY ts DESC, id DESC LIMIT 1");
   const mark = db.prepare("UPDATE inject_log SET cited=1, cited_at=?, cited_title=?, title_mismatch=? WHERE id=?");
   const runBefore = db.prepare("SELECT id,outcome FROM recall_runs WHERE host=? AND session_id=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT 1");
   const marked = new Set<number>();
   for (const t of turns) {
     if (t.role !== "assistant") continue;
     const cites = parseAbUsed(t.reply ?? t.text);
-    if (!cites.length) continue;
+    if (!cites?.length) continue;
     let any = false;
     for (const c of cites) {
       const row = find.get(host, sessionId, c.id, t.ts ?? null, t.ts ?? null) as { id: number; prop_id: string } | undefined;
-      if (!row) {
+      const pref = preferences.filter((id) => id.startsWith(c.id));
+      const propId = row?.prop_id ?? (pref.length === 1 ? pref[0] : null);
+      if (!propId) {
         res.dropped++;
         continue;
       }
-      const body = textOf(row.prop_id) ?? "";
+      const body = textOf(propId) ?? "";
       const bad = c.title !== "" && titleOverlap(c.title, body) < TITLE_MATCH_MIN;
-      mark.run(t.ts ?? now.toISOString(), c.title || null, bad ? 1 : 0, row.id);
+      if (row) mark.run(t.ts ?? now.toISOString(), c.title || null, bad ? 1 : 0, row.id);
       res.cited++;
       if (bad) res.mismatched++;
       any = true;
@@ -198,13 +204,65 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
   for (const id of marked) setMarked.run(id);
   res.marked_turns = marked.size;
   markFailedTurns(db, host, sessionId, turns);
+  scanReports(db, host, sessionId, turns, textOf, now, preferences);
   db.prepare("INSERT INTO cite_scan(host,session_id,model,scanned_at) VALUES(?,?,?,?) ON CONFLICT(host,session_id) DO UPDATE SET model=excluded.model, scanned_at=excluded.scanned_at")
     .run(host, sessionId, model, now.toISOString());
   return res;
 }
 
+function scanReports(db: DatabaseSync, host: Host, sessionId: string, turns: readonly Turn[], textOf: (id: string) => string | null, now: Date, preferences: readonly string[]): void {
+  const find = db.prepare("SELECT id,prop_id FROM inject_log WHERE host=? AND session_id=? AND substr(prop_id,1,8)=? AND ts<=? ORDER BY ts DESC,id DESC LIMIT 1");
+  const runBefore = db.prepare("SELECT ts,cite FROM recall_runs WHERE host=? AND session_id=? AND ts<=? ORDER BY ts DESC,id DESC LIMIT 1");
+  const query = db.prepare("SELECT 1 FROM inject_log WHERE host=? AND session_id=? AND path IN ('search','get') AND ts>=? AND ts<=? LIMIT 1");
+  const report = db.prepare("INSERT INTO memory_reports(host,session_id,anchor,ts,cite,status,queried) VALUES(?,?,?,?,?,?,?)");
+  const idRow = db.prepare("INSERT INTO memory_report_ids(host,session_id,anchor,short_id,prop_id,verified,title_mismatch) VALUES(?,?,?,?,?,?,?)");
+  let userTime: string | undefined;
+  const finals: { turn: Turn; start?: string }[] = [];
+  let candidate: Turn | undefined;
+  const flush = () => {
+    if (candidate) finals.push({ turn: candidate, start: userTime });
+    candidate = undefined;
+  };
+  for (const t of turns) {
+    if (t.role === "user") { flush(); userTime = t.ts; }
+    if (t.role === "assistant" && (t.reply ?? t.text).trim() && t.final !== false) {
+      if (t.final === true) { candidate = t; flush(); }
+      else candidate = t;
+    }
+  }
+  flush();
+  const cutoff = new Date(now.getTime() - RETENTION_DAYS * 86_400_000).toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare("DELETE FROM memory_reports WHERE host=? AND session_id=?").run(host, sessionId);
+    for (const { turn: t, start } of finals) {
+      if (!t.ts || t.ts < cutoff) continue;
+      const run = runBefore.get(host, sessionId, t.ts) as { ts: string; cite: number } | undefined;
+      const parsed = parseAbUsed(t.reply ?? t.text);
+      const status = parsed === null ? "unused" : parsed.length ? "used" : "unreported";
+      const begin = run && (!start || Date.parse(run.ts) >= Date.parse(start) - 5000) ? run.ts : start;
+      const queried = begin ? !!query.get(host, sessionId, begin, t.ts) : false;
+      report.run(host, sessionId, t.anchor, t.ts, run?.cite ?? 0, status, queried ? 1 : 0);
+      for (const c of parsed ?? []) {
+        const delivery = find.get(host, sessionId, c.id, t.ts) as { id: number; prop_id: string } | undefined;
+        const pref = preferences.filter((id) => id.startsWith(c.id));
+        const propId = delivery?.prop_id ?? (pref.length === 1 ? pref[0] : null);
+        const bad = propId !== null && c.title !== "" && titleOverlap(c.title, textOf(propId) ?? "") < TITLE_MATCH_MIN;
+        idRow.run(host, sessionId, t.anchor, c.id, propId, propId ? 1 : 0, bad ? 1 : 0);
+        if (delivery) db.prepare("UPDATE inject_log SET cited=1,cited_at=?,cited_title=?,title_mismatch=? WHERE id=?").run(t.ts, c.title, bad ? 1 : 0, delivery.id);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+}
+
 export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: string; transcript: string | null }[] {
-  return db.prepare("SELECT host,session_id,MAX(transcript) AS transcript FROM inject_log WHERE path='recall' AND host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id").all() as any;
+  return db.prepare(`SELECT host,session_id,MAX(transcript) AS transcript FROM (
+    SELECT host,session_id,transcript FROM inject_log
+    UNION ALL SELECT host,session_id,transcript FROM recall_runs
+    UNION ALL SELECT host,session_id,transcript FROM capture_sessions WHERE ephemeral=0
+    UNION ALL SELECT host,session_id,NULL AS transcript FROM memory_reports
+  ) WHERE host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id`).all() as { host: Host; session_id: string; transcript: string | null }[];
 }
 
 /**

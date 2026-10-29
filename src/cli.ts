@@ -21,7 +21,7 @@ import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM,
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
-import { citeEnabled, setCite, logInjections, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, type Ctx as TelemetryCtx } from "./telemetry.ts";
+import { citeEnabled, setCite, logInjections, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
@@ -147,13 +147,11 @@ async function cmdRecall(argv: string[]): Promise<void> {
   let query: string;
   let cwd: string;
   let worker = false;
-  let wantCount = false; // Pi 状态栏要本轮召回条数（§11.7）；Claude/Codex 不传，输出不变
   const t0 = performance.now();
   let hookRaw: Record<string, unknown> | null = null;
   if (values.hook) {
     if (process.env[REVIEWER_ENV]) return; // 审稿子进程不注入召回
     const raw = JSON.parse(await readStdin()) as { prompt?: unknown; cwd?: unknown; transcript_path?: unknown; want_count?: unknown; worker?: unknown };
-    wantCount = raw.want_count === true;
     hookRaw = raw as Record<string, unknown>;
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
@@ -173,46 +171,59 @@ async function cmdRecall(argv: string[]): Promise<void> {
     cite = false;
   }
   try {
+    if (values.hook) {
+      // 每轮钩子不再自动检索（§11.9.3）：斜杠命令开头的提问不注入
+      if (query.trim().startsWith("/")) return;
+
+      // 1. 常驻偏好（guidanceBlock，不变）
+      const used: string[] = [];
+      let prefs = "";
+      try {
+        prefs = guidanceBlock(store.project().props.values(), worker, new Set(), used);
+      } catch {
+        prefs = "";
+      }
+
+      // 2. 提醒块（带报告要求，若开关打开）
+      let reminder = `<agentbrain-recall>\n${RECALL_REMINDER}\n</agentbrain-recall>\n`;
+      if (cite) reminder = withCiteInstruction(reminder);
+
+      const block = prefs + reminder;
+      process.stdout.write(JSON.stringify({
+        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
+      }) + "\n");
+
+      if (ctx) telemetry(() => recordRecall(store.workDb, ctx, "nohit", [], performance.now() - t0, cite, new Date()));
+      if (used.length) markUsed(store, used);
+      return;
+    }
+
+    // 手动调用：ab recall <文本> 保留检索（评测 A 组用旧提交）
     const used: string[] = [];
     const stale: string[] = [];
     let recalled: string;
     try {
       recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
     } catch (e) {
-      if (ctx) telemetry(() => recordRecall(store.workDb, ctx, "error", [], performance.now() - t0, cite, new Date()));
       throw e;
     }
-    const recalledCount = used.length; // 常驻偏好在下面才追加进 used，不算"召回"
-    const recallIds = used.slice();
-    if (cite && recalled) recalled = withCiteInstruction(recalled);
-    // 常驻偏好不看相似度，每轮都给（斜杠命令除外）；本轮召回已给出的不重复
     let prefs = "";
     if (!query.trim().startsWith("/")) {
       try {
         prefs = guidanceBlock(store.project().props.values(), worker, new Set(used), used);
       } catch {
-        prefs = ""; // fail-open
+        prefs = "";
       }
     }
     const block = prefs + recalled;
-    if (!block) {
-      if (wantCount) process.stdout.write(JSON.stringify({ agentbrain: { recalled: 0 } }) + "\n");
-    } else if (values.hook) {
-      process.stdout.write(JSON.stringify({
-        hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
-        ...(wantCount ? { agentbrain: { recalled: recalledCount } } : {}),
-      }) + "\n");
-    } else {
-      process.stdout.write(block);
-    }
-    if (ctx) telemetry(() => recordRecall(store.workDb, ctx, recallIds.length ? "hit" : "nohit", recallIds, performance.now() - t0, cite, new Date()));
+    if (block) process.stdout.write(block);
     if (!block) return;
     markUsed(store, used);
     if (stale.length) {
       try {
         store.queueReverify(stale, new Date());
       } catch {
-        // 库忙或只读时跳过，下次召回会再排
+        // 库忙或只读时跳过
       }
     }
   } finally {
@@ -224,6 +235,9 @@ function refreshCitations(store: Store, now: Date): { sessions: number; cited: n
   const r = { sessions: 0, cited: 0, dropped: 0, unreadable: 0 };
   const props = store.project().props;
   const textOf = (id: string) => props.get(id)?.text ?? null;
+  const preferences = [...props.values()]
+    .filter((p) => p.state === "active" && p.confirmed && p.guidance && p.project_id === null)
+    .map((p) => p.id);
   for (const s of (() => { try { return sessionsToScan(store.workDb); } catch { return []; } })()) {
     const file = s.transcript ?? locateTranscript(s.host, s.session_id);
     if (!file) {
@@ -232,7 +246,7 @@ function refreshCitations(store: Store, now: Date): { sessions: number; cited: n
     }
     try {
       const turns = cleanTranscript(s.host, file).turns;
-      const res = scanSession(store.workDb, s.host, s.session_id, turns, textOf, modelOf(s.host, file), now);
+      const res = scanSession(store.workDb, s.host, s.session_id, turns, textOf, modelOf(s.host, file), now, preferences);
       r.sessions++;
       r.cited += res.cited;
       r.dropped += res.dropped;
@@ -241,6 +255,23 @@ function refreshCitations(store: Store, now: Date): { sessions: number; cited: n
     }
   }
   return r;
+}
+
+function detectCtx(store: Store, cwd: string): TelemetryCtx {
+  let host: Host | null = null;
+  let session_id: string | null = null;
+  let transcript: string | null = null;
+  try {
+    const found = detectHost();
+    if (found.ok && found.detection) {
+      host = found.detection.host;
+      session_id = found.detection.session_id;
+      transcript = found.detection.transcript;
+    }
+  } catch {
+    // 忽略检测失败，保持 null
+  }
+  return { host, session_id, transcript, project_id: projectIdOf(store, cwd) };
 }
 
 function telemetry(fn: () => void): void {
@@ -321,7 +352,9 @@ function cmdBrief(argv: string[]): void {
     }
     process.stdout.write(out);
     markUsed(store, used);
-    telemetry(() => logInjections(store.workDb, { host: null, session_id: null, transcript: null, project_id: projectIdOf(store, process.cwd()) }, "brief", used, new Date()));
+    if (used.length) {
+      telemetry(() => logInjections(store.workDb, detectCtx(store, process.cwd()), "brief", used, new Date()));
+    }
   } finally {
     store.close();
   }
@@ -495,6 +528,10 @@ async function cmdSearch(argv: string[]): Promise<void> {
       }
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
+    if (hits.length) {
+      const ids = hits.map((h) => h.id);
+      telemetry(() => logInjections(store.workDb, detectCtx(store, process.cwd()), "search", ids, new Date()));
+    }
   } finally {
     store.close();
   }
@@ -511,6 +548,7 @@ function cmdGet(argv: string[]): void {
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
+    telemetry(() => logInjections(store.workDb, detectCtx(store, process.cwd()), "get", [p.id], new Date()));
     const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
     const linesOut = [
@@ -1015,6 +1053,13 @@ async function cmdWork(argv: string[]): Promise<void> {
       return;
     }
     const x = r.receipt;
+    if (values.sweep && !values["dry-run"]) {
+      try {
+        refreshCitations(store, new Date());
+      } catch {
+        // 扫描失败不影响整体汇报
+      }
+    }
     console.log(
       [
         `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : ""}`,
@@ -1142,7 +1187,7 @@ const USAGE = `用法:
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi|opencode>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
-  ab recall [--hook] [文本…]            每轮召回：当前项目和全局的已确认坑/规则/决定；另可带 1 条无争议的未确认坑/规则/决定（标未确认）
+  ab recall [--hook] [文本…]            每轮钩子（--hook 时注入常驻偏好与提醒，不再自动检索）或按文本检索相关记忆
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
                                     前 8 条全文并列出关联，第 9–16 名每条一行
