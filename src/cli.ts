@@ -1273,7 +1273,7 @@ const USAGE = `用法:
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
                                     前 8 条全文并列出关联，第 9–16 名每条一行
-  ab search --scene <design,code,review>  只列出该场景的全部规则（不和关键词同用）
+  ab search --scene <design,code,review>  只列出该场景的全部规则（含未确认；不和关键词、--archived、--kind 其他种类同用）
   ab get <id 前缀> [--expand]       看一条：双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
                                     --expand 展开记下这条时的原始讨论（Pensieve 导入条打开原 md 文件）
   ab confirm <id 前缀>
