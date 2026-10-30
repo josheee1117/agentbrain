@@ -1674,7 +1674,7 @@ box 上 `/workspace/agentbrain-review/viewer/`：`overview.png`、`graph.png`、
 - `RememberBody.scenes?: Scene[]`、`TagBody.scenes?: Scene[]`（整组替换，`[]` 清空）；投影 `Proposition.scenes: Scene[]`，旧数据缺字段为 `[]`。
 - 写：`ab remember … --scene design,code`；改：`ab tag <id 前缀> --scene design,code`，`--scene none` 清空。取值在 CLI 边界校验，未知值直接报错退出。tag 事件按字段是否出现更新：没给 `scenes` 不动，给 `[]` 才清空（不能写成 `b.scenes ?? []`）。
 - 只对规则有意义（坑和决定本来就按项目给）；`--scene` 配非 rule 报错。
-- 不和常驻偏好叠加：`scenes` 非空与 `guidance=true` 互斥，`ab tag --scene` 和 `ab guidance` 两个入口都检查并报错（否则 `guidanceBlock` 每轮注入，绕过场景）。
+- 不和常驻偏好叠加：`scenes` 非空与 `guidance=true` 互斥，`ab tag --scene` 和 `ab guidance` 两个入口都检查并报错。写入方绕过了这两处检查时也不到每轮注入：`guidanceBlock` 跳过 `scenes` 非空的条目（兜底）；`ab curate` 遵守同样合同，带场景的条目转正时不打 guidance，改写生成的新条目复制旧条目的 `scenes`（和 `correct` 一样），带场景时不带 guidance。
 - 纠正继承：`ab correct` 把旧条目当时的 `scenes` 写进新的 remember 事件（和现在复制 `for_workers` 一样，`src/cli.ts:654-661`）；要换标签另跑 `ab tag`。Pensieve 重导的替代（`src/pensieve.ts`）同样复制。
 
 **brief**：
@@ -2241,7 +2241,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
-- 2026-10-30 新增 §11.10：规则按场景（design / code / review）打标签；带场景的规则移出 brief 通用段，按 `--scene` 单独成段加载，没有场景时只给一行索引；`herdr-dispatch` 按派活单类别在发出的文本里加显式 `--scene` 指令。用户同日提出并同意"写设计、派 astra review、再派实现"。astra xhigh 只读 review 报 6 重要 2 次要，主会话核实后全部采纳：场景段先按项目范围筛、correct 继承标签、search `--scene` 只列举不配关键词、去掉 `AB_SCENE` 改显式指令且放在 pstack 前缀之后、D8 加 code 并把 R2 改成自带标准的清单、总预算合同与实际交付 id、scenes 与 guidance 互斥。
+- 2026-10-30 新增 §11.10：规则按场景（design / code / review）打标签；带场景的规则移出 brief 通用段，按 `--scene` 单独成段加载，没有场景时只给一行索引；`herdr-dispatch` 按派活单类别在发出的文本里加显式 `--scene` 指令。用户同日提出并同意"写设计、派 astra review、再派实现"。astra xhigh 只读 review 报 6 重要 2 次要，主会话核实后全部采纳：场景段先按项目范围筛、correct 继承标签、search `--scene` 只列举不配关键词、去掉 `AB_SCENE` 改显式指令且放在 pstack 前缀之后、D8 加 code 并把 R2 改成自带标准的清单、总预算合同与实际交付 id、scenes 与 guidance 互斥。同日实现后代码 review 又核实 4 条并修掉：`guidanceBlock` 兜底跳过带场景条目、`curate` 转正不打 guidance 且改写复制 `scenes`、`search --scene` 不再过滤未确认规则、`--scene` 配 `--kind` 非 rule 或 `--archived` 在 CLI 边界报错。
 - 2026-10-29 用户授权修复 §11.9 review 核实的问题。查询事件独立记录、最终回答按宿主结束字段识别、钩子与用户轮一一归属、引用事务重建，宿主验证合为技能内的隔离断言驱动。不优化全量重扫，不改正式库和宿主全局配置。
 
 - 2026-10-29 用户批准实现 §11.9（"开始改吧"），11.9.6 三问按推荐定；入口对比评测改为 Claude Code、Codex、Pi 三宿主。

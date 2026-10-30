@@ -123,25 +123,33 @@ test("写入：已确认、origin=import、带出处；重导不重复；文件�
   const dir = join(base, `s${n++}`);
   mkdirSync(dir);
   const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
-  const r = repo({ "decisions/a.md": DECISION });
+  const r = repo({ "decisions/a.md": DECISION, "maxims/m.md": MAXIM });
   const first = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
-  assert.equal(first.created.length, 1);
-  const p = store.project().props.get(first.created[0])!;
+  assert.equal(first.created.length, 2);
+  const dec = first.created.find((id) => store.project().props.get(id)!.kind === "decision")!;
+  const maxim = first.created.find((id) => store.project().props.get(id)!.kind === "rule")!;
+  const p = store.project().props.get(dec)!;
   assert.equal(p.confirmed, true);
   assert.equal(p.confirmed_by, "user");
   assert.equal(p.origin, "import");
   assert.equal(p.import_ref!.id, "2025-12-11-selective-null");
   assert.equal(p.import_ref!.path, join(r, ".pensieve/decisions/a.md"));
   const again = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
-  assert.deepEqual([again.created.length, again.corrected.length, again.unchanged], [0, 0, 1]);
-  store.lifecycle("tag", first.created[0], null, { scenes: ["design"] }); // 重导替代时复制旧条目的场景
-  writeFileSync(join(r, ".pensieve/decisions/a.md"), DECISION.replace("禁止 trimToNull。", "禁止 trimToNull 和 trimToEmpty。"));
+  assert.deepEqual([again.created.length, again.corrected.length, again.unchanged], [0, 0, 2]);
+  // 场景只对规则有意义（§11.10）：给导入的 maxim 打标签，重导替代时复制
+  store.lifecycle("tag", maxim, null, { scenes: ["design"] });
+  writeFileSync(join(r, ".pensieve/maxims/m.md"), MAXIM.replace("Prefer changing data shape so edge cases become the default path.", "Prefer changing data shape so even guarded edge cases become the default path."));
   const changed = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   assert.equal(changed.corrected.length, 1);
   const props = store.project().props;
-  assert.equal(props.get(first.created[0])!.state, "superseded");
-  assert.match(props.get(changed.corrected[0])!.text, /trimToEmpty/);
+  assert.equal(props.get(maxim)!.state, "superseded");
+  assert.match(props.get(changed.corrected[0])!.text, /even guarded edge cases/);
   assert.deepEqual(props.get(changed.corrected[0])!.scenes, ["design"]);
+  assert.equal(props.get(changed.corrected[0])!.kind, "rule");
+  // 替代之后两代条目的标签各自独立：改旧的，新的不跟着变
+  store.lifecycle("tag", maxim, null, { scenes: ["review"] });
+  assert.deepEqual(store.project().props.get(changed.corrected[0])!.scenes, ["design"]);
+  assert.deepEqual(store.project().props.get(maxim)!.scenes, ["review"]);
   store.lifecycle("archive", changed.corrected[0], null);
   const after = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   assert.deepEqual([after.created.length, after.corrected.length, after.archivedSkip], [0, 0, 1]);

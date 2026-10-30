@@ -28,6 +28,9 @@ test("投影：remember 带 scenes；tag 整组替换；没给字段不动；[] 
     assert.deepEqual(s.project().props.get(id)!.scenes, ["design", "code"]);
     s.lifecycle("tag", id, null, { guidance: false }); // 没给 scenes：不动
     assert.deepEqual(s.project().props.get(id)!.scenes, ["design", "code"]);
+    const guid = s.remember(null, "s", false, { kind: "rule", text: "偏好", confirmed: true, guidance: true, source: src });
+    s.lifecycle("tag", guid, null, { scenes: [] }); // 只写 scenes：guidance 不动
+    assert.equal(s.project().props.get(guid)!.guidance, true);
     s.lifecycle("tag", id, null, { scenes: ["review"] }); // 整组替换
     assert.deepEqual(s.project().props.get(id)!.scenes, ["review"]);
     s.lifecycle("tag", id, null, { scenes: [] }); // [] 才清空
@@ -57,6 +60,8 @@ function seeded(): Seeded {
   ids.aDesign = s.remember(ap, "s", false, { kind: "rule", text: "alpha 设计规范 DA", confirmed: true, scenes: ["design"], source: src });
   ids.aPit = s.remember(ap, "s", false, { kind: "pitfall", text: "alpha 坑 P", confirmed: true, source: src });
   ids.bReview = s.remember(bp, "s", false, { kind: "rule", text: "beta review 规范 RB", confirmed: true, scenes: ["review"], source: src });
+  // 乙也有一条同场景（code）的规则：范围筛选漏了就会串到甲
+  ids.bCode = s.remember(bp, "s", false, { kind: "rule", text: "beta 开发规范 CB", confirmed: true, scenes: ["code"], source: src });
   return { s, ids };
 }
 
@@ -118,6 +123,55 @@ test("pm 目录与未登记目录只给全局场景规则", () => {
     assert.match(un, /^<agentbrain scope="unregistered" scene="code">/);
     assert.match(un, /全局开发规范 C1/);
     assert.doesNotMatch(un, /alpha 开发规范 CA|beta review 规范 RB/);
+  } finally {
+    s.close();
+  }
+});
+
+test("跨项目隔离：同场景的规则只出现在自己的项目里（项目目录、pm、未登记目录、--worker）", () => {
+  const { s } = seeded();
+  try {
+    const inAlpha = brief(s, alpha, undefined, false, [], ["code"]);
+    assert.match(inAlpha, /alpha 开发规范 CA/);
+    assert.doesNotMatch(inAlpha, /beta 开发规范 CB/);
+    const inBeta = brief(s, beta, undefined, false, [], ["code"]);
+    assert.match(inBeta, /beta 开发规范 CB/);
+    assert.doesNotMatch(inBeta, /alpha 开发规范 CA/);
+    for (const cwd of [pm, nowhere]) {
+      const out = brief(s, cwd, undefined, false, [], ["code"]);
+      assert.doesNotMatch(out, /alpha 开发规范 CA|beta 开发规范 CB/, cwd);
+    }
+    const w = brief(s, alpha, undefined, true, [], ["code"]);
+    assert.match(w, /alpha 开发规范 CA/);
+    assert.doesNotMatch(w, /beta 开发规范 CB/);
+    // 显式项目名同样只看该项目
+    assert.doesNotMatch(brief(s, nowhere, "alpha", true, [], ["code"]), /beta 开发规范 CB|beta review 规范 RB/);
+  } finally {
+    s.close();
+  }
+});
+
+test("预算：通用段和场景段同时挤满，场景段正文不超 2000；请求的场景没有条目时总上限仍是 2000", () => {
+  const { s } = seeded();
+  try {
+    for (let i = 0; i < 40; i++) {
+      s.remember(null, "s", false, { kind: "rule", text: `通用规则 ${i} ${"细节".repeat(20)}`, confirmed: true, source: src });
+      s.remember(null, "s", false, { kind: "rule", text: `场景规则 ${i} ${"细节".repeat(20)}`, confirmed: true, scenes: ["code"], source: src });
+    }
+    const out = brief(s, alpha, undefined, false, [], ["code"]);
+    const sceneBody = out
+      .slice(out.indexOf("场景规则（"))
+      .split("\n")
+      .filter((l) => l.startsWith("- ["))
+      .join("\n");
+    assert.ok(sceneBody.length > 0 && sceneBody.length <= BRIEF_SCENE_MAX_CHARS, `场景段正文 ${sceneBody.length}`);
+    assert.ok(out.length <= BRIEF_MAX_CHARS + BRIEF_SCENE_MAX_CHARS, `总长 ${out.length}`);
+    assert.doesNotMatch(out, /已截断/);
+    // 问一个没有条目的场景：场景段空，总上限不能因此放大到 4000
+    const none = brief(s, alpha, undefined, false, [], ["review"]);
+    assert.ok(none.length <= BRIEF_MAX_CHARS, `总长 ${none.length}`);
+    assert.match(none, /scene="review"/);
+    assert.doesNotMatch(none, /场景规则（review）：/);
   } finally {
     s.close();
   }
