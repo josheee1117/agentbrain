@@ -180,6 +180,24 @@ env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' nod
 exit 0
 "
     step cli-cross-degraded bash -c "(cd '$REPO' && env AB_HOME='$S/ab_cross_no_embed' AGENTBRAIN_HOME='$S/ab_cross_no_embed' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选') > '$EV/cli-cross-degraded.log' 2>&1; grep -qF '跨项目段也要算查询向量' '$EV/cli-cross-degraded.log' && ! grep -qF '其他项目里相近的：' '$EV/cli-cross-degraded.log'"
+
+    # 3e. 归属显示（§8.11.3）：project_unresolved 三处标「[归属未定]」；成功跨项目归属 ab get 写清归属
+    step cli-attr-seed node -e "
+import('$ROOT/src/store.ts').then(({ Store }) => {
+  const s = new Store('$XP_HOME/store.db', '$XP_HOME/index.db');
+  const here = s.ensureProject('testrepo'), there = s.ensureProject('testrepo2');
+  const src = (x) => ({ host: 'pi', session_id: 'verify', transcript: null, anchor: 'u1', summary: x });
+  const a = s.remember(here, 'verify', false, { kind: 'decision', text: '归属未定的缓存决定（verify）', why: '当时没确认记到哪个项目', confirmed: false, origin: 'extract', source: src('缓存选型'), value: { flags: ['project_unresolved'] } });
+  const b = s.remember(there, 'verify', false, { kind: 'decision', text: '跨项目归属的缓存决定（verify）', why: '单机内存扛不住峰值', confirmed: true, origin: 'extract', source: src('缓存选型'), value: { session_project: 'testrepo', flags: [] } });
+  s.close();
+  console.log(a.slice(0, 8) + ' ' + b.slice(0, 8));
+});
+"
+    ATTR_UNRESOLVED=$(cut -d' ' -f1 "$EV/cli-attr-seed.log")
+    ATTR_CROSS=$(cut -d' ' -f2 "$EV/cli-attr-seed.log")
+    step cli-attr-search bash -c "(cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '归属未定的缓存决定') > '$EV/cli-attr-search.log' 2>&1; grep -qF \"[$ATTR_UNRESOLVED] testrepo 决定[未确认·自动沉淀][归属未定]: 归属未定的缓存决定（verify）\" '$EV/cli-attr-search.log'"
+    step cli-attr-get-unresolved bash -c "env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ATTR_UNRESOLVED' > '$EV/cli-attr-get-unresolved.log' 2>&1; grep -qF '[归属未定]' '$EV/cli-attr-get-unresolved.log' && grep -qF '归属: 会话在 testrepo，抽取没能确认归属' '$EV/cli-attr-get-unresolved.log'"
+    step cli-attr-get-cross bash -c "env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ATTR_CROSS' > '$EV/cli-attr-get-cross.log' 2>&1; grep -qF '归属: 会话在 testrepo，抽取判定归属 testrepo2' '$EV/cli-attr-get-cross.log'"
     kill $XP_PID 2>/dev/null
 
 
