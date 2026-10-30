@@ -40,7 +40,7 @@ export function workerQuoteAudit(
     if (rel && rel.state === "active" && rel.confirmed && rel.confirmed_by === "user") continue;
     const sources: boolean[] = [];
     if (USER_BASES.has(p.basis ?? "") && p.evidence.some((e) => e.role === "user")) sources.push(worker(p.source.host, p.source.session_id, p.source.transcript));
-    for (const s of p.extra_sources) if (USER_BASES.has(s.basis) && s.quote_sha256.length) sources.push(worker(s.host, s.session_id, null));
+    for (const s of p.extra_sources) if (USER_BASES.has(s.basis) && s.evidence.length) sources.push(worker(s.host, s.session_id, null));
     if (!sources.length || !sources.every(Boolean)) continue;
     if (saidInMain(p)) continue;
     (p.confirmed && p.confirmed_by === "user" ? plan.review : plan.demote).push(p);
@@ -102,6 +102,6 @@ export class MainSaid {
 export function userQuoteHashes(p: Proposition): Set<string> {
   const out = new Set<string>();
   for (const e of p.evidence) if (e.role === "user") out.add(e.quote_sha256);
-  for (const s of p.extra_sources) for (const h of s.quote_sha256) out.add(h);
+  for (const s of p.extra_sources) for (const e of s.evidence) out.add(e.quote_sha256);
   return out;
 }

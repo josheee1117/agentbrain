@@ -118,7 +118,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         `宿主: ${!found.ok ? `宿主检测失败: ${found.error}` : found.detection ? `${found.detection.host}  会话 ${found.detection.session_id ?? "（未取得）"}  transcript ${found.detection.transcript ? "已找到" : "未找到"}` : "未检测到宿主"}`,
         `active: ${scopeLines.join("、") || "无"}`,
         vectorLine,
-        `doctor: orphan 事件 ${proj.orphans}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
+        `doctor: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `opencode: ${opencode}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,

@@ -2,8 +2,18 @@
  * L2 合同（设计 §5.3、§9.1、§19.4）：L1 事件体、投影出的 Proposition，以及投影函数本身。
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
+import { secretKinds } from "./sanitize.ts";
+
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
-export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate";
+export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate" | "detail";
+
+export const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
+
+/** §8.11.2：详情正文只给决定、事实、坑（规则必须一行说清）。 */
+export const BODY_KINDS: readonly PropKind[] = ["decision", "note", "pitfall"];
+export const BODY_MAX_CHARS = 40000;
+export const ALTERNATIVES_MAX = 5;
+export const ALTERNATIVE_FIELD_MAX_CHARS = 200;
 export type Host = "claude" | "codex" | "pi" | "opencode";
 /** 只表示条目还在不在用；可信程度另看 confirmed / confirmed_by（visibility.ts 的 trustOf）。候选区已去掉（§8.8）。 */
 export type PropState = "active" | "archived" | "superseded";
@@ -40,11 +50,24 @@ export type RelationType = "new" | "duplicate" | "refines" | "conflicts" | "supe
 /** 谁让这条转正：用户、代码核验、跨会话印证。旧数据缺字段按用户。 */
 export type ConfirmedBy = "user" | "code" | "corroboration";
 
-/** transcript 里的证据坐标。不存原文，只存引文的 sha256（§13.3）。 */
+/**
+ * transcript 里的证据坐标（§13.3）。quote 是逐字核对、过滤密钥之后实际算哈希的那段原话（§8.11.2），
+ * 不变量 sha256(quote) === quote_sha256；旧事件只留哈希，投影出不带 quote 的引用。
+ * said_at 是这段原话所在轮的时间，没有就缺省（不拿条目的 said_at 代替）。
+ */
 export interface EvidenceRef {
   anchor: string;
   role: "user" | "assistant" | "tool";
   quote_sha256: string;
+  quote?: string;
+  said_at?: string;
+}
+
+/** 讨论时否定掉的方案（§8.11.2）。evidence 指向本条 evidence[] 的下标；手写没有原话可指，缺省。 */
+export interface Alternative {
+  option: string;
+  rejected_because: string;
+  evidence?: number;
 }
 
 /** 代码证据：仓库内相对路径 + 行号，或一个 commit。quote 是核对过的原文片段（已脱敏，≤200 字）。 */
@@ -104,6 +127,16 @@ export interface RememberBody extends ModelProvenance {
   topic?: TopicProvenance;
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
   value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
+  /** 详情正文（§8.11.2）：决定、事实、坑能带，正文仍是一行标题。上限 BODY_MAX_CHARS，不截断。 */
+  body?: string;
+  /** 讨论时否定掉的方案（§8.11.2）：只有决定能带。 */
+  alternatives?: Alternative[];
+}
+
+/** detail 事件：给已有条目补上原来没有的详情（§8.11.2）。不换 id、不改确认状态和关联。 */
+export interface DetailBody {
+  body?: string;
+  alternatives?: Alternative[];
 }
 
 export interface TopicProvenance {
@@ -181,7 +214,8 @@ export interface ExtraSource {
   host: Host | null;
   session_id: string | null;
   basis: Basis;
-  quote_sha256: string[];
+  /** 追加证据也完整保存原话；旧事件只有哈希，投影出不带 quote 的引用（§8.11.2）。 */
+  evidence: EvidenceRef[];
 }
 
 export interface Proposition {
@@ -226,6 +260,10 @@ export interface Proposition {
   /** 关系判定判为与之冲突的条目；只标记，从不替代对方。 */
   conflicts_with: string | null;
   import_ref: ImportRef | null;
+  /** 详情正文；旧数据为 null（§8.11.2）。 */
+  body: string | null;
+  /** 否定掉的方案；旧数据为 []。 */
+  alternatives: Alternative[];
   /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
   guidance: boolean;
   /** 场景标签（§11.10）；旧数据缺字段为 []。 */
@@ -241,6 +279,8 @@ export interface Projection {
   props: Map<string, Proposition>;
   /** 指向不存在/已清除目标的 meta-lifecycle 事件，fail-closed 跳过并计数（§14.2） */
   orphans: number;
+  /** 被忽略的详情字段数：条目已有 body 或 alternatives 时 detail 不覆盖（§8.11.2，与 orphans 同类诊断）。 */
+  detail_ignored: number;
   ephemeral: number;
   purged: number;
 }
@@ -261,6 +301,7 @@ export interface EventRow {
 export function fold(rows: EventRow[]): Projection {
   const props = new Map<string, Proposition>();
   let orphans = 0;
+  let detail_ignored = 0;
   let ephemeral = 0;
   let purged = 0;
   for (const r of rows) {
@@ -309,6 +350,8 @@ export function fold(rows: EventRow[]): Projection {
         merged_into: null,
         conflicts_with: null,
         import_ref: b.import_ref ?? null,
+        body: typeof b.body === "string" ? b.body : null,
+        alternatives: Array.isArray(b.alternatives) ? b.alternatives : [],
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         scenes: Array.isArray(b.scenes) ? b.scenes : [],
@@ -325,6 +368,19 @@ export function fold(rows: EventRow[]): Projection {
     if (r.kind === "evidence" || r.kind === "relate" || r.kind === "verify") {
       const b = JSON.parse(r.body) as ModelProvenance;
       target.model_outputs.push({ event_id: r.id, kind: r.kind, model: b.model ?? null, prompt_version: b.prompt_version ?? null });
+    }
+    if (r.kind === "detail") {
+      const b = JSON.parse(r.body) as DetailBody;
+      // fail-closed：只补原来没有的字段，不覆盖已有内容
+      if (typeof b.body === "string") {
+        if (target.body === null) target.body = b.body;
+        else detail_ignored++;
+      }
+      if (Array.isArray(b.alternatives) && b.alternatives.length) {
+        if (!target.alternatives.length) target.alternatives = b.alternatives;
+        else detail_ignored++;
+      }
+      continue;
     }
     if (r.kind === "confirm") {
       const b = JSON.parse(r.body) as ConfirmBody;
@@ -365,7 +421,7 @@ export function fold(rows: EventRow[]): Projection {
         host: b.source.host,
         session_id: b.source.session_id,
         basis: b.basis,
-        quote_sha256: b.evidence.map((e) => e.quote_sha256),
+        evidence: b.evidence,
       });
       continue;
     }
@@ -417,5 +473,64 @@ export function fold(rows: EventRow[]): Projection {
     target.state = "superseded";
     target.superseded_by = p.id;
   }
-  return { props, orphans, ephemeral, purged };
+  return { props, orphans, detail_ignored, ephemeral, purged };
+}
+
+// ---------- 写入 L1 前的统一检查（§8.11.2：种类、长度、密钥只在入口查一次） ----------
+
+function tooLong(what: string, n: number, max: number): never {
+  throw new Error(`${what}太长：${n} 字，上限 ${max} 字`);
+}
+
+function scanSecret(what: string, text: string | undefined): void {
+  if (text !== undefined && secretKinds(text).length) throw new Error(`${what}里含密钥，先删掉再记`);
+}
+
+/**
+ * 校验否掉的方案（§8.11.2）：只有决定能带、最多 5 项、各字段 ≤200 字、不含密钥。
+ * evidence 下标越界的项由 keepAlternatives 丢掉，不算错误。
+ */
+export function checkAlternatives(kind: PropKind, alternatives: Alternative[] | undefined): void {
+  if (!alternatives?.length) return;
+  if (kind !== "decision") throw new Error(`否掉的方案只能记在决定上，这是一条${KIND_LABEL[kind]}`);
+  if (alternatives.length > ALTERNATIVES_MAX) throw new Error(`否掉的方案最多 ${ALTERNATIVES_MAX} 项，收到 ${alternatives.length} 项`);
+  for (const a of alternatives) {
+    if (!a.option?.trim() || !a.rejected_because?.trim()) throw new Error("否掉的方案要同时写方案和否掉的原因");
+    if ([...a.option].length > ALTERNATIVE_FIELD_MAX_CHARS || [...a.rejected_because].length > ALTERNATIVE_FIELD_MAX_CHARS)
+      throw new Error(`否掉的方案每项最多 ${ALTERNATIVE_FIELD_MAX_CHARS} 字`);
+    scanSecret("否掉的方案", a.option);
+    scanSecret("否掉的方案", a.rejected_because);
+  }
+}
+
+/** 丢掉下标越界的方案（§8.11.2：引用的原话不存在就丢掉这一项，不丢整条）；没有剩下的返回 undefined。 */
+export function keepAlternatives(alternatives: Alternative[] | undefined, evidenceCount: number): Alternative[] | undefined {
+  const kept = alternatives?.filter((a) => a.evidence === undefined || (a.evidence >= 0 && a.evidence < evidenceCount));
+  return kept?.length ? kept : undefined;
+}
+
+/** 正文这一个字段的检查（种类、长度、密钥）。导入重导时要单独判 body：不过就不写这个字段，其他字段照常导。 */
+export function checkBodyField(kind: PropKind, body: string | undefined): void {
+  if (body === undefined) return;
+  if (!BODY_KINDS.includes(kind)) throw new Error(`${KIND_LABEL[kind]}必须一行说清，不能带正文（正文只能给决定、事实、坑）`);
+  if ([...body].length > BODY_MAX_CHARS) tooLong("正文", [...body].length, BODY_MAX_CHARS);
+  scanSecret("正文", body);
+}
+
+/** 写 remember 事件前的检查：种类、长度、密钥。违反的抛错，调用方（CLI）报错退出。 */
+export function checkRememberBody(b: RememberBody): void {
+  checkBodyField(b.kind, b.body);
+  checkAlternatives(b.kind, b.alternatives);
+  scanSecret("正文", b.text);
+  scanSecret("背景", b.why);
+  for (const e of b.evidence ?? []) scanSecret("原话", e.quote);
+  // evidence 下标越界的方案在这里丢掉（导入、抽取、手写都不再各自判断）
+  b.alternatives = keepAlternatives(b.alternatives, b.evidence?.length ?? 0);
+}
+
+/** 写 detail 事件前的检查。目标种类和原话条数由调用方从投影里取。 */
+export function checkDetailBody(kind: PropKind, b: DetailBody, evidenceCount: number): void {
+  checkBodyField(kind, b.body);
+  checkAlternatives(kind, b.alternatives);
+  b.alternatives = keepAlternatives(b.alternatives, evidenceCount);
 }

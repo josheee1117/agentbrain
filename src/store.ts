@@ -13,7 +13,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { cosine, fromBlob, toBlob } from "./embed.ts";
-import { fold, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
+import { fold, checkDetailBody, checkRememberBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
 
 const BUSY_TIMEOUT_MS = 5000;
 export const MAX_EMBED_PER_SYNC = 200;
@@ -139,9 +139,22 @@ function openDb(path: string): DatabaseSync {
   return db;
 }
 
-/** 检索（全文和向量）用的文本：正文加为什么。召回的字面通道也用它。 */
+/** 向量输入上限：超出时只截 body（§8.11.2），text 和 why 全进。 */
+export const VEC_TEXT_MAX_CHARS = 6000;
+
+/** 检索（全文和向量）用的文本：正文加为什么加详情。召回的字面通道也用它。 */
 export function indexText(p: Proposition): string {
-  return p.why ? `${p.text}\n${p.why}` : p.text;
+  return vectorText(p);
+}
+
+/** 向量和全文索引的输入：text + why + body，body 超出上限时截短。 */
+export function vectorText(p: Proposition): string {
+  const head = p.why ? `${p.text}\n${p.why}` : p.text;
+  if (!p.body) return head;
+  const room = VEC_TEXT_MAX_CHARS - [...head].length - 1;
+  if (room <= 0) return head;
+  const body = [...p.body];
+  return `${head}\n${body.length > room ? body.slice(0, room).join("") : p.body}`;
 }
 
 function textHash(text: string): string {
@@ -194,7 +207,32 @@ export class Store {
   // ---------- L1 追加 ----------
 
   remember(projectId: string | null, sessionId: string | null, ephemeral: boolean, body: RememberBody): string {
+    checkRememberBody(body); // 种类、长度、密钥在入口一次查完（§8.11.2），内部不再重复判断
     return this.append("remember", projectId, sessionId, ephemeral, null, body);
+  }
+
+  /** detail 事件：给已有条目补上原来没有的正文和否掉的方案（§8.11.2）。不换 id、不改确认状态和关联。 */
+  detail(targetId: string, sessionId: string | null, body: DetailBody): string {
+    const p = this.project().props.get(targetId);
+    if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
+    checkDetailBody(p.kind, body, p.evidence.length);
+    return this.append("detail", p.project_id, sessionId, false, targetId, body);
+  }
+
+  /**
+   * 补详情（onlyIfNeeded）：条目已经有的字段不补，全都有就不写事件。
+   * 导入重导用：只在正文、否掉的方案、原话都齐了说“不用补”。返回写入的事件 id 或 null。
+   */
+  detailIfMissing(targetId: string, sessionId: string | null, body: DetailBody): string | null {
+    const p = this.project().props.get(targetId);
+    if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
+    const wantBody = body.body !== undefined && p.body === null;
+    const wantAlt = !!body.alternatives?.length && !p.alternatives.length;
+    if (!wantBody && !wantAlt) return null;
+    return this.detail(targetId, sessionId, {
+      ...(wantBody ? { body: body.body } : {}),
+      ...(wantAlt ? { alternatives: body.alternatives } : {}),
+    });
   }
 
   /** archive/reactivate/confirm/unconfirm/tag/stage/curate：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
@@ -317,6 +355,16 @@ export class Store {
    */
   commit(appends: PendingAppend[], work: (db: DatabaseSync, ids: string[]) => void): string[] {
     const ids = appends.map(() => randomUUID());
+    // 抽取和导入也走这个入口：remember/detail 的种类、长度、密钥检查在这里一并跑
+    const props = this.project().props;
+    for (const a of appends) {
+      if (a.kind === "remember") checkRememberBody(a.body as RememberBody);
+      else if (a.kind === "detail") {
+        const target = a.target_id ? props.get(a.target_id) : undefined;
+        if (!target) throw new Error(`unknown or purged proposition: ${a.target_id}`);
+        checkDetailBody(target.kind, a.body as DetailBody, target.evidence.length);
+      }
+    }
     const ins = this.db.prepare(
       "INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)",
     );

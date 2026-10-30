@@ -469,7 +469,7 @@ function distinctUserSessions(p: Proposition, extra: { host: Host | null; sessio
     list.push({ key: `${host}:${sid}`, quotes });
   };
   add(p.source.host, p.source.session_id, p.basis, p.evidence.filter((e) => e.role === "user").map((e) => e.quote_sha256));
-  for (const s of p.extra_sources) add(s.host, s.session_id, s.basis, s.quote_sha256);
+  for (const s of p.extra_sources) add(s.host, s.session_id, s.basis, s.evidence.map((e) => e.quote_sha256));
   if (extra) add(extra.host, extra.session_id, extra.basis, extra.quote_sha256);
   // 同一句原话出现在两个会话里多半是 resume/fork 复制的历史：后出现的那个会话不算独立
   const quotesBy = new Map<string, Set<string>>();
