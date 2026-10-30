@@ -94,10 +94,27 @@ async function updateVectors(store: Store): Promise<string | null> {
   }
 }
 
-/** 读路径标记：未确认、自动沉淀、关系未判定（§9.4.4）、与代码不符。 */
+/** 归属没确认的条目（§8.11.3）：读路径都标出来，不能悄悄当成会话项目的事实。 */
+function unresolvedMark(p: Proposition): string {
+  return p.value?.flags?.includes("project_unresolved") ? "[归属未定]" : "";
+}
+
+/**
+ * §8.11.3 归属说明：成功归到别的项目的，写清会话在哪、抽取判归哪个项目，人才能看出错归并纠正；
+ * 归属没确认的写清原因。会话项目和归属项目相同时不显示。
+ */
+function ownershipLine(p: Proposition, names: Map<string, string>): string {
+  const here = SCOPE_LABEL(p, names);
+  if (p.value?.flags?.includes("project_unresolved")) return `归属: 会话在 ${here}，抽取没能确认归属（这条暂记在会话项目）`;
+  const session = p.value?.session_project;
+  return session && session !== here ? `归属: 会话在 ${session}，抽取判定归属 ${here}` : "";
+}
+
+/** 读路径标记：未确认、自动沉淀、归属未定、关系未判定（§9.4.4）、与代码不符。 */
 function marks(p: Proposition): string {
   return [
     p.confirmed ? "" : p.origin === "extract" ? "[未确认·自动沉淀]" : "[未确认]",
+    unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
     p.stale ? "[与代码不符]" : "",
   ].join("");
@@ -653,7 +670,7 @@ function cmdGet(argv: string[]): void {
       : [];
     const quotes = quoteLines(p);
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${unresolvedMark(p)}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
       p.confirmed && p.confirmed_by === "corroboration" ? "已由跨会话印证转正（两个以上会话里用户都这样说过）" : "",
       p.expired ? `到期未确认，已归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
@@ -663,6 +680,7 @@ function cmdGet(argv: string[]): void {
       ...altLines,
       p.body ? `正文:\n${p.body}` : "",
       ...quotes,
+      ownershipLine(p, names),
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",

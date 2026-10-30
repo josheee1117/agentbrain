@@ -1307,6 +1307,67 @@ test("§8.11 抽取入口：写 L1 的同一处拒绝含密钥的条，界面报
   s.close();
 });
 
+test("§8.11.3 归属显示：project_unresolved 的条目在 search、跨项目段、ab get 三处都标「[归属未定]」", async () => {
+  const own = join(dir, "attr-unresolved");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const alphaId = s.ensureProject("alpha");
+  const betaId = s.ensureProject("beta");
+  const srcOf = (summary: string) => ({ host: "pi" as const, session_id: "s", transcript: null, anchor: "a", summary });
+  // 本项目：归属没定的条目
+  const here = s.remember(alphaId, "s", false, {
+    kind: "decision", text: "缓存层写法待定 SIM0.9", why: "当时没确认记到哪个项目", confirmed: false, origin: "extract",
+    source: srcOf("缓存选型"), value: { flags: ["project_unresolved"] },
+  });
+  // 别的项目：归属未定的条目（跨项目段要标）
+  const there = s.remember(betaId, "s", false, {
+    kind: "note", text: "beta 的缓存笔记 SIM0.95", confirmed: false, origin: "extract",
+    source: srcOf("缓存选型"), value: { flags: ["project_unresolved"] },
+  });
+  s.close();
+
+  const search = ab(["search", "缓存层写法"], alpha, own);
+  assert.equal(search.code, 0, search.err);
+  assert.match(search.out, new RegExp(`^\\[${here.slice(0, 8)}\\].*\\[归属未定\\]`, "m"), search.out);
+  const head = search.out.split("\n").indexOf("其他项目里相近的：");
+  assert.ok(head >= 0, search.out);
+  const crossLine = search.out.split("\n").slice(head + 1).find((l) => l.startsWith(`[${there.slice(0, 8)}]`));
+  assert.ok(crossLine, search.out);
+  assert.match(crossLine!, /\[归属未定\]/, `跨项目段也要标：${crossLine}`);
+
+  const g = ab(["get", here.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  assert.match(g.out, /\[归属未定\]/, g.out);
+  assert.match(g.out, /会话在 alpha，抽取没能确认归属/, "ab get 要说清为什么标归属未定");
+});
+
+test("§8.11.3 归属显示：成功跨项目归属的条目，ab get 多一行「归属：会话在 X，抽取判定归属 Y」", async () => {
+  const own = join(dir, "attr-cross");
+  mkdirSync(own, { recursive: true });
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const alphaId = s.ensureProject("alpha");
+  const betaId = s.ensureProject("beta");
+  const cross = s.remember(betaId, "s", false, {
+    kind: "decision", text: "缓存层用 Redis", why: "单机内存扛不住峰值", confirmed: true, origin: "extract",
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "缓存选型" },
+    value: { session_project: "alpha", flags: [] },
+  });
+  // 会话项目 = 最终项目的条目不显示归属行
+  const same = s.remember(alphaId, "s", false, {
+    kind: "decision", text: "日志采样率 10%", why: "全量太贵", confirmed: true, origin: "extract",
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "采样" },
+    value: { session_project: "alpha", flags: [] },
+  });
+  s.close();
+  const g = ab(["get", cross.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  assert.match(g.out, /^归属: 会话在 alpha，抽取判定归属 beta$/m, g.out);
+  const g2 = ab(["get", same.slice(0, 8)], alpha, own);
+  assert.doesNotMatch(g2.out, /^归属: /, `同项目不显示归属行：${g2.out}`);
+});
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
@@ -1360,3 +1421,4 @@ test("brief 放不下的整条跳过，不硬截断结尾", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+

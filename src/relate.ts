@@ -11,6 +11,15 @@ import { sanitize } from "./sanitize.ts";
 export type RelateOutcome = "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
 const OUTCOMES: RelateOutcome[] = ["duplicate", "refines", "conflicts", "unrelated", "unsure"];
 const MAX_REASON_CHARS = 200;
+/** 每条正文进关系判定的上限（§8.11.3）：太短判不出实质差异，太长占满窗口。 */
+export const RELATE_BODY_MAX_CHARS = 2000;
+
+/** 正文进输入时的写法：超过上限截断并注明；否掉的方案全给。 */
+function clipBody(body: string): string {
+  const chars = [...body.replace(/\s+/g, " ").trim()];
+  if (chars.length <= RELATE_BODY_MAX_CHARS) return chars.join("");
+  return `${chars.slice(0, RELATE_BODY_MAX_CHARS).join("")}…（正文已截断）`;
+}
 
 export interface RelateItem {
   prop: Proposition;
@@ -39,8 +48,8 @@ export const RELATE_PROMPT_VERSION = promptVersion(SYSTEM);
 
 function line(p: Proposition): string {
   const why = p.why ? `（理由：${p.why}）` : "";
-  const body = p.body ? `（正文：${p.body.replace(/\s+/g, " ").trim().slice(0, 300)}）` : "";
-  const alts = p.alternatives?.length ? `（否掉的方案：${p.alternatives.map((a) => `${a.option}（${a.rejected_because}）`).join("；").slice(0, 300)}）` : "";
+  const body = p.body ? `（正文：${clipBody(p.body)}）` : "";
+  const alts = p.alternatives?.length ? `（否掉的方案：${p.alternatives.map((a) => `${a.option}（${a.rejected_because}）`).join("；")}）` : "";
   return sanitize(`[${p.kind}${p.confirmed ? "，已确认" : "，未确认"}] ${p.text}${why}${body}${alts}`).text;
 }
 

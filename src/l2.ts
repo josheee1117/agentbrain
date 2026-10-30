@@ -126,7 +126,7 @@ export interface RememberBody extends ModelProvenance {
   /** 话题结束时一步式沉淀写的条目（§8.6）：哪次运行、哪个话题窗口、怎么触发的、窗口定位点起止、提示词版本、模型。ab work --undo 据 run 从 L1 找回。 */
   topic?: TopicProvenance;
   /** 抽取器给的价值字段与校验标记（v3 第 1 阶段只记录）。 */
-  value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[] };
+  value?: { scenario?: string; durability?: "permanent" | "phase" | "exploration"; findable?: boolean; flags: ValueFlag[]; session_project?: string };
   /** 详情正文（§8.11.2）：决定、事实、坑能带，正文仍是一行标题。上限 BODY_MAX_CHARS，不截断。 */
   body?: string;
   /** 讨论时否定掉的方案（§8.11.2）：只有决定能带。 */

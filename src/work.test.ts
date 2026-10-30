@@ -327,6 +327,7 @@ test("§8.11.3 关系链：候选归属别的项目时，近邻去重与关系�
   assert.equal(r.receipt.proposals, 1, "没被当成 alpha 的重复");
   const prop = props(e.store).find((p) => p.text === DEC.text && p.kind === "decision");
   assert.equal(prop?.project_id, piopsId);
+  assert.equal(prop?.value?.session_project, "alpha", "成功跨项目归属记下会话项目，ab get 才能说清");
   // alpha 的同标题条目仍归 alpha：跨项目不并
   const alphaProp = props(e.store).find((p) => p.id === old)!;
   assert.equal(alphaProp.project_id, e.pid);

@@ -1,7 +1,7 @@
 /** 运行：node --test src/extract.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMessages, hasBackground, sha256, validate, type ExtractWindow } from "./extract.ts";
+import { buildMessages, hasBackground, MAX_BODY_CHARS, sha256, validate, type ExtractWindow } from "./extract.ts";
 import type { ProjectContext } from "./extract.ts";
 import type { Proposition } from "./l2.ts";
 
@@ -464,4 +464,20 @@ test("预检：只有应答/命令/省略的工具输出的窗口跳过，其余
   assert.equal(hasExtractableSignal([u("继续"), a("原因找到了：".padEnd(260, "说明"))]), true, "长正文可能有观察到的坑");
   assert.equal(hasExtractableSignal([u(`<task>${"只读 review，不要改文件。".repeat(30)}</task>`)]), true, "长贴入提示保守抽取");
   assert.equal(hasExtractableSignal([]), false);
+});
+
+test("§8.11.3 归属：成功归到别的项目时在 value 里记下会话项目；退回会话项目或本来同项目的不记", () => {
+  const ok = validate({ candidates: [{ ...DECISION, project: "pi-ops", project_anchor: "#2" }] }, RICH_WIN, [], "w1", CTX);
+  assert.equal(ok.candidates[0].project, "pi-ops");
+  assert.equal(ok.candidates[0].value?.session_project, "agentbrain");
+  const back = validate({ candidates: [{ ...DECISION, project: "pi-ops" }] }, RICH_WIN, [], "w1", CTX);
+  assert.equal(back.candidates[0].project, "agentbrain");
+  assert.equal(back.candidates[0].value?.session_project, undefined, "退回会话项目不记归属说明");
+  const same = validate({ candidates: [DECISION] }, RICH_WIN, [], "w1", CTX);
+  assert.equal(same.candidates[0].value?.session_project, undefined);
+});
+
+test("prompt：写明 body 上限，且与 MAX_BODY_CHARS 同源", () => {
+  const sys = buildMessages(win, CTX, [])[0].content!;
+  assert.ok(sys.includes(`最多 ${MAX_BODY_CHARS} 字`), `提示词里要写正文上限 ${MAX_BODY_CHARS}：\n${sys.slice(-800)}`);
 });

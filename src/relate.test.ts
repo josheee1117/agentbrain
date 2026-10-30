@@ -1,7 +1,7 @@
 /** 关系判定输出的确定性校验。运行：node --test src/relate.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyVerdict, buildRelateMessages, parseRelate, type MergePolicy, type RelateItem } from "./relate.ts";
+import { applyVerdict, buildRelateMessages, parseRelate, RELATE_BODY_MAX_CHARS, type MergePolicy, type RelateItem } from "./relate.ts";
 import type { Proposition } from "./l2.ts";
 
 const prop = (id: string, text: string, confirmed = false) => ({ id, text, kind: "rule", confirmed }) as unknown as Proposition;
@@ -93,4 +93,27 @@ test("非 duplicate：两种策略都只写一条 relate，不并、不转正", 
       assert.equal(r.merge, null);
     }
   }
+});
+
+test("§8.11.3 关系判定输入：正文每条最多 2000 字，超长注明已截断；否掉的方案全给", () => {
+  const item: RelateItem[] = [{ prop: prop("n1", "新条目"), neighbors: [prop("o1", "旧条目", true)] }];
+  (item[0].prop as any).body = "甲".repeat(3500);
+  (item[0].neighbors[0] as any).body = "乙".repeat(RELATE_BODY_MAX_CHARS);
+  (item[0].prop as any).alternatives = Array.from({ length: 5 }, (_, i) => ({
+    option: `方案 ${i + 1} ${"丙".repeat(150)}`,
+    rejected_because: `理由 ${i + 1} ${"丁".repeat(150)}`,
+  }));
+  const m = buildRelateMessages(item)[1].content!;
+  // 2500 字那条被截到 2000 字并注明；正好 2000 字的不注明
+  assert.ok(m.includes(`正文：${"甲".repeat(RELATE_BODY_MAX_CHARS)}…（正文已截断）`), "N 的正文截到 2000 字");
+  assert.ok(!m.includes("甲".repeat(RELATE_BODY_MAX_CHARS + 1)), "不超过 2000 字");
+  assert.ok(m.includes(`正文：${"乙".repeat(RELATE_BODY_MAX_CHARS)}）`), "正好 2000 字不截断、不注明");
+  assert.doesNotMatch(m, /乙…/, "正好 2000 字不加省略号、不写已截断");
+  // alternatives 全给：第 5 项的尾部也必须在
+  for (let i = 1; i <= 5; i++) {
+    assert.ok(m.includes(`方案 ${i} `), `第 ${i} 项方案要在`);
+    assert.ok(m.includes(`理由 ${i} `), `第 ${i} 项理由要在`);
+  }
+  assert.ok(m.includes("丁".repeat(150)), "理由不被截短");
+  assert.ok(m.includes("丙".repeat(150)), "方案不被截短");
 });
