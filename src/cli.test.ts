@@ -939,7 +939,14 @@ test("场景标签：remember --scene、ab tag 改与清空、brief/search 按�
   assert.equal(corrected.code, 0, corrected.err);
   assert.match(ab(["brief", "--scene", "review"], alpha, own).out, /review 先跑回归/);
   assert.doesNotMatch(ab(["brief"], alpha, own).out, /review 先跑回归/);
-
+  // 纠正之后旧条目的标签再改，新条目不跟着变
+  const cid = /\[([0-9a-f]{8})\]/.exec(corrected.out)![1];
+  assert.equal(ab(["tag", id, "--scene", "code"], alpha, own).code, 0);
+  assert.match(ab(["brief", "--scene", "review"], alpha, own).out, /review 先跑回归/);
+  assert.doesNotMatch(ab(["brief", "--scene", "code"], alpha, own).out, /review 先跑回归/);
+  const reviewList = ab(["search", "--scene", "review"], alpha, own);
+  assert.match(reviewList.out, new RegExp(`^\\[${cid}\\]`, "m"));
+  assert.doesNotMatch(reviewList.out, new RegExp(`^\\[${id}\\]`, "m"), "旧条目已不是 review 场景，不能作为场景行列出");
   // search --scene 列全（不受前 8 条限制），按 seq 倒序；与关键词同用报错
   for (let i = 0; i < 10; i++) {
     const r = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", `review 批量规则 ${i}`, "--summary", "场景", "--scene", "review"], alpha, own);
