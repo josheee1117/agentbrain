@@ -47,7 +47,6 @@ const SEARCH_FULL_ROWS = 8;
 const SEARCH_MAX_HITS = 16;
 /** 第 9–16 名那一行正文最多显示的字数。 */
 const SEARCH_BRIEF_CHARS = 60;
-const EXTRACT_TIMEOUT_MS = 90_000;
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
   p.project_id === null ? "全局" : (names.get(p.project_id) ?? "未知项目");
@@ -1060,7 +1059,7 @@ function workDeps(store: Store): WorkDeps {
   if ("error" in cfg) chat = { error: "no_config", message: cfg.error };
   else {
     const key = readKey(cfg.keyService);
-    chat = typeof key === "string" ? { chat: chatClient(cfg, key, EXTRACT_TIMEOUT_MS), model: cfg.model } : { error: "no_key", message: key.error };
+    chat = typeof key === "string" ? { chat: chatClient(cfg, key, undefined), model: cfg.model } : { error: "no_key", message: key.error };
   }
   return {
     store,

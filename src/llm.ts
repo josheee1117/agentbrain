@@ -105,7 +105,8 @@ export function loadChatConfig(home: string): ChatConfig | { error: string } {
 
 export type Chat = (messages: ChatMessage[], opts?: { tools?: ToolSpec[]; json?: boolean }) => Promise<{ message: ChatMessage; tokens: number; /** CLI 后端报的费用（claude 给），API 后端不给 */ costUsd?: number }>;
 
-export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetchImpl: typeof fetch = fetch): Chat {
+/** timeoutMs 不给就不设超时（抽取，用户 2026-10-30）：租约过期会被接管，写库前复核租约，不会重复写。 */
+export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number | undefined, fetchImpl: typeof fetch = fetch): Chat {
   return async (messages, opts) => {
     const url = `${cfg.baseUrl.replace(/\/+$/, "")}/chat/completions`;
     const body: Record<string, unknown> = { ...(cfg.extraBody ?? {}), model: cfg.model, messages, temperature: 0 };
@@ -117,7 +118,7 @@ export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number, fetc
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
       const name = (e as Error).name;

@@ -81,4 +81,15 @@ test("chatClient 打到 <baseUrl>/chat/completions，带 Bearer key", async () =
   }
 });
 
+test("chatClient 不给超时就不带中止信号（抽取不设超时，用户 2026-10-30）", async () => {
+  let signal: AbortSignal | null | undefined = null;
+  const fetchImpl = (async (_url: string, init: RequestInit) => {
+    signal = init.signal;
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "{}" } }], usage: { total_tokens: 1 } }));
+  }) as typeof fetch;
+  const chat = chatClient({ baseUrl: "http://x/v1", model: "m", keyService: EXTRACT_KEYCHAIN_SERVICE }, "k", undefined, fetchImpl);
+  await chat([{ role: "user", content: "hi" }]);
+  assert.equal(signal, undefined);
+});
+
 test.after(() => rmSync(base, { recursive: true, force: true }));
