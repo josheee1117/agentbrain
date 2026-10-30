@@ -859,51 +859,108 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 #### 8.11.2 数据
 
-- `EvidenceRef.quote?: string`：抽取核对通过、过滤密钥之后实际算哈希的那段原话（10–200 字；用户轮只留用户自己写的那段）。`sha256(quote) === quote_sha256` 是不变量。旧数据缺字段。
-- `RememberBody.body?: string`：长正文，≤4000 字，只有 decision 和 note 能带。`text` 仍是一行标题（brief、搜索列表、关联都用它），`body` 是详情。
-- `RememberBody.alternatives?: { option: string; rejected_because: string }[]`：只有 decision 能带，讨论过但没选的方案，≤5 项，每个字段 ≤200 字。没讨论过别的方案就不给。
-- 背景仍放 `why`，不另加 context 字段（一个概念一个字段）。归属仍是事件的 `project_id`，不加新字段。
-- 投影 `Proposition` 带上 `body: string | null`、`alternatives: …[]`，旧数据为 `null` / `[]`。`evidence[].quote` 原样带出。
-- 向量文本从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超出向量模型输入上限时截 body。`body` 一并发往 DashScope 算向量，出境范围与 §13.3 v2.6 条一致（记忆正文），不新增出境类别。
-- 长度上限在 CLI 边界和抽取校验两处检查，超限：CLI 报错退出 1，抽取丢掉该字段并记 flag（不丢整条）。
+- **证据**：`EvidenceRef` 加 `quote?: string`、`said_at?: string`。`quote` 是抽取逐字核对、过滤密钥之后实际算哈希的那段（`src/extract.ts:471-491` 的 `kept`），长度沿用现有校验（`src/extract.ts:14-15`，不提高下限，"按你的方案来"这类短认可照样能存）；`said_at` 是这段原话所在轮的时间，没有就缺省，显示为"时间未知"，不拿条目的 `said_at` 代替。不变量：`sha256(quote) === quote_sha256`。
+- **追加证据也完整保存**：`ExtraSource` 的 `quote_sha256: string[]` 换成 `evidence: EvidenceRef[]`（`src/l2.ts:179-185,362-370`）。旧事件只有哈希，投影出不带 `quote` 的引用。这是同一份证据只留一个来源，不另存一份。
+- **`RememberBody.body?: string`**：详情正文，decision、note、pitfall 能带（Pensieve knowledge 有一部分映射成 pitfall，`src/pensieve.ts:253`），rule 不能带（规则必须一行说清）。上限 `BODY_MAX_CHARS = 40000`（data-asset 的 137 篇 Pensieve 文档中位 3957 字、p90 8010、最长 35179，全部放得下，不截断）。`text` 仍是一行标题。显示和向量输入另行截短，不影响存储。
+- **`RememberBody.alternatives?: { option: string; rejected_because: string; evidence: number }[]`**：只有 decision 能带，≤5 项，文字各 ≤200 字。`evidence` 是本条 `evidence[]` 的下标，指向支撑"为什么否掉"的那段原话；下标不存在的项丢掉。
+- 背景仍放 `why`，不另加 context 字段；归属仍是事件的 `project_id`。
+- **补详情事件 `detail`**：`{ body?, alternatives? }`，只给已有条目补上原来没有的详情，不换 id、不改确认状态和关联。现在只有 Pensieve 重导用它（见 8.11.5）。投影时若条目已有 body，`detail` 不覆盖（fail-closed，计 orphans 同类诊断）。
+- **投影**：`Proposition.body: string | null`、`alternatives: …[]`，旧数据为 `null` / `[]`。
+- **向量文本**：从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超过向量模型输入上限时截 body。body 改变要重算向量。
+- **同一个脱敏边界**：`text`、`why`、`body`、`alternatives`、`quote` 在写入 L1 之前统一过 `hasSecret`（含代码块；Pensieve 旧映射先删代码块再检查 text、why，看不到代码块里的密钥，`src/pensieve.ts:73-80,186-190`）。命中时：CLI 报错退出 1；抽取丢掉该字段并记 flag，不丢整条；导入不写这个字段，并在报告里列出。手写、导入、抽取三条入口都过这一处。body 发往 DashScope 算向量，接收方和数据类别（记忆正文）与 §13.3 v2.6 条一致；实际出境的内容会变多（细节和代码片段），这一点在 §13.3 注明。
 
-#### 8.11.3 抽取（普通窗口 `extract.ts` 与话题一步式 `onepass.ts` 同改）
+#### 8.11.3 抽取
 
-1. **kind 增加 note（知识）**：模块职责和边界、某个功能落在哪几个文件、调用链、业务口径、外部系统的事实。`text` 是标题，`body` 写清楚。只记"要读好几处才拼得出来"的结论；一次 grep 就能找到的不记。note 必须有代码引用或工具输出证据，进现有代码核验（`CODE_VERIFIABLE` 已含 note，`src/work.ts:50`），和代码不符就标 stale。
-2. **decision 改写法**：`text` 写具体定了什么，点名对象（项目、模块、接口、配置），可以写日期，不写内部 id。`why` 写当时的问题和理由。讨论过别的方案就填 `alternatives`。细节（数字、范围、回滚办法）写 `body`。同一段讨论里能推广到别处的教训，合格的话另出一条 rule，不把决定本身改写成原则。rule 和 pitfall 的写法不变。
-3. **原话存原文**：证据校验通过后，把那段 `kept` 写进 `quote`（`src/extract.ts:471-489` 已有这段文字，只是没存）。一步式路径同样处理。
-4. **按目标项目归属**：候选的 `scope` 改成 `project` 字段，取值是已登记的项目名或 `global`，缺省是会话所在项目。提示词附上已登记项目清单（名字 + 路径，来自 pm `repos/`）。校验：
-   - 名字不在登记表里，退回会话所在项目并记 flag；
-   - 指向非会话项目时，窗口原文里必须出现该项目名或仓库路径，否则退回会话所在项目并记 flag。
-   pm 本身照常是一个项目。代码核验按条目最终归属的项目仓库跑。
-5. 每窗口条数上限不变（`ONE_PASS_MAX_ITEMS = 8`）；`body` 不占 `text` 的 200 字。改提示词按 §8.10 自动换版本号。
+**本节只改普通窗口抽取（`extract.ts`）。** 话题一步式（`onepass.ts`，§8.6）现在默认关闭（本机 `extract.json` 没有 `topic: true`）。它既不输出证据，merge 也不写 L1（`src/onepass.ts:61-100`、`src/work.ts:987-990`）。在它也按本节输出证据、merge 改成写可撤销的 `evidence` 事件之前，不得打开；这一步另立任务。
+
+1. **kind 增加 note（知识）**：模块职责和边界、某个功能落在哪几个文件、调用链、业务口径、外部系统的事实。`text` 是标题，`body` 写清楚。只记"要读好几处才拼得出来"的结论，一次 grep 就能找到的不记。
+   - 证据：正常工具输出在抽取前已被替换成"工具输出 N 字，已省略"（`src/transcript.ts:113-119`），所以 note 的证据是助手自己在会话里写出这段结论的原话（`basis=agent_inference`，role 为 assistant）。不为它保留工具输出。
+   - 核验：note 照旧进代码核验（`CODE_VERIFIABLE` 已含 note，`src/work.ts:50`），但核验输入要加上 `body`（现在只送 text、trigger、why，`src/codeverify.ts:166-198`）。核验员对 body 里每个可核对的断言给证据；只要有一处 contradicted，整条标 stale；全部可核对断言都 verified 才算代码转正；说的是代码之外的事（外部系统）就是 `not_verifiable`，保持未确认。
+2. **decision 改写法**：
+   - `text` 写具体定了什么，点名对象（项目、模块、接口、配置），可以写日期，不写内部 id；
+   - `why` 写当时的问题和理由；
+   - 讨论过别的方案就填 `alternatives`，每项指向支撑它的原话；
+   - 细节（数字、范围、回滚办法）写 `body`；
+   - 同一段讨论里能推广到别处的教训，合格的话另出一条 rule，不把决定本身改写成原则。
+   - `basis=user_confirmed` 的决定除了用户认可的原话，还要至少一段助手提出该方案的原话，否则"按你的方案来"说明不了认可的是什么。
+   - rule 和 pitfall 的写法不变；《好记忆的标准》里"一句话、不写日期"的要求（`src/standard.ts:60`）对 decision 注明例外。
+3. **原话存原文**：证据校验通过后把 `kept` 和所在轮时间写进 `quote` / `said_at`。duplicate 时追加的 `evidence` 事件同样带上。
+4. **按目标项目归属**：
+   - 候选的 `scope` 改成 `project`：已登记的项目名或 `global`，缺省是会话所在项目。提示词附已登记项目清单（名字 + `~` 形式的仓库路径，与 `src/sanitize.ts` 处理后的窗口同一口径）。
+   - 指向非会话项目时，候选必须给 `project_anchor`：本窗口或前置背景里的一轮，其中出现该项目名或仓库路径（同口径比较）。前置背景只用来解析"这个仓库"这类指代，不能当结论的证据。
+   - 名字未登记、没给 `project_anchor` 或那一轮里找不到名字和路径：候选留在会话项目，带 flag `project_unresolved`，搜索和 `ab get` 显示「[归属未定]」，不悄悄当成会话项目的事实。
+   - 已知局限：确定性校验只能证明"提到过"，"参考 pi-ops 的做法，别改 pi-ops"这种句子仍可能被模型错归到 pi-ops。`ab get` 显示"会话在 X，抽取判定归属 Y"，方便人工纠正。
+5. **归属定下后，关系链按最终项目重算**：
+   - 生成前给模型的已有记忆：会话项目 + 全局 + 窗口里出现名字或路径的已登记项目；
+   - 候选解析出最终项目后，近邻去重和关系判定都在最终项目 + 全局里做；
+   - `admit` 拒绝把候选当成别的项目条目的重复（`src/work.ts:490-527`），这种情况按新条目处理；跨会话印证只在同一项目内发生。
+6. **去重看完整内容**：
+   - 同窗口候选键从 窗口 + kind + text（`src/extract.ts:519-526`）改为 窗口 + 最终项目 + kind + text + body 哈希；
+   - 向量去重用 text + why + body；
+   - 关系判定（`src/relate.ts:38-40`）的输入加上 body 和 alternatives，正文有实质差异就不能判 duplicate。
+7. 每窗口条数上限不变；`body` 不占 `text` 的 200 字。改提示词按 §8.10 自动换版本号。
 
 #### 8.11.4 读
 
-- `ab get`：依次显示 text、why、alternatives、body、原话引文（带角色和时间），再是关联和近邻。`--expand` 在原对话还在时照旧展开；不在时，有引文的条目不再只显示"来源不可用"，而是先列引文、再说明原对话已不可用。
-- `ab search`：前 8 条全文里，decision / note 显示 body 前 300 字和"`ab get <id>` 看全文"。
-- **跨项目段**：在已登记项目目录里搜索，且没给 `--project` / `--all` 时，结果末尾多一段「其他项目里相近的：」，从其他项目的有效条目里取与查询向量相似度 ≥ 0.6 的，最多 3 条，一行一条带项目名，照常记交付。阈值写死，用 8.11.6 第 4 条的评测定。pm 目录本来就全库，不加；向量不可用（degraded）时不出这一段，并在降级提示里说明。
+- **`ab get`**：依次显示 text、why、alternatives（每项后面附它引用的原话）、body、全部原话（含追加来源的，带角色和时间）、归属说明，然后是关联和近邻。`--expand` 在原对话还在时照旧展开；不在时，先列库里存的原话，再说明原对话已不可用。
+- **`ab search`**：前 8 条全文里，decision / note / 带 body 的 pitfall 显示 body 前 300 字和"`ab get <id>` 看全文"。
+- **跨项目段**：
+  - 什么时候出：在已登记项目目录里搜索，没给 `--project` / `--all`，结果末尾多一段「其他项目里相近的：」。pm 目录本来就搜全库，不加这一段。
+  - 怎么取：候选先限定为其他项目的 searchable 条目，再按与查询的向量相似度排序，取 ≥0.6 的前 3 条，一行一条带项目名，照常记交付。不从全库 top-N 里事后筛。
+  - 向量不可用：查询向量算不出（degraded）时不出这一段，并在降级提示里说明。候选里有向量还没补齐的条目（`pending>0`，`src/store.ts:491-513`）时，段尾注明"另有 N 条其他项目的记忆还没算向量，可能漏"。
+  - 子代理能不能看到这一段：**待用户定**，见 8.11.8。
 - brief 不变。
 
-#### 8.11.5 手写与导入
+#### 8.11.5 手写、纠正、整理、导入
 
-- `ab remember` 加 `--body-file <文件>`（decision / note）和可重复的 `--alternative "<方案>::<否掉的原因>"`（decision）；`ab correct` 同样接受这两个参数，不给时继承旧条目当时的 body 和 alternatives（与 §11.10 的 scenes 继承一致）。
-- Pensieve 重导：decisions / knowledge 的 md 正文写进 `body`（≤4000 字，超了截断，`import_ref` 照旧指向原文）。重导走现有"内容哈希变了才替代"的逻辑，正文进 body 会让这批条目全部替代一次，替代时继承 scenes、confirmed 状态不变。这样 `.pensieve/` 删掉后正文仍在库里。
+- **`ab remember`** 加 `--body-file <文件>` 和可重复的 `--alternative "<方案>::<否掉的原因>"`。手写没有原话可指，`alternatives[].evidence` 缺省。
+- **`ab correct`** 也接受这两个参数，**不继承** body 和 alternatives（它们是结论内容，标题改了，详情照搬会自相矛盾）。要沿用旧详情就显式重给。新条目通过已有的纠正关联指向旧条目，旧详情在 `ab get` 里能看到。这样也不会把会话 A 的正文复制进会话 B 的版本，purge A 时不留副本。
+- **`ab curate`** 改写只针对没有 body、没有 alternatives 的条目。带详情的条目跳过改写并写进报告（`src/curate.ts:132-150` 现在只复制已有字段，会丢详情）。
+- **Pensieve 重导**：
+  - 不靠源文件哈希触发（原文件没变时现在直接算 unchanged，`src/pensieve.ts:253-256`），也不改 `import_ref.sha256` 的含义；
+  - 重导时，已导入条目缺 body、源文档有正文的，追加一条 `detail` 事件补上全文（≤40000 字，过脱敏边界），不换 id，确认状态、场景、关联、`inject_log` 历史都留在原条目上，避免"新版本被并入后旧版本复活"（`src/l2.ts:406-418`）；
+  - 源文件变了的照旧走现有替代流程，新条目直接带 body；
+  - 有文档因密钥或超长没补上 body 时，报告列出，**这些仓库的 `.pensieve/` 不能删**。
 
 #### 8.11.6 验收
 
-1. 单测先红后绿：投影 quote / body / alternatives（含旧数据缺省）；body、alternatives 只许对应种类，长度上限在 CLI 和抽取两处生效；`quote` 与 `quote_sha256` 一致，含密钥的段不存；抽取能产出带证据的 note；归属：登记项目名且窗口提到 → 落该项目，没提到或未登记 → 退回会话项目并记 flag；`ab get` 显示顺序、原对话缺失时显示引文；search 跨项目段（阈值、最多 3 条、pm 目录不出、`--project` / `--all` 不出、degraded 不出）；`correct` 继承；Pensieve 重导写 body。
-2. 抽取评测：用两三段真实会话（含本节起因的 pi-ops 门禁讨论、场景标签讨论）跑新提示词，人工看：决定写出了具体对象和否掉的方案；至少产出一条 note；原话可读；pm 会话里讲 pi-ops 的决定落到 pi-ops。
-3. 还原测试：在隔离库里挑 3 条新抽出的决定，删掉对应的原对话文件，只凭 `ab get` 能答出"当时什么问题、定了什么、否掉了什么、谁说的原话"。
-4. 跨项目：在 data-asset 目录搜"比率指标怎么建模"，跨项目段出现 ai-data 的 `2018b871`；再挑 5 个和其他项目无关的查询，跨项目段不出或只出确实相关的（用来定 0.6 阈值）。
+1. **单测先红后绿**：
+   - 投影：quote、said_at、body、alternatives、`ExtraSource.evidence` 的投影，以及旧数据缺省；
+   - 写入口：`detail` 补详情及"已有 body 不覆盖"；各字段的种类限制和长度上限；
+   - 脱敏边界：三条入口各有一例，包括 Pensieve 代码块里的密钥；
+   - 原话：`quote` 与哈希一致；duplicate 追加的证据带原话；`user_confirmed` 决定缺助手原话被拒；alternatives 下标越界的项被丢；
+   - 归属：成功一例；未登记、缺 anchor、anchor 里找不到名字三种情况都退回并带 `project_unresolved`；`admit` 拒绝跨项目重复；跨会话印证只在同项目内发生；
+   - 去重：同窗口同标题、不同 body 的两条都保留；
+   - note 核验：带 body 送检，body 里一处矛盾就标 stale；
+   - 读：`ab get` 显示顺序，以及原对话缺失时列出原话；跨项目段的阈值、最多 3 条、先限定再排序；pm 目录、`--project`、`--all` 不出，degraded 不出，pending 有提示；
+   - correct / curate：correct 不继承详情；curate 跳过带详情的条目；
+   - Pensieve 重导：只补 body 不换 id，源文件未变也能补上。
+2. **抽取评测**：用三段真实会话跑新提示词，人工检查：
+   - 素材：本节起因的 pi-ops 门禁讨论、场景标签讨论、一段读代码摸清调用链的会话；
+   - 决定写出了具体对象，否掉的方案带了原话；
+   - 至少产出一条 note，并且通过代码核验或被正确判为不可核验；
+   - pm 会话里讲 pi-ops 的决定落到 pi-ops，或标「归属未定」，不落成 pm。
+3. **还原测试**：在隔离库挑 3 条新抽出的决定，删掉对应的原对话文件。只凭 `ab get` 要能答出：当时什么问题、定了什么、否掉了什么、谁说的原话。
+4. **跨项目阈值评测**：用于定 0.6 这个阈值，另起一组独立的测试题，不和开发时用的查询重复：
+   - 正例：在 data-asset 目录搜"比率指标怎么建模"，跨项目段要出现 ai-data 的 `2018b871`，另外再找 4 个类似的正例；
+   - 负例：至少 5 个"术语相同、业务含义不同"的查询，再加 5 个和其他项目完全无关的查询；
+   - 报告每个查询出了哪些条目、相似度多少，再据此调阈值。
+5. **Pensieve 替代**：在 data-asset 上重导后，对 `.pensieve/knowledge` 里随机 5 篇，`ab get` 的 body 与原文一致（脱敏处除外）。
 
 #### 8.11.7 不做
 
 - 不做图谱：先用向量近邻和现有的补充 / 合并 / 纠正 / 冲突关联；8.11.6 第 4 条评测不过再议。
-- 不归档完整对话（§13.3、§20 不变），只存核对过的短原话。
-- 不回填旧条目：旧引文只有哈希，算不回原文；旧对话文件照样会被宿主清理（用户没选调大保留期）。
+- 不归档完整对话，也不为 note 保留工具输出（§13.3、§20 不变），只存核对过的短原话。
+- 不回填旧条目的原话（旧引文只有哈希，算不回原文）；旧对话文件照样会被宿主清理（用户没选调大保留期）。
 - brief 仍不推送项目决定和知识，交付另议。
+- 本节不改一步式抽取，改造前它保持关闭（8.11.3 开头）。
 - 不做从会话提炼 SOP / Skill（§20，用户 2026-10-15 定）。
+
+#### 8.11.8 待用户定
+
+1. **子代理能不能看到跨项目段。** 设计 §6.3 原本不让子代理默认读跨项目记忆。`ab search` 现在分不出调用方是主会话还是子代理（`src/cli.ts:480-513` 没有 worker 参数，`searchable` 只看状态，`src/visibility.ts:15-18`）。
+   - 选项 A：都给。你的知识你的子代理都能用，但其他项目（包括 ai-data 这类公司项目）的内容会进到子代理用的第三方模型。
+   - 选项 B：只给主会话。`ab search` 加 `--worker`，`herdr-dispatch` 的指令行让子代理带上它。没带的子代理仍能看到，这个缺口需要接受。
 
 ## 9. 生命周期、冲突与纠错
 
@@ -2068,7 +2125,7 @@ Capability-limited actors：各宿主的主 Agent 和子代理。它们不会因
 
 - 不默认归档完整 transcript；
 - **来源默认是指针不是摘录（v2.4，v2.5 泛化到三宿主）**：Source Observation 记录 host + session id + transcript 路径 + 当时的定位点（Pi leaf entry id、Claude Code 消息 id、Codex `ordinal`）+ 一句摘要；"还原当时怎么讨论出来的"靠按需读取 transcript 的该位置及其祖先链，agentbrain 自身不存对话原文；transcript 不存在时来源展开显式报告不可用（§15.3）；
-- **例外（2026-10-30，§8.11）**：抽取时逐字核对、已滤密钥的原话片段（≤200 字）随证据存原文，原对话被宿主清理后仍能说明当时的依据；完整对话仍不归档；
+- **例外（2026-10-30，§8.11）**：抽取时逐字核对、已滤密钥的原话片段随证据存原文（含追加证据），原对话被宿主清理后仍能说明当时的依据；完整对话仍不归档。记忆正文多了 body（详情）后，发往 DashScope 算向量的内容会变多（细节、代码片段），接收方与数据类别不变；所有正文字段写入前过同一个脱敏边界；
 - 明确摘录不是完整上下文；
 - rejected/expired Proposal、临时来源和模型 I/O 采用有限保留策略；
 - prompt/model/input/output provenance 优先记录版本和 hash，只有解释正确性必需时才持久化正文；
@@ -2490,6 +2547,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ## 21. 修订记录
 
 - 2026-10-30 新增 §8.11（CANDIDATE）：决定记成决策卡（具体定了什么、背景、否掉的方案、长正文），抽取新增知识（note）并带长正文，原话片段存原文（§13.3 加例外），候选可按已登记的目标项目归属，项目目录里搜索带上其他项目的相近条目。起因是用户要求完全替代 Pensieve。
+- 2026-10-30 §8.11 按 astra 方案 review（pm `docs/agentbrain/2026-10-30-knowledge-decisions/tasks/01-design-review.md`）修订：追加证据也存原话、引文带各自时间；note 证据用助手原话并且核验送 body；Pensieve 用补详情事件、不截断；归属失败标「归属未定」、关系链按最终项目重算；去重含 body；correct 不继承详情、curate 跳过带详情条目；统一脱敏边界；跨项目段先限定再排序并提示向量未补齐；一步式抽取在补证据前不得打开；子代理是否可见跨项目段待用户定。
 - 2026-10-30 合并 PR #70（refactor-batch1）、#71（prompt-version）后章节号重复，用户同意改号：「模型产出的提示词版本」8.8 → **8.10**（挪到 8.9 之后），「场景分组目录」11.8 → **11.11**（挪到 11.10 之后，小节 11.11.1–4）。「去掉候选区」仍是 8.8、「记忆看板」仍是 11.8。文内、调研文档、`prompt-version.test.ts`、`topic.ts`、`topic.test.ts` 的引用一并改；更早修订记录里的旧编号已就地改并注明。
 - 2026-10-30 新增 §11.10：规则按场景（design / code / review）打标签；带场景的规则移出 brief 通用段，按 `--scene` 单独成段加载，没有场景时只给一行索引；`herdr-dispatch` 按派活单类别在发出的文本里加显式 `--scene` 指令。用户同日提出并同意"写设计、派 astra review、再派实现"。astra xhigh 只读 review 报 6 重要 2 次要，主会话核实后全部采纳：场景段先按项目范围筛、correct 继承标签、search `--scene` 只列举不配关键词、去掉 `AB_SCENE` 改显式指令且放在 pstack 前缀之后、D8 加 code 并把 R2 改成自带标准的清单、总预算合同与实际交付 id、scenes 与 guidance 互斥。同日实现后代码 review 又核实 4 条并修掉：`guidanceBlock` 兜底跳过带场景条目、`curate` 转正不打 guidance 且改写复制 `scenes`、`search --scene` 不再过滤未确认规则、`--scene` 配 `--kind` 非 rule 或 `--archived` 在 CLI 边界报错。
 - 2026-10-29 用户授权修复 §11.9 review 核实的问题。查询事件独立记录、最终回答按宿主结束字段识别、钩子与用户轮一一归属、引用事务重建，宿主验证合为技能内的隔离断言驱动。不优化全量重扫，不改正式库和宿主全局配置。
