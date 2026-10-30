@@ -134,12 +134,14 @@ test("写入：已确认、origin=import、带出处；重导不重复；文件�
   assert.equal(p.import_ref!.path, join(r, ".pensieve/decisions/a.md"));
   const again = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   assert.deepEqual([again.created.length, again.corrected.length, again.unchanged], [0, 0, 1]);
+  store.lifecycle("tag", first.created[0], null, { scenes: ["design"] }); // 重导替代时复制旧条目的场景
   writeFileSync(join(r, ".pensieve/decisions/a.md"), DECISION.replace("禁止 trimToNull。", "禁止 trimToNull 和 trimToEmpty。"));
   const changed = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   assert.equal(changed.corrected.length, 1);
   const props = store.project().props;
   assert.equal(props.get(first.created[0])!.state, "superseded");
   assert.match(props.get(changed.corrected[0])!.text, /trimToEmpty/);
+  assert.deepEqual(props.get(changed.corrected[0])!.scenes, ["design"]);
   store.lifecycle("archive", changed.corrected[0], null);
   const after = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   assert.deepEqual([after.created.length, after.corrected.length, after.archivedSkip], [0, 0, 1]);

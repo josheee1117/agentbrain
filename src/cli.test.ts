@@ -896,6 +896,106 @@ test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab sta
 });
 
 
+// ---------- §11.10 场景标签（2026-10-30） ----------
+
+test("场景标签：remember --scene、ab tag 改与清空、brief/search 按场景、correct 继承、报错", () => {
+  const own = join(dir, "scene-store");
+  const r1 = ab(["remember", "--confirmed", "--global", "--for-workers", "--kind", "rule", "--text", "场景规则：开发先写测试", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(r1.code, 0, r1.err);
+  const id = /\[([0-9a-f]{8})\]/.exec(r1.out)![1];
+
+  // 无场景：只有索引行，场景规则不进通用段
+  const plain = ab(["brief"], alpha, own);
+  assert.match(plain.out, /场景规则：开发 1 条；进入该场景先 ab search --scene <场景>/);
+  assert.doesNotMatch(plain.out, /开发先写测试/);
+
+  // --worker --scene code 输出该条（全局规则要 for_workers）
+  const worker = ab(["brief", "--worker", "--scene", "code"], alpha, own);
+  assert.equal(worker.code, 0, worker.err);
+  assert.match(worker.out, /worker scene="code"/);
+  assert.match(worker.out, /场景规则（开发）：/);
+  assert.match(worker.out, /开发先写测试/);
+  const main = ab(["brief", "--scene", "code"], alpha, own);
+  assert.match(main.out, /^<agentbrain project="alpha" scene="code">/);
+  assert.match(main.out, /开发先写测试/);
+  assert.doesNotMatch(main.out, /进入该场景先 ab search --scene <场景>/);
+
+  // ab tag 整组替换；换走之后别的场景看不到
+  const tag = ab(["tag", id, "--scene", "design,review"], alpha, own);
+  assert.equal(tag.code, 0, tag.err);
+  assert.match(tag.out, /design,review/);
+  assert.doesNotMatch(ab(["brief", "--scene", "code"], alpha, own).out, /开发先写测试/);
+  assert.match(ab(["brief", "--scene", "review"], alpha, own).out, /场景规则（review）：[\s\S]*开发先写测试/);
+
+  // ab tag --scene none 清空，回到通用段
+  assert.equal(ab(["tag", id, "--scene", "none"], alpha, own).code, 0);
+  const back = ab(["brief"], alpha, own);
+  assert.match(back.out, /开发先写测试/);
+  assert.doesNotMatch(back.out, /进入该场景先 ab search --scene <场景>/);
+
+  // correct 继承旧条目的场景
+  assert.equal(ab(["tag", id, "--scene", "review"], alpha, own).code, 0);
+  const corrected = ab(["correct", id, "--text", "场景规则：review 先跑回归", "--summary", "场景", "--confirmed"], alpha, own);
+  assert.equal(corrected.code, 0, corrected.err);
+  assert.match(ab(["brief", "--scene", "review"], alpha, own).out, /review 先跑回归/);
+  assert.doesNotMatch(ab(["brief"], alpha, own).out, /review 先跑回归/);
+
+  // search --scene 列全（不受前 8 条限制），按 seq 倒序；与关键词同用报错
+  for (let i = 0; i < 10; i++) {
+    const r = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", `review 批量规则 ${i}`, "--summary", "场景", "--scene", "review"], alpha, own);
+    assert.equal(r.code, 0, r.err);
+  }
+  const listed = ab(["search", "--scene", "review"], alpha, own);
+  for (let i = 0; i < 10; i++) assert.match(listed.out, new RegExp(`review 批量规则 ${i}`));
+  assert.deepEqual(
+    [...listed.out.matchAll(/review 批量规则 (\d+)/g)].map((m) => Number(m[1])),
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+  );
+  const mixed = ab(["search", "--scene", "review", "回归"], alpha, own);
+  assert.equal(mixed.code, 1);
+  assert.match(mixed.err, /--scene/);
+  for (const args of [["brief", "--scene", "bogus"], ["search", "--scene", "bogus"], ["tag", id, "--scene", "bogus"]]) {
+    assert.equal(ab(args, alpha, own).code, 1, args.join(" "));
+  }
+
+  // 配非 rule、未知值报错；tag 也只能用于规则
+  const pit = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "坑", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(pit.code, 1);
+  assert.match(pit.err, /--scene 只能用于规则/);
+  const pitOk = ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "普通坑", "--summary", "场景"], alpha, own);
+  const pitId = /\[([0-9a-f]{8})\]/.exec(pitOk.out)![1];
+  const pitTag = ab(["tag", pitId, "--scene", "code"], alpha, own);
+  assert.equal(pitTag.code, 1);
+  assert.match(pitTag.err, /--scene 只能用于规则/);
+  const bad = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "x", "--summary", "场景", "--scene", "bogus"], alpha, own);
+  assert.equal(bad.code, 1);
+  assert.match(bad.err, /--scene/);
+
+  // 与 guidance 互斥：两个入口都报错
+  const g = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "常驻偏好", "--summary", "场景"], alpha, own);
+  const gid = /\[([0-9a-f]{8})\]/.exec(g.out)![1];
+  assert.equal(ab(["guidance", gid], alpha, own).code, 0);
+  const gtag = ab(["tag", gid, "--scene", "code"], alpha, own);
+  assert.equal(gtag.code, 1);
+  assert.match(gtag.err, /干活偏好/);
+  assert.equal(ab(["tag", id, "--scene", "code"], alpha, own).code, 0);
+  const guid = ab(["guidance", id], alpha, own);
+  assert.equal(guid.code, 1);
+  assert.match(guid.err, /场景/);
+
+  // markUsed 与实际输出的 id 一致
+  const db = new DatabaseSync(join(own, "store.db"));
+  db.exec("DELETE FROM prop_usage");
+  db.close();
+  const last = ab(["brief", "--scene", "code"], alpha, own);
+  assert.equal(last.code, 0, last.err);
+  const db2 = new DatabaseSync(join(own, "store.db"));
+  const usedIds = (db2.prepare("SELECT prop_id FROM prop_usage").all() as { prop_id: string }[]).map((r) => r.prop_id.slice(0, 8)).sort();
+  db2.close();
+  const printed = [...last.out.matchAll(/\[([0-9a-f]{8})\]/g)].map((m) => m[1]).sort();
+  assert.deepEqual(usedIds, printed);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
