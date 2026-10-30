@@ -9,7 +9,7 @@ import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
-import { type Host, type PropKind, type Proposition, type Scene, type SourcePointer, SCENES } from "./l2.ts";
+import { type Alternative, type Host, type PropKind, type Proposition, type Scene, type SourcePointer, SCENES } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandImport, expandSource, latestAnchor } from "./source.ts";
 import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState } from "./links.ts";
@@ -36,7 +36,7 @@ import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusLine, statusReport } from "./status.ts";
-import { disputed, KIND_LABEL, searchDetail, short } from "./present.ts";
+import { disputed, KIND_LABEL, quoteLines, searchDetail, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
 const RECALL_EMBED_TIMEOUT_MS = 3000;
@@ -47,6 +47,8 @@ const SEARCH_FULL_ROWS = 8;
 const SEARCH_MAX_HITS = 16;
 /** 第 9–16 名那一行正文最多显示的字数。 */
 const SEARCH_BRIEF_CHARS = 60;
+/** 前 8 条全文里带 body 的条目显示正文前多少字（§8.11.4）。 */
+const SEARCH_BODY_CHARS = 300;
 const KINDS: PropKind[] = ["rule", "decision", "pitfall", "note"];
 const SCOPE_LABEL = (p: Proposition, names: Map<string, string>) =>
   p.project_id === null ? "全局" : (names.get(p.project_id) ?? "未知项目");
@@ -121,6 +123,23 @@ function findByPrefix(store: Store, prefix: string): Proposition {
 
 function namesOf(store: Store): Map<string, string> {
   return new Map(store.listProjects().map((p) => [p.id, p.name]));
+}
+
+/**
+ * `--body-file` 和可重复的 `--alternative "<方案>::<否掉的原因>"`（§8.11.5）。
+ * 解析只在命令行边界：坏格式立即报错，字段校验留给 store 的写入口。
+ */
+function readDetailArgs(bodyFile: string | undefined, alternatives: string[]): { body?: string; alternatives?: Alternative[] } {
+  const body = bodyFile === undefined ? undefined : readFileSync(bodyFile, "utf8").trim();
+  const alts: Alternative[] = [];
+  for (const raw of alternatives) {
+    const k = raw.indexOf("::");
+    const option = k < 0 ? "" : raw.slice(0, k).trim();
+    const rejected = k < 0 ? "" : raw.slice(k + 2).trim();
+    if (!option || !rejected) die(`--alternative 要写成 "<方案>::<否掉的原因>"，收到: ${raw}`);
+    alts.push({ option, rejected_because: rejected });
+  }
+  return { ...(body ? { body } : {}), ...(alts.length ? { alternatives: alts } : {}) };
 }
 
 /** `--scene` 的值只在 CLI 边界解析校验（§11.10）；之后内部只用 Scene[]。 */
@@ -412,6 +431,8 @@ async function cmdRemember(argv: string[]): Promise<void> {
       confirmed: { type: "boolean", default: false },
       "from-worker": { type: "string" },
       scene: { type: "string" },
+      "body-file": { type: "string" },
+      alternative: { type: "string", multiple: true, default: [] },
     },
     strict: true,
   });
@@ -423,6 +444,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
   if (!values.summary) die("缺少 --summary");
   if (values["for-workers"] && !values.global) die("--for-workers 只能和 --global 一起用");
   if (values.global && values.project) die("--global 与 --project 不能同时用");
+  const detail = readDetailArgs(values["body-file"], values.alternative as string[]);
 
   const store = open();
   try {
@@ -456,15 +478,21 @@ async function cmdRemember(argv: string[]): Promise<void> {
       missingWorker = w.missing;
     }
     const confirmed = values.confirmed === true;
-    const id = store.remember(projectId, source.session_id, false, {
-      kind,
-      text: values.text,
-      why: values.why,
-      for_workers: values["for-workers"] || undefined,
-      confirmed,
-      scenes,
-      source,
-    });
+    let id: string;
+    try {
+      id = store.remember(projectId, source.session_id, false, {
+        kind,
+        text: values.text,
+        why: values.why,
+        ...detail,
+        for_workers: values["for-workers"] || undefined,
+        confirmed,
+        scenes,
+        source,
+      });
+    } catch (e) {
+      die((e as Error).message);
+    }
     let out = `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
     if (missingWorker) out += "\n未找到子代理会话记录";
     else if (transcript === null) out += "\n未找到会话记录，这条记忆没有可展开的来源。";
@@ -600,6 +628,14 @@ function cmdGet(argv: string[]): void {
     });
     const names = namesOf(store);
     const stateMark = p.state === "archived" ? "（已归档）" : p.state === "superseded" ? "（已被替代）" : "";
+    // §8.11.4 顺序：text、why、alternatives（每项附它引用的原话）、body、全部原话，然后才是关联和近邻
+    const altLines = p.alternatives.length
+      ? ["否掉的方案:", ...p.alternatives.map((a) => {
+        const q = a.evidence === undefined ? "" : p.evidence[a.evidence]?.quote;
+        return `  ${a.option}：${a.rejected_because}${q ? `（「${q}」）` : ""}`;
+      })]
+      : [];
+    const quotes = quoteLines(p);
     const linesOut = [
       `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
@@ -607,6 +643,10 @@ function cmdGet(argv: string[]): void {
       p.expired ? `到期未确认，已归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       p.trigger ? `触发: ${p.trigger}` : "",
       p.import_ref ? `导入自 Pensieve ${p.import_ref.id}: ${p.import_ref.path}${p.import_ref.also?.length ? `（另有 ${p.import_ref.also.length} 处相同副本）` : ""}` : "",
+      p.why ? `为什么: ${p.why}` : "",
+      ...altLines,
+      p.body ? `正文:\n${p.body}` : "",
+      ...quotes,
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
@@ -618,7 +658,6 @@ function cmdGet(argv: string[]): void {
         if (c.conflicts_with === p.id && !c.supersedes) return `与 [${short(id)}] 说法冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;
         return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
       }),
-      p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
     if (p.model_outputs.length) {
@@ -645,8 +684,11 @@ function cmdGet(argv: string[]): void {
     }
     if (values.expand) {
       const disc = expandSource(p.source);
-      if (disc || !p.import_ref) linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
-      else {
+      if (disc || !p.import_ref) {
+        // §8.11.4：原对话不在了，先列库里存的原话，再说原对话不可用
+        if (!disc && quotes.length) linesOut.push("", `--- 原对话已不可用：transcript 不存在或定位点失效（${p.source.transcript ? "定位点失效" : "没有 transcript"}），下面是库里存的原话 ---`, ...quotes);
+        else linesOut.push("", "--- 当时的讨论 ---", disc ? disc : "来源不可用：transcript 不存在或定位点失效。");
+      } else {
         // Pensieve 导入条没有 transcript：打开导入时记下的原 md 文件（§11.6 (iii)）
         const r = expandImport(p.import_ref);
         linesOut.push("", "--- Pensieve 原文件 ---");
@@ -669,6 +711,8 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       why: { type: "string" },
       confirmed: { type: "boolean", default: false },
       "from-worker": { type: "string" },
+      "body-file": { type: "string" },
+      alternative: { type: "string", multiple: true, default: [] },
     },
     strict: true,
     allowPositionals: true,
@@ -676,6 +720,8 @@ async function cmdCorrect(argv: string[]): Promise<void> {
   if (!positionals[0]) die("用法: ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>");
   if (!values.text) die("缺少 --text");
   if (!values.summary) die("缺少 --summary");
+  // 详情是结论内容：标题改了不能照搬，不继承旧条目的 body 和 alternatives（§8.11.5）
+  const detail = readDetailArgs(values["body-file"], values.alternative as string[]);
   const store = open();
   try {
     const old = findByPrefix(store, positionals[0]);
@@ -702,6 +748,7 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       kind: old.kind,
       text: values.text,
       why: values.why,
+      ...detail,
       for_workers: old.for_workers || undefined,
       confirmed: values.confirmed === true,
       supersedes: old.id,
@@ -1188,7 +1235,7 @@ async function cmdImport(argv: string[]): Promise<void> {
   const h = homedir();
   if (values["dry-run"]) {
     for (const it of plan.items) {
-      console.log(`[${it.project ?? "全局"}] ${it.doc.type}→${it.kind} ${it.doc.id}\n  正文: ${it.text}\n  背景: ${it.why ?? "（无）"}\n  出处: ${displayPath(it.doc.path, h)}${it.also.length ? `（另有 ${it.also.length} 处相同副本）` : ""}`);
+      console.log(`[${it.project ?? "全局"}] ${it.doc.type}→${it.kind} ${it.doc.id}\n  正文: ${it.text}\n  背景: ${it.why ?? "（无）"}\n  详情正文: ${it.body ? `${[...it.body].length} 字` : "（无）"}\n  出处: ${displayPath(it.doc.path, h)}${it.also.length ? `（另有 ${it.also.length} 处相同副本）` : ""}`);
     }
     for (const s of plan.skipped) console.log(`跳过 ${s.id} ${displayPath(s.path, h)}：${s.reason}`);
     console.log(`共 ${plan.items.length} 条待导入，跳过 ${plan.skipped.length} 条（试运行，未写入）`);
@@ -1213,10 +1260,16 @@ async function cmdImport(argv: string[]): Promise<void> {
     const x = r.relate;
     console.log(
       [
-        `导入 Pensieve: 新增 ${r.created.length}，内容变更改为纠正 ${r.corrected.length}，未变 ${r.unchanged}，此前已归档不再导 ${r.archivedSkip}，跳过 ${r.skipped.length}`,
+        `导入 Pensieve: 新增 ${r.created.length}，内容变更改为纠正 ${r.corrected.length}，未变 ${r.unchanged}，此前已归档不再导 ${r.archivedSkip}，补上正文 ${r.detailed.length}，跳过 ${r.skipped.length}`,
         `关系判定: 已有条目并入导入条 ${x.mergedExisting}，导入条并入已确认条目 ${x.mergedIntoExisting}，补充 ${x.refines}，冲突 ${x.conflicts.length}${x.conflicts.length ? `（${x.conflicts.join("、")}）` : ""}，无关 ${x.unrelated}，拿不准 ${x.unsure}，出错 ${x.errors}`,
         ...x.errorDetails.map((d) => `  出错原因: ${d}`),
         x.errors ? "  出错的条目下次运行同一命令会补判（未变的导入条只要还没判过关系就会重判）" : "",
+        ...(r.detailSkipped.length
+          ? [
+              `正文没写进库的文档 ${r.detailSkipped.length} 篇（这些仓库的 .pensieve 不能删）：`,
+              ...r.detailSkipped.map((d) => `  ${d.id} ${displayPath(d.path, h)}：${d.reason}`),
+            ]
+          : []),
         reason ? `向量未更新：${reason}` : "",
       ].filter(Boolean).join("\n"),
     );
@@ -1255,22 +1308,29 @@ const USAGE = `用法:
                                     --scene 另加载该场景的规则（设计/开发/review，可逗号多选）；不给只多一行索引
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
+              [--body-file <文件>] [--alternative "<方案>::<否掉的原因>"]…
               [--from-worker <claude|codex|pi|opencode>:<session_id>] [--scene design,code,review]
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
+                                    --body-file 给决定/事实/坑补详情正文（≤40000 字，规则不能带）
+                                    --alternative 记讨论时否掉的方案，只用于决定，最多 5 项
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
                                     --scene 只用于规则：按场景打标签，brief 按场景加载
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
-              [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi|opencode>:<session_id>]
+              [--why <理由>] [--confirmed] [--body-file <文件>] [--alternative "<方案>::<原因>"]…
+              [--from-worker <claude|codex|pi|opencode>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
+                                    不继承旧条目的正文和否掉的方案，要沿用就显式重给
   ab recall [--hook] [文本…]            每轮钩子（--hook 时注入常驻偏好与提醒，不再自动检索）或按文本检索相关记忆
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
-                                    前 8 条全文并列出关联，第 9–16 名每条一行
+                                    前 8 条全文并列出关联（带详情正文的显示前 300 字和 ab get 提示），第 9–16 名每条一行
   ab search --scene <design,code,review>  只列出该场景的全部规则（含未确认；不和关键词、--archived、--kind 其他种类同用）
-  ab get <id 前缀> [--expand]       看一条：双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
-                                    --expand 展开记下这条时的原始讨论（Pensieve 导入条打开原 md 文件）
+  ab get <id 前缀> [--expand]       看一条：为什么、否掉的方案、详情正文、全部原话（带角色和时间），
+                                    再列双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
+                                    --expand 展开记下这条时的原始讨论；原对话不在时先列库里存的原话
+                                    （Pensieve 导入条打开原 md 文件）
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab tag <id 前缀> --scene <design,code,review|none>
@@ -1289,6 +1349,7 @@ const USAGE = `用法:
                                     手动登记一个会话（hook 没生效时）
   ab import pensieve <仓库目录>... [--global <目录>]... [--skip-file <文件>] [--dry-run]
                                     把 .pensieve 的 maxim/decision/knowledge 导成已确认记忆（rule/decision/坑或事实），重导不重复，内容变了记为纠正
+                                    md 正文存成条目的详情正文；重导时给旧条目补上缺的正文（不换 id）
   ab setup [--only fast,reviewers,panel,keys,hosts,test]
   ab setup --cite on|off [--dry-run]      召回块末尾的引用指令开关（默认关）
   ab setup --notes [--dry-run] [--adopt]  安装/更新宿主指令文件里的 agentbrain 托管块（写前备份，先打印 diff）

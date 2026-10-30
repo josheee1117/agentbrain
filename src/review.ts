@@ -506,6 +506,7 @@ export function planAction(p: Proposition, res: CurateResult, liveProps: Map<str
   if (!d.final) return { op: "skip", id: p.id, why: d.route === "undecided" ? d.why : "无结论" };
   const f = d.final;
   if (f.verdict === "discard") return { op: "discard", id: p.id, reason: f.reason };
+  if (p.body !== null || p.alternatives.length) return { op: "skip", id: p.id, why: "带详情（正文或否掉的方案），不自动改写；要改就手动 ab correct 重给详情" };
   if (f.verdict === "keep") return { op: "promote", id: p.id, guidance: f.guidance, scenario: f.scenario! };
   if (f.verdict === "rewrite") return { op: "rewrite", id: p.id, text: f.text!, scenario: f.scenario!, guidance: f.guidance };
   const target = liveProps.get(f.into!);

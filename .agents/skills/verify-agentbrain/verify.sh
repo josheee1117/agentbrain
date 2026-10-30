@@ -103,6 +103,27 @@ db.close();
     step cli-scene-search-unconfirmed env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" search --scene code
     step cli-scene-search-unconfirmed-mark bash -c "grep -qE '\[未确认.*\].*未确认场景规则（verify）' '$EV/cli-scene-search-unconfirmed.log'"
 
+    # 3c. 详情正文与否掉的方案（§8.11）：remember --body-file/--alternative → ab get 顺序 → search 正文提示
+    printf '过期 300 秒。\n\n回滚：切回 60 秒。\n' > "$S/body.md"
+    drive_remember_detail(){
+      (cd "$REPO" && env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --confirmed --kind decision \
+        --text "缓存统一 300 秒过期（verify）" --why "10-20 出现缓存雪崩" --summary "缓存选型" \
+        --body-file "$S/body.md" --alternative "继续单机内存::多实例下不一致")
+    }
+    step cli-detail-remember drive_remember_detail
+    DETAIL_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-detail-remember.log" 2>/dev/null | head -1)
+    step cli-detail-get env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" get "$DETAIL_ID"
+    step cli-detail-get-body bash -c "grep -qF '回滚：切回 60 秒。' '$EV/cli-detail-get.log'"
+    step cli-detail-get-alt bash -c "grep -qF '继续单机内存：多实例下不一致' '$EV/cli-detail-get.log'"
+    step cli-detail-search env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" search "缓存统一" --all
+    step cli-detail-search-body bash -c "grep -qF '正文: 过期 300 秒。' '$EV/cli-detail-search.log'"
+    step cli-detail-search-hint bash -c "grep -qF \"ab get $DETAIL_ID 看全文\" '$EV/cli-detail-search.log'"
+    step cli-detail-rule-body bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' remember --confirmed --kind rule --text '规则不能带正文（verify）' --summary 'x' --body-file '$S/body.md' >/dev/null 2>&1"
+    step cli-detail-correct env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" correct "$DETAIL_ID" --text "缓存改 600 秒（verify）" --summary "纠正" --confirmed
+    CORRECT_ID=$(sed -n 's/^已纠正 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-detail-correct.log" 2>/dev/null | head -1)
+    step cli-detail-correct-nocopy env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" get "$CORRECT_ID"
+    step cli-detail-correct-nocopy-text bash -c "! grep -qF '回滚：切回 60 秒。' '$EV/cli-detail-correct-nocopy.log'"
+
     # 4. recall-hook drive
     drive_recall_hook(){
       printf '{"prompt":"验证规范","cwd":"%s"}\n' "$REPO" | env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" recall --hook

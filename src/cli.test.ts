@@ -1108,6 +1108,134 @@ test("brief --scene 的交付记录（prop_usage / inject_log）与场景段实�
   for (const id of ids) assert.ok(printed.includes(id), `交付记录里有 ${id}`);
 });
 
+// ---------- §8.11 详情正文与原话（2026-10-30） ----------
+
+test("§8.11 remember --body-file / --alternative 写入；ab get 按 text、why、alternatives（带原话）、body、原话顺序显示", async () => {
+  const own = join(dir, "kd-remember");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-body.md");
+  writeFileSync(bodyFile, "过期 300 秒\n\n回滚：切回单机缓存。\n");
+  const r = ab(["remember", "--confirmed", "--kind", "decision", "--text", "缓存层用 Redis", "--why", "单机内存扛不住峰值", "--summary", "缓存选型",
+    "--body-file", bodyFile, "--alternative", "继续单机内存::多实例下不一致", "--alternative", "上嵌入式 KV::运维要多装一套"], alpha, own);
+  assert.equal(r.code, 0, `out=${r.out} err=${r.err}`);
+  const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const p = [...s.project().props.values()].find((x) => x.id.startsWith(id))!;
+  assert.equal(p.body, "过期 300 秒\n\n回滚：切回单机缓存。", "--body-file 原样存进 body");
+  assert.deepEqual(p.alternatives, [{ option: "继续单机内存", rejected_because: "多实例下不一致" }, { option: "上嵌入式 KV", rejected_because: "运维要多装一套" }]);
+  // 原话只有抽取会写：直接补一条带原话的决定，检查 ab get 的顺序和"时间未知"
+  const pid = s.ensureProject("alpha");
+  const withQuote = s.remember(pid, "s", false, { kind: "decision", text: "缓存层用 Redis（含引文）", why: "单机内存扛不住峰值", confirmed: true,
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "缓存选型" },
+    body: "过期 300 秒",
+    alternatives: [{ option: "继续单机内存", rejected_because: "多实例下不一致", evidence: 0 }, { option: "上嵌入式 KV", rejected_because: "运维要多装一套" }],
+    evidence: [
+      { anchor: "u1", role: "user", quote_sha256: "h1", quote: "单机内存扛不住峰值", said_at: "2026-10-30T10:00:00Z" },
+      { anchor: "u2", role: "user", quote_sha256: "h2", quote: "那就上 Redis 吧" },
+    ] });
+  s.close();
+  const g = ab(["get", withQuote.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  const out = g.out;
+  const order = ["为什么: 单机内存扛不住峰值", "继续单机内存", "过期 300 秒", "原话"];
+  const at = order.map((x) => out.indexOf(x));
+  assert.ok(at.every((i) => i >= 0), `缺内容：${out}`);
+  assert.deepEqual([...at].sort((a, b) => a - b), at, `顺序不对：${out}`);
+  assert.match(out, /继续单机内存：多实例下不一致（「单机内存扛不住峰值」）/);
+  assert.match(out, /上嵌入式 KV：运维要多装一套$/m);
+  assert.match(out, /\[user 2026-10-30T10:00:00Z\] 单机内存扛不住峰值/);
+  assert.match(out, /\[user 时间未知\] 那就上 Redis 吧/);
+});
+
+test("§8.11 写入口：规则不能带正文、超长和密钥报错退出 1；correct 拿到同样的参数但不继承旧详情", async () => {
+  const own = join(dir, "kd-reject");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-b2.md");
+  writeFileSync(bodyFile, "正文");
+  const rule = ab(["remember", "--confirmed", "--kind", "rule", "--text", "一行规则", "--summary", "x", "--body-file", bodyFile], alpha, own);
+  assert.equal(rule.code, 1);
+  assert.match(rule.err, /正文/);
+  const huge = join(dir, "kd-b3.md");
+  writeFileSync(huge, "长".repeat(40001));
+  const tooLong = ab(["remember", "--confirmed", "--kind", "note", "--text", "事实", "--summary", "x", "--body-file", huge], alpha, own);
+  assert.equal(tooLong.code, 1);
+  assert.match(tooLong.err, /40000/);
+  const secret = ab(["remember", "--confirmed", "--kind", "note", "--text", "事实", "--summary", "x", "--why", "key 是 sk-abcdefghijklmnopqrstuvwxyz0123"], alpha, own);
+  assert.equal(secret.code, 1);
+  assert.match(secret.err, /密钥/);
+  const badAlt = ab(["remember", "--confirmed", "--kind", "rule", "--text", "r", "--summary", "x", "--alternative", "甲::乙"], alpha, own);
+  assert.equal(badAlt.code, 1);
+
+  const first = ab(["remember", "--confirmed", "--kind", "decision", "--text", "旧决定", "--summary", "x", "--body-file", bodyFile, "--alternative", "旧方案::旧原因"], alpha, own);
+  assert.equal(first.code, 0, first.err);
+  const oldId = first.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const corr = ab(["correct", oldId, "--text", "新决定", "--summary", "纠正"], alpha, own);
+  assert.equal(corr.code, 0, corr.err);
+  const newId = corr.out.match(/\[([0-9a-f]{8})\] 替代/)![1];
+  const g = ab(["get", newId], alpha, own).out;
+  assert.doesNotMatch(g, /正文\n|旧方案|旧原因/, `纠正不继承旧详情：${g}`);
+  const withBody = ab(["correct", oldId, "--text", "再改", "--summary", "纠正", "--body-file", bodyFile, "--alternative", "新方案::新原因"], alpha, own);
+  assert.equal(withBody.code, 0, withBody.err);
+  const g2 = ab(["get", withBody.out.match(/\[([0-9a-f]{8})\] 替代/)![1]], alpha, own).out;
+  assert.match(g2, /正文/);
+  assert.match(g2, /新方案：新原因/);
+});
+
+test("§8.11 search 前 8 条显示 body 前 300 字和 ab get 提示", async () => {
+  const own = join(dir, "kd-search-body");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-b4.md");
+  writeFileSync(bodyFile, "甲".repeat(400) + "\n尾巴不应出现");
+  const r = ab(["remember", "--confirmed", "--kind", "decision", "--text", "详情检索样例", "--summary", "x", "--body-file", bodyFile], alpha, own);
+  assert.equal(r.code, 0, r.err);
+  const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const s = ab(["search", "详情检索样例"], alpha, own);
+  assert.equal(s.code, 0, s.err);
+  assert.match(s.out, new RegExp(`正文: ${"甲".repeat(300)}…`));
+  assert.match(s.out, new RegExp(`ab get ${id} 看全文`));
+  assert.doesNotMatch(s.out, /尾巴不应出现/);
+  assert.doesNotMatch(ab(["search", "详情检索样例"], alpha, own).out, /为什么: 甲/, "body 不走 why 那行");
+});
+
+test("§8.11 ab get --expand：原对话不在时先列库里存的原话，再说原对话不可用", async () => {
+  const own = join(dir, "kd-expand");
+  mkdirSync(own, { recursive: true });
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const pid = s.ensureProject("alpha");
+  const base = { confirmed: true, origin: "extract" as const, basis: "user_confirmed" as const };
+  const gone = s.remember(pid, "s-gone", false, { ...base, kind: "decision", text: "缓存过期时间定 300 秒",
+    why: "线上出现缓存雪崩", body: "超过 300 秒，回源就会打穿数据库",
+    source: { host: "pi", session_id: "s-gone", transcript: join(dir, "kd-not-there.jsonl"), anchor: "u1", summary: "缓存讨论" },
+    evidence: [{ anchor: "u1", role: "user", quote_sha256: "h1", quote: "300 秒就够了", said_at: "2026-10-30T09:00:00Z" }] });
+  // 追加来源也带原话
+  s.commit([{ kind: "evidence", project_id: pid, session_id: "s2", target_id: gone,
+    body: { source: { host: "codex", session_id: "s2", transcript: null, anchor: "u9", summary: "再确认" },
+      basis: "user_directive", evidence: [{ anchor: "u9", role: "user", quote_sha256: "h2", quote: "对，就这样" }], window_id: "w" } }], () => {});
+  s.close();
+  const g = ab(["get", gone.slice(0, 8), "--expand"], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  const out = g.out;
+  const i = out.indexOf("--- 原对话已不可用");
+  assert.ok(i > 0, out);
+  const tail = out.slice(i);
+  assert.match(tail, /--- 原对话已不可用：.*下面是库里存的原话 ---/);
+  assert.match(tail, /\[user 2026-10-30T09:00:00Z\] 300 秒就够了/);
+  assert.match(tail, /\[user 时间未知\] 对，就这样（来源 codex:s2）/);
+});
+
+test("§8.11 抽取入口：写 L1 的同一处拒绝含密钥的条，界面报错说人话", async () => {
+  const { Store } = await import("./store.ts");
+  const s = new Store(":memory:", ":memory:");
+  const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: null, summary: "x" };
+  assert.throws(() => s.commit([{ kind: "remember", project_id: null, session_id: "s", target_id: null,
+    body: { kind: "note", text: "外网调用用这个 key", confirmed: false, origin: "extract", source: src,
+      body: "配置里写 api_key = sk-abcdefghijklmnopqrstuvwxyz0123" } }], () => {}), /密钥/);
+  assert.equal(s.project().props.size, 0, "被拒绝的条一条都没写");
+  s.close();
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
@@ -1161,4 +1289,3 @@ test("brief 放不下的整条跳过，不硬截断结尾", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-

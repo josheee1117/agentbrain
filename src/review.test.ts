@@ -452,3 +452,19 @@ test("撤销以 L1 为准：写库后报告没落盘（applied 为空）也能�
   assert.equal(s.project().props.get(e)!.state, "active");
   assert.equal(s.project().props.get(e)!.guidance, true);
 });
+
+// ---------- §8.11 带详情的条目跳过改写（2026-10-30） ----------
+
+test("§8.11 planAction：带 body 或 alternatives 的条目跳过改写，写进报告；改写不丢详情", () => {
+  const s = new Store(":memory:", ":memory:");
+  const bodyOnly = s.remember(null, "s", false, { kind: "decision", text: "带正文的决定", confirmed: false, source: src, body: "详情" });
+  const altOnly = s.remember(null, "s", false, { kind: "decision", text: "带否掉方案的决定", confirmed: false, source: src, alternatives: [{ option: "甲", rejected_because: "乙" }] });
+  const plain = s.remember(null, "s", false, { kind: "rule", text: "普通条目", confirmed: false, source: src });
+  const rw = { votes: [], decision: { route: "unanimous" as const, final: { verdict: "rewrite" as const, text: "改写后", class: "A" as const, guidance: true, scenario: "当x时", reason: "" } } };
+  const props = s.project().props;
+  const plan = planAll([bodyOnly, altOnly, plain].map((id) => ({ ...rw, id })), props);
+  assert.deepEqual(plan.map((a) => a.op), ["skip", "skip", "rewrite"]);
+  assert.match((plan[0] as { why: string }).why, /详情/);
+  assert.match((plan[1] as { why: string }).why, /详情/);
+  s.close();
+});
