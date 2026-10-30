@@ -9,6 +9,9 @@ export type Host = "claude" | "codex" | "pi" | "opencode";
 export type PropState = "active" | "archived" | "superseded";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */
 export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative";
+/** 场景（§11.10）：规则按设计 / 开发 / review 打标签，开工只加载当前场景的。封闭三值，空表示不分场景。 */
+export const SCENES = ["design", "code", "review"] as const;
+export type Scene = (typeof SCENES)[number];
 
 export interface SourcePointer {
   host: Host | null;
@@ -77,6 +80,8 @@ export interface RememberBody {
   said_at?: string;
   /** 指导 agent 怎么干活的偏好（汇报方式、语气、工作流）。已确认的全局偏好每轮常驻注入（§21 2026-10-14 价值审计 C）。 */
   guidance?: boolean;
+  /** 只对规则有意义（§11.10）。空/缺省表示不分场景。 */
+  scenes?: Scene[];
   /** 旧版本（v3 候选区，§8.8 前）写下的候选标记。投影时忽略：条目照常是有效的未确认条目。 */
   candidate?: boolean;
   /** 旧版本 ab remember --direct 写下的标记（候选区去掉后不再写，也不再读）。 */
@@ -168,9 +173,10 @@ export interface StageBody {
   note?: string;
 }
 
-/** tag 事件：只改元数据标记，不改正文。 */
+/** tag 事件：只改元数据标记，不改正文。scenes 整组替换，[] 清空；没给这个字段就不动。 */
 export interface TagBody {
   guidance?: boolean;
+  scenes?: Scene[];
 }
 
 /** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
@@ -231,6 +237,8 @@ export interface Proposition {
   import_ref: ImportRef | null;
   /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
   guidance: boolean;
+  /** 场景标签（§11.10）；旧数据缺字段为 []。 */
+  scenes: Scene[];
   /** 话题沉淀（§8.6）写入的条目：所属运行 id（ab work --undo 用）。 */
   topic_run?: string;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
@@ -309,6 +317,7 @@ export function fold(rows: EventRow[]): Projection {
         import_ref: b.import_ref ?? null,
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
+        scenes: Array.isArray(b.scenes) ? b.scenes : [],
         demoted: null,
         value: b.value ?? null,
       });
@@ -348,6 +357,8 @@ export function fold(rows: EventRow[]): Projection {
     if (r.kind === "tag") {
       const b = JSON.parse(r.body) as TagBody;
       if (typeof b.guidance === "boolean") target.guidance = b.guidance;
+      // 按字段是否出现更新：没给 scenes 不动，给 [] 才清空
+      if (Array.isArray(b.scenes)) target.scenes = b.scenes;
       continue;
     }
     if (r.kind === "evidence") {
