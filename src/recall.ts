@@ -150,6 +150,7 @@ export const GUIDANCE_MAX_CHARS = 800;
 /**
  * 每轮常驻的"怎么干活"偏好：用户确认过的全局 guidance 条目（说人话、结论写在回复正文里……），不看相似度。
  * 只放用户确认的（自动转正的不算）、没有争议的；子代理只看 for_workers 的。exclude 里的（本轮召回已给出的）不重复。
+ * 带场景的条目直接跳过（§11.10）：场景规则只在对应场景由 brief / search --scene 给出，不能兜底成每轮常驻。
  */
 export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exclude: ReadonlySet<string> = new Set(), shown: string[] = []): string {
   const rows = [...props]
@@ -158,6 +159,7 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
         p.state === "active" &&
         p.project_id === null &&
         p.guidance &&
+        !p.scenes.length &&
         p.confirmed &&
         p.confirmed_by === "user" &&
         !p.pending_corrections.length &&

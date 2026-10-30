@@ -121,8 +121,8 @@ export function applyActions(store: Store, run: string, actions: Action[], props
     const p = props.get(a.id);
     if (!p || p.confirmed || p.state !== "active") continue; // 二次把关
     if (a.op === "promote") {
-      // 留下：条目本来就有效，不写状态事件；审稿认定是干活偏好的才打 guidance
-      if (a.guidance && !p.guidance) done({ op: a.op, id: p.id, events: [store.lifecycle("tag", p.id, null, { guidance: true, run })] });
+      // 留下：条目本来就有效，不写状态事件；审稿认定是干活偏好的才打 guidance。带场景的规则不打（§11.10）
+      if (a.guidance && !p.guidance && !p.scenes.length) done({ op: a.op, id: p.id, events: [store.lifecycle("tag", p.id, null, { guidance: true, run })] });
     } else if (a.op === "discard") {
       done({ op: a.op, id: p.id, events: [store.lifecycle("archive", p.id, null, { reason: "curate", run, note: `${run}: ${a.reason}`.slice(0, 300) })] });
     } else if (a.op === "rewrite") {
@@ -142,7 +142,9 @@ export function applyActions(store: Store, run: string, actions: Action[], props
         evidence: p.evidence,
         said_at: p.said_at ?? undefined,
         valid_days: p.valid_days ?? undefined,
-        guidance: a.guidance,
+        // 场景跟着旧条目走（§11.10）；带场景的规则不当常驻偏好
+        scenes: p.scenes.length ? p.scenes : undefined,
+        guidance: a.guidance && !p.scenes.length,
         value: { scenario, flags: [] },
         curate: { run, of: p.id },
       });

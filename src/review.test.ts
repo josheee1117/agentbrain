@@ -175,6 +175,28 @@ test("执行与撤销：沉淀/改写/并入/丢弃都可逆；用户确认的�
   assert.equal(p2.get(created)!.state, "archived");
 });
 
+test("curate 不往场景规则上打 guidance；改写的新条目复制旧条目的 scenes（§11.10）", () => {
+  const s = new Store(":memory:", ":memory:");
+  const mk = (text: string, extra: Partial<RememberBody> = {}) => s.remember(null, "s", false, { kind: "rule", text, confirmed: false, source: src, ...extra });
+  const sceneKeep = mk("带场景的候选", { scenes: ["code"] });
+  const sceneRew = mk("带场景待改写", { scenes: ["design", "review"] });
+  const plainRew = mk("没场景待改写");
+  applyActions(s, "S", [
+    { op: "promote", id: sceneKeep, guidance: true, scenario: "当写代码时" },
+    { op: "rewrite", id: sceneRew, text: "改写后", scenario: "当设计时", guidance: true },
+    { op: "rewrite", id: plainRew, text: "改写后 2", scenario: "当设计时", guidance: true },
+  ], s.project().props);
+  const props = s.project().props;
+  assert.equal(props.get(sceneKeep)!.guidance, false, "场景规则不能同时是每轮常驻偏好");
+  assert.deepEqual(props.get(sceneKeep)!.scenes, ["code"]);
+  const created = [...props.values()].find((p) => p.text === "改写后")!;
+  assert.deepEqual(created.scenes, ["design", "review"]);
+  assert.equal(created.guidance, false);
+  const created2 = [...props.values()].find((p) => p.text === "改写后 2")!;
+  assert.deepEqual(created2.scenes, []);
+  assert.equal(created2.guidance, true, "没场景的改写照常按审稿结论打 guidance");
+});
+
 test("planAction：用户确认的条目、已确认或已归档的一律 skip", () => {
   const s = new Store(":memory:", ":memory:");
   const a = s.remember(null, "s", false, { kind: "rule", text: "a", confirmed: true, source: src });
