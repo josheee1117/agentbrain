@@ -40,7 +40,16 @@ globalThis.fetch = async (url, init) => {
   if (String(url) !== 'https://embedding.invalid/v1/embeddings') blocked();
   const body = JSON.parse(init.body);
   if (body.model === 'fail') return new Response(JSON.stringify({ error: { message: '假接口故障' } }), { status: 503 });
-  return new Response(JSON.stringify({ data: body.input.map((text, index) => ({ index, embedding: [1, 0, 0] })) }));
+  // 同步整批是脏的（含 SYNCFAIL）就失败，但查询向量仍算得出：用来造 pending>0
+  if (body.input.some((t) => t.includes('SYNCFAIL'))) return new Response(JSON.stringify({ error: { message: '假同步故障' } }), { status: 503 });
+  // model=cross：文本里写 SIM0.7 就得到与查询（[1,0]）相似度 0.7 的向量，没写就是 1.0
+  const vec = (text) => {
+    if (body.model !== 'cross') return [1, 0, 0];
+    const m = /SIM([0-9.]+)/.exec(text);
+    const s = m ? Number(m[1]) : 1;
+    return [s, Math.sqrt(Math.max(0, 1 - s * s))];
+  };
+  return new Response(JSON.stringify({ data: body.input.map((text, index) => ({ index, embedding: vec(text) })) }));
 };
 `);
 const transcriptDir = join(fakeHome, ".pi/agent/sessions/x");
@@ -756,6 +765,68 @@ test("search 前 8 条全文，第 9–16 名每条一行，再往后不出", as
   const top8 = (await s8.searchHybrid("灰度开关", { projects: [s8.ensureProject("alpha")], includeGlobal: true }, null)).hits.map((h) => h.id.slice(0, 8));
   s8.close();
   assert.deepEqual(shown.slice(0, 8), top8);
+});
+
+test("§8.11.4 跨项目段：已登记项目里搜索带出其他项目的相近条目，照常记交付", () => {
+  const own = join(dir, "cross-project");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const run = (args: string[], cwd = alpha) => ab(args, cwd, own);
+  const betaIds: string[] = [];
+  for (const sim of [0.9, 0.8, 0.7, 0.55]) {
+    const r = run(["remember", "--confirmed", "--project", "beta", "--kind", "decision", "--text", `beta 的缓存决定 SIM${sim}`, "--summary", "缓存选型"]);
+    assert.equal(r.code, 0, r.err);
+    betaIds.push(r.out.match(/\[([0-9a-f]{8})\]/)![1]);
+  }
+  assert.equal(run(["remember", "--confirmed", "--kind", "decision", "--text", "alpha 的缓存决定", "--summary", "缓存选型"]).code, 0);
+
+  const s = run(["search", "缓存策略"]);
+  assert.equal(s.code, 0, s.err);
+  const lines = s.out.split("\n");
+  const head = lines.indexOf("其他项目里相近的：");
+  assert.ok(head >= 0, s.out);
+  const cross = lines.slice(head + 1).filter(Boolean);
+  assert.equal(cross.length, 3, `门槛 0.6 挡掉 0.55，最多 3 条：\n${s.out}`);
+  assert.deepEqual(cross.map((l) => /（([0-9.]+)）$/.exec(l)?.[1]), ["0.90", "0.80", "0.70"]);
+  assert.match(cross[0], new RegExp(`^\\[${betaIds[0]}\\] beta 决定: beta 的缓存决定 SIM0\\.9（0\\.90）$`), s.out);
+  assert.ok(!s.out.includes(betaIds[3]), "过不了门槛的不出");
+  assert.ok(!s.out.includes("alpha 的缓存决定（"), "本项目的条目不在跨项目段里");
+  assert.doesNotMatch(run(["search", "缓存策略", "--kind", "note"]).out, /beta 的缓存决定/, "--kind 同样限定跨项目段");
+
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    const delivered = db.prepare("SELECT distinct prop_id FROM inject_log WHERE path='search'").all().map((r) => String(r.prop_id).slice(0, 8));
+    assert.deepEqual(betaIds.slice(0, 3).sort(), delivered.filter((x) => betaIds.includes(x)).sort(), "跨项目段的条目照常记交付");
+  } finally { db.close(); }
+
+  for (const args of [["--project", "alpha"], ["--all"]])
+    assert.doesNotMatch(run(["search", "缓存策略", ...args]).out, /其他项目里相近的/, args.join(" "));
+  execFileSync("git", ["init", "-q", join(dir, "pm")]);
+  assert.doesNotMatch(run(["search", "缓存策略"], join(dir, "pm")).out, /其他项目里相近的/, "pm 目录本来就搜全库");
+  run(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "跨项目段的场景规则", "--summary", "场景", "--scene", "code"]);
+  assert.doesNotMatch(run(["search", "--scene", "code"]).out, /其他项目里相近的/, "--scene 列举不出");
+});
+
+test("§8.11.4 跨项目段：向量不可用不出段并有降级说明；其他项目 pending 在段尾注明", () => {
+  const plain = join(dir, "cross-degraded");
+  ab(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 的缓存笔记", "--summary", "缓存选型"], alpha, plain);
+  const s = ab(["search", "缓存策略"], alpha, plain);
+  assert.equal(s.code, 0, s.err);
+  assert.doesNotMatch(s.out, /其他项目里相近的/);
+  assert.match(s.out, /仅全文检索：.*跨项目段/, `降级提示里要说明跨项目段没出：\n${s.out}`);
+
+  const own = join(dir, "cross-pending");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const run = (args: string[]) => ab(args, alpha, own);
+  assert.equal(run(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 有向量的笔记", "--summary", "缓存选型"]).code, 0);
+  const stuck = run(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 还没算向量的笔记 SYNCFAIL", "--summary", "缓存选型"]);
+  assert.equal(stuck.code, 0, stuck.err);
+  const p = run(["search", "缓存策略"]);
+  assert.equal(p.code, 0, p.err);
+  assert.match(p.out, /其他项目里相近的：/, p.out);
+  assert.match(p.out, /beta 有向量的笔记（1\.00）/);
+  assert.match(p.out, /另有 1 条其他项目的记忆还没算向量，可能漏/);
 });
 
 test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说明）；文件没了或路径不在 .pensieve 下给出原因", async () => {

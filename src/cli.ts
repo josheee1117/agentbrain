@@ -531,6 +531,8 @@ async function cmdSearch(argv: string[]): Promise<void> {
   const store = open();
   try {
     const inPm = isRegistryHome(process.cwd());
+    const here = inPm ? null : resolveProject(process.cwd());
+    const hereId = here ? store.ensureProject(here.name) : null;
     let projects: string[] | "all";
     let includeGlobal = true;
     if (values.all || (inPm && !values.project)) projects = "all";
@@ -539,10 +541,11 @@ async function cmdSearch(argv: string[]): Promise<void> {
       if (!hit) die(`没有名为 ${values.project} 的项目记忆`);
       projects = [hit.id];
     } else {
-      const here = resolveProject(process.cwd());
-      projects = here ? [store.ensureProject(here.name)] : [];
-      if (!here) includeGlobal = true;
+      projects = hereId ? [hereId] : [];
+      if (!hereId) includeGlobal = true;
     }
+    // §8.11.4：只在项目目录里搜、且没指定范围时带跨项目段；pm 目录本来就搜全库，--scene 列举不算搜索
+    const crossProject = hereId && !values.project && !values.all ? { excludeProjectId: hereId } : undefined;
     const names = namesOf(store);
     const props = store.project().props;
     if (scenes.length) {
@@ -569,12 +572,13 @@ async function cmdSearch(argv: string[]): Promise<void> {
       return;
     }
     const { embedder, reason } = createEmbedder();
-    const { hits, degraded } = await store.searchHybrid(query, {
+    const { hits, cross, degraded } = await store.searchHybrid(query, {
       projects,
       includeGlobal,
       kind: values.kind as PropKind | undefined,
       includeArchived: values.archived,
       limit: SEARCH_MAX_HITS,
+      crossProject,
     }, embedder);
     if (!hits.length) {
       console.log("没有匹配的记忆。");
@@ -597,12 +601,24 @@ async function cmdSearch(argv: string[]): Promise<void> {
         console.log(`  [${short(h.id)}] ${p ? SCOPE_LABEL(p, names) : "未知"} ${KIND_LABEL[h.kind]}${p ? marks(p) + linkState(p) : ""}: ${firstLine(p ? p.text : h.text, SEARCH_BRIEF_CHARS)}`);
       }
     }
-    if (degraded) console.log(`（仅全文检索：${reason ?? degraded}）`);
+    if (degraded) console.log(`（仅全文检索：${reason ?? degraded}${crossProject && !cross ? "；跨项目段也要算查询向量，这次没查" : ""}）`);
+    let crossIds: string[] = [];
+    if (cross && (cross.hits.length || cross.pending > 0)) {
+      if (cross.hits.length) {
+        console.log("其他项目里相近的：");
+        for (const h of cross.hits) {
+          const p = props.get(h.id);
+          console.log(`[${short(h.id)}] ${names.get(h.project_id) ?? "未知项目"} ${KIND_LABEL[h.kind]}${p ? marks(p) : ""}: ${firstLine(p ? p.text : h.text, SEARCH_BRIEF_CHARS)}（${h.similarity.toFixed(2)}）`);
+        }
+      }
+      if (cross.pending > 0) console.log(`另有 ${cross.pending} 条其他项目的记忆还没算向量，可能漏`);
+      crossIds = cross.hits.map((h) => h.id);
+    }
     telemetry(() => {
       const ctx = detectCtx(store, process.cwd());
       const now = new Date();
       logQuery(store.workDb, ctx, "search", now);
-      logInjections(store.workDb, ctx, "search", hits.map((h) => h.id), now);
+      logInjections(store.workDb, ctx, "search", [...hits.map((h) => h.id), ...crossIds], now);
     });
   } finally {
     store.close();
@@ -1326,6 +1342,7 @@ const USAGE = `用法:
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
                                     前 8 条全文并列出关联（带详情正文的显示前 300 字和 ab get 提示），第 9–16 名每条一行
+                                    在已登记项目目录里还会多出一段「其他项目里相近的」（相似度 ≥0.6 的前 3 条）
   ab search --scene <design,code,review>  只列出该场景的全部规则（含未确认；不和关键词、--archived、--kind 其他种类同用）
   ab get <id 前缀> [--expand]       看一条：为什么、否掉的方案、详情正文、全部原话（带角色和时间），
                                     再列双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；

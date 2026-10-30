@@ -620,6 +620,90 @@ test("混合检索：两路各取 20 条，融合 limit 可超过 20", async () 
   } finally { s.close(); }
 });
 
+test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度排序，门槛 0.6、最多 3 条", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "decision", text, confirmed: true, source: src() });
+    // 本项目 + 全局的条目相似度最高，但跨项目段只取其他项目
+    s.remember(here, "s", false, body("本项目的缓存决定"));
+    s.remember(null, "s", false, body("全局的缓存决定"));
+    // 其他项目：5 条按相似度递减，其中 2 条不过 0.6 门槛
+    const sims = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4];
+    const ids = sims.map((sim, i) => ({ sim, id: s.remember(other, "s", false, body(`别的项目第${i}条`)) }));
+    const embedder: Embedder = async (texts) => texts.map((text) => {
+      if (text === "查询") return Float32Array.from([1, 0]);
+      const sim = sims[Number(/别的项目第(\d)条/.exec(text)?.[1] ?? 0)] ?? 0;
+      return Float32Array.from([sim, Math.sqrt(1 - sim * sim)]);
+    });
+    await s.syncVectors(embedder, "fake");
+    const r = await s.searchHybrid("查询", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, embedder);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [ids[0].id, ids[1].id, ids[2].id], "门槛 0.6、最多 3 条，按相似度排序");
+    assert.deepEqual(r.cross!.hits.map((h) => h.similarity).map((x) => x.toFixed(2)), ["0.90", "0.80", "0.70"]);
+    assert.equal(r.cross!.pending, 0);
+    assert.equal(r.degraded, null);
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：全库 top-N 都是本项目条目时，其他项目的高相似条目照样出现", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "decision", text, confirmed: true, source: src() });
+    // 本项目 25 条与查询完全相似（全库 top-20 全被它们占满），其他项目只有 1 条 0.7
+    for (let i = 0; i < 25; i++) s.remember(here, "s", false, body(`本项目第${i}条`));
+    const far = s.remember(other, "s", false, body("别的项目里的决定"));
+    const embedder: Embedder = async (texts) => texts.map((text) =>
+      text === "别的项目里的决定" ? Float32Array.from([0.7, Math.sqrt(1 - 0.49)]) : Float32Array.from([1, 0]));
+    await s.syncVectors(embedder, "fake");
+    const r = await s.searchHybrid("查询", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, embedder);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [far], "先限定其他项目再排序，不做全库 top-N 后筛");
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：本项目和全局都不进候选，归档条目也不进", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "note", text, confirmed: true, source: src() });
+    s.remember(here, "s", false, body("本项目的猫"));
+    s.remember(null, "s", false, body("全局的猫"));
+    const gone = s.remember(other, "s", false, body("已归档的猫"));
+    s.lifecycle("archive", gone, "s");
+    const keep = s.remember(other, "s", false, body("留着的猫"));
+    await s.syncVectors(fakeEmbed, "fake");
+    const r = await s.searchHybrid("猫", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, fakeEmbed);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [keep]);
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：查询向量算不出时不出候选；其他项目 pending 条数另报", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "note", text, confirmed: true, source: src() });
+    s.remember(here, "s", false, body("本项目"));
+    const away = s.remember(other, "s", false, body("别的项目"));
+    const opts = { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } };
+    const none = await s.searchHybrid("查询", opts, null);
+    assert.equal(none.cross, undefined, "没配置 embedding 时不出跨项目段");
+    assert.equal(none.degraded, "未配置 embedding");
+    const failed = await s.searchHybrid("查询", opts, async () => { throw new Error("假接口超时"); });
+    assert.equal(failed.cross, undefined, "查询向量算不出时不出跨项目段");
+    assert.match(failed.degraded!, /假接口超时/);
+    // 查询向量算得出，但其他项目那条还没算向量：段能出，pending 报 1
+    await s.syncVectors(async (texts) => texts.map(() => Float32Array.from([1, 0])), "fake");
+    s.remember(other, "s", false, body("刚记还没算向量"));
+    const r = await s.searchHybrid("查询", { ...opts, skipSync: true }, async (texts) => texts.map(() => Float32Array.from([1, 0])));
+    assert.equal(r.cross!.pending, 1, "其他项目里没算向量的条目数");
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [away], "算过向量的那条照常出现");
+  } finally { s.close(); }
+});
+
 test("子代理召回的未确认门槛：只放有用户原话的未确认规则/决定，冲突、纠正、关系未判定、与代码不符、推断的坑都不放", async () => {
   const { recallable } = await import("./visibility.ts");
   const recallableUnconfirmed = (p: any) => !p.confirmed && recallable(p, true);

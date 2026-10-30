@@ -21,6 +21,10 @@ const HYBRID_FTS_K = 20;
 const HYBRID_VEC_K = 20;
 // 2026-10-10 测试集（53 条 / 121 查询）校准：0.45 召回 93%、负例误报 33%；每轮召回另用更严的 minSim。
 export const VEC_MIN_SIM = 0.45;
+/** §8.11.4 跨项目段：只取与查询向量的余弦 ≥ 这个值的其他项目条目。 */
+export const CROSS_PROJECT_MIN_SIM = 0.6;
+/** §8.11.4 跨项目段最多列几条。 */
+export const CROSS_PROJECT_MAX = 3;
 
 export type Embedder = ((texts: string[]) => Promise<Float32Array[]>) & { model?: string };
 
@@ -46,6 +50,20 @@ export interface SearchOpts {
   skipSync?: boolean;
   /** 向量命中的最低余弦，默认 VEC_MIN_SIM。 */
   minSim?: number;
+  /** 跨项目段（§8.11.4）：给了就在返回里多带 cross，排除给出的项目。 */
+  crossProject?: { excludeProjectId: string };
+}
+
+/** 跨项目段的一条：项目一定有值（全局不进候选）。 */
+export interface CrossProjectHit extends SearchHit {
+  project_id: string;
+  similarity: number;
+}
+
+export interface CrossProjectResult {
+  hits: CrossProjectHit[];
+  /** 其他项目里还没有当前向量的条目数：这些条目可能漏。 */
+  pending: number;
 }
 
 const SCHEMA = `
@@ -606,7 +624,7 @@ export class Store {
     return out;
   }
 
-  async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; degraded: string | null }> {
+  async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; cross?: CrossProjectResult; degraded: string | null }> {
     const limit = opts.limit ?? 8;
     const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });
     if (!embedder) return { hits: ftsHits().slice(0, limit), degraded: "未配置 embedding" };
@@ -649,11 +667,40 @@ export class Store {
       }
       const sim = new Map(dense.map((d) => [d.hit.id, d.similarity]));
       const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => (sim.has(p.hit.id) ? { ...p.hit, similarity: sim.get(p.hit.id) } : p.hit));
-      return { hits, degraded: reasons.length ? reasons.join("；") : null };
+      const cross = opts.crossProject ? this.crossProjectHits(queryVec, opts.crossProject.excludeProjectId, opts.kind) : undefined;
+      return { hits, ...(cross ? { cross } : {}), degraded: reasons.length ? reasons.join("；") : null };
     } catch (e) {
       reasons.push(`向量检索不可用：${e instanceof Error ? e.message : String(e)}`);
       return { hits: ftsHits().slice(0, limit), degraded: reasons.join("；") };
     }
+  }
+
+  /**
+   * §8.11.4 跨项目段：候选先限定为其他项目的 active 条目，再按与查询向量的余弦排序、过门槛、取前几条。
+   * 不从全库 top-N 里事后筛，否则本项目条目把位置占满时跨项目条目永远出不来。
+   */
+  private crossProjectHits(query: Float32Array, excludeProjectId: string, kind: PropKind | undefined): CrossProjectResult {
+    const props = this.project().props;
+    const stored = new Map(
+      (this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[])
+        .map((r) => [r.id, r]),
+    );
+    const hits: CrossProjectHit[] = [];
+    let pending = 0;
+    for (const p of props.values()) {
+      if (p.project_id === null || p.project_id === excludeProjectId || !searchable(p)) continue;
+      if (kind && p.kind !== kind) continue;
+      const row = stored.get(p.id);
+      const vec = row && row.text_hash === textHash(indexText(p)) ? fromBlob(row.vec) : null;
+      if (!vec || vec.length !== query.length) {
+        pending++;
+        continue;
+      }
+      const similarity = cosine(query, vec);
+      if (similarity >= CROSS_PROJECT_MIN_SIM) hits.push({ id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state, similarity });
+    }
+    hits.sort((a, b) => b.similarity - a.similarity);
+    return { hits: hits.slice(0, CROSS_PROJECT_MAX), pending };
   }
 
   search(query: string, opts: SearchOpts): SearchHit[] {

@@ -124,6 +124,65 @@ db.close();
     step cli-detail-correct-nocopy env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" get "$CORRECT_ID"
     step cli-detail-correct-nocopy-text bash -c "! grep -qF '回滚：切回 60 秒。' '$EV/cli-detail-correct-nocopy.log'"
 
+    # 3d. 跨项目段（§8.11.4）：假 embedding 接口造相似度 → 项目目录出段、四种场景不出
+    # 只在本步骤用这个 store，避免假向量污染其他步骤。
+    XP_HOME="$S/ab_cross"
+    XP_PORTS="$S/xp-port"
+    mkdir -p "$XP_HOME"
+    cat > "$S/xp-embed.mjs" <<'MOCK'
+import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+const sim = (text) => { const m = /SIM([0-9.]+)/.exec(text); const s = m ? Number(m[1]) : 1; return [s, Math.sqrt(Math.max(0, 1 - s * s))]; };
+const server = createServer((req, res) => {
+  let body = "";
+  req.on("data", (c) => (body += c));
+  req.on("end", () => {
+    const b = JSON.parse(body || "{}");
+    res.setHeader("Content-Type", "application/json");
+    res.end(JSON.stringify({ data: (b.input ?? []).map((text, index) => ({ index, embedding: sim(text) })) }));
+  });
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(process.argv[2], String(server.address().port)));
+MOCK
+    node "$S/xp-embed.mjs" "$XP_PORTS" & XP_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$XP_PORTS" ] && break; sleep 0.3; done
+    XP_REPO2="$S/test-repo-2"
+    mkdir -p "$XP_REPO2"; git -C "$XP_REPO2" init -q
+    # pm 目录 = 清单目录的父目录（isRegistryHome）
+    git -C "$S" init -q
+    printf -- "- 路径：\`%s\`\n" "$XP_REPO2" > "$AB_REGISTRY/testrepo2.md"
+    printf '{"baseUrl":"http://127.0.0.1:%s/v1","model":"cross"}\n' "$(cat "$XP_PORTS")" > "$XP_HOME/embedding.json"
+    xp_run(){ env AB_HOME="$XP_HOME" AGENTBRAIN_HOME="$XP_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" "$@"; }
+    xp_remember(){ (cd "$1" && xp_run remember --confirmed --kind "$2" --text "$3" --summary "跨项目验证"); }
+    step cli-cross-seed-other xp_remember "$XP_REPO2" decision "其他项目的缓存决定 SIM0.92"
+    step cli-cross-seed-other2 xp_remember "$XP_REPO2" note "其他项目的指标口径 SIM0.71"
+    step cli-cross-seed-other3 xp_remember "$XP_REPO2" note "其他项目的低相似条目 SIM0.30"
+    XP_SEED_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-cross-seed-other.log" 2>/dev/null | head -1)
+    step cli-cross-seed-own xp_remember "$REPO" decision "本项目的缓存决定 SIM1.0"
+    step cli-cross-search bash -c "(cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选') > '$EV/cli-cross-search.log' 2>&1"
+    step cli-cross-search-section bash -c "grep -qF '其他项目里相近的：' '$EV/cli-cross-search.log'"
+    step cli-cross-search-hit bash -c "grep -qF \"[$XP_SEED_ID] testrepo2 决定: 其他项目的缓存决定 SIM0.92（0.92）\" '$EV/cli-cross-search.log'"
+    step cli-cross-search-threshold bash -c "! grep -qF 'SIM0.30' '$EV/cli-cross-search.log'"
+    step cli-cross-search-own-excluded bash -c "! grep -qF '本项目的缓存决定 SIM1.0（' '$EV/cli-cross-search.log'"
+    step cli-cross-search-delivered node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$XP_HOME/store.db');
+const hit = db.prepare(\"SELECT COUNT(*) AS n FROM inject_log WHERE path='search' AND substr(prop_id,1,8)=?\").get('$XP_SEED_ID').n;
+db.close();
+if (hit !== 1) { console.error('跨项目段交付记录应为 1 条，实际 ' + hit); process.exit(1); }
+"
+    step cli-cross-suppressed bash -c "
+for a in '--project testrepo' '--all'; do
+  (cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选' \$a | grep -qF '其他项目里相近的：') && { echo \"不该出：\$a\"; exit 1; }
+done
+(cd '$S' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选') | grep -qF '其他项目里相近的：' && { echo 'pm 目录不该出'; exit 1; }
+env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene code | grep -qF '其他项目里相近的：' && { echo '--scene 不该出'; exit 1; }
+exit 0
+"
+    step cli-cross-degraded bash -c "(cd '$REPO' && env AB_HOME='$S/ab_cross_no_embed' AGENTBRAIN_HOME='$S/ab_cross_no_embed' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选') > '$EV/cli-cross-degraded.log' 2>&1; grep -qF '跨项目段也要算查询向量' '$EV/cli-cross-degraded.log' && ! grep -qF '其他项目里相近的：' '$EV/cli-cross-degraded.log'"
+    kill $XP_PID 2>/dev/null
+
+
     # 4. recall-hook drive
     drive_recall_hook(){
       printf '{"prompt":"验证规范","cwd":"%s"}\n' "$REPO" | env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" recall --hook
