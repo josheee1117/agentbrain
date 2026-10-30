@@ -1656,6 +1656,63 @@ box 上 `/workspace/agentbrain-review/viewer/`：`overview.png`、`graph.png`、
 2. 隐藏模式下记录"用了什么"这次先不做（每轮要多一次工具调用），同意吗？
 3. 摘要行覆盖偏好、brief 和主动查到的记忆，没用上时也写"记忆：本轮未用"，同意吗？
 
+### 11.10 规则按场景打标签，开工按场景加载（**已批准，review 已采纳，待实现**，2026-10-30）
+
+> 状态：用户 2026-10-30 提出"品味规范不是所有场景都要全量加载，按 tag 区分，召回时有针对性"，同日选"开始做场景标签：写设计、派 astra review、再派实现"。来龙去脉见 pm `docs/agentbrain/2026-10-30-scene-tags/README.md`。
+
+#### 11.10.1 痛点（2026-10-30 核实）
+
+1. **规范进不了开工摘要**。用户 10-30 定稿的 23 条全局品味规范（总纲 G、设计 D、开发 C、review R，`ab search 品味规范`）全是全局规则。brief 每段按 seq 倒序、放不下整条跳过（`src/brief.ts:20-31`），全局段只有 2000 字总预算里均分的一份（`:7`、`:40-50`）。实测 pm、data-asset、ai-data 三处：全局段被 G、D 占满，C、R 一条都显示不出来，原有的其他全局规则（推 main、MySQL 767 字节、派活走 herdr）全被挤掉。
+2. **场景不对的规则是噪音**。调研、验证、写 pm 文档的活用不上设计和 review 规范；review 只需要检查清单。
+3. **模型不会自己去查**。§11.9.4 评测：看起来像普通编码题时，B/C 组几乎都不 `ab search`（pm `docs/agentbrain/2026-10-28-memory-visibility/tasks/10-eval-resume-codex.md`）。规范正是这类，靠提醒拉不动，要在已知场景的地方推给模型。
+4. **场景在哪儿已知**。主会话写的派活单都有 `- 类别：` 行（编码 / review/代码 / review/方案 …），`tools/herdr-dispatch` 已经读它（`card_category`）。主会话自己的场景随轮次变，开工时不知道。
+
+#### 11.10.2 方案
+
+**数据**：条目多一个 `scenes`，取值只有 `design`（设计）、`code`（开发）、`review`，可多选；空表示不分场景。和 `guidance` 一样走现有 `tag` 事件改元数据，不改正文：
+
+- `RememberBody.scenes?: Scene[]`、`TagBody.scenes?: Scene[]`（整组替换，`[]` 清空）；投影 `Proposition.scenes: Scene[]`，旧数据缺字段为 `[]`。
+- 写：`ab remember … --scene design,code`；改：`ab tag <id 前缀> --scene design,code`，`--scene none` 清空。取值在 CLI 边界校验，未知值直接报错退出。tag 事件按字段是否出现更新：没给 `scenes` 不动，给 `[]` 才清空（不能写成 `b.scenes ?? []`）。
+- 只对规则有意义（坑和决定本来就按项目给）；`--scene` 配非 rule 报错。
+- 不和常驻偏好叠加：`scenes` 非空与 `guidance=true` 互斥，`ab tag --scene` 和 `ab guidance` 两个入口都检查并报错（否则 `guidanceBlock` 每轮注入，绕过场景）。
+- 纠正继承：`ab correct` 把旧条目当时的 `scenes` 写进新的 remember 事件（和现在复制 `for_workers` 一样，`src/cli.ts:654-661`）；要换标签另跑 `ab tag`。Pensieve 重导的替代（`src/pensieve.ts`）同样复制。
+
+**brief**：
+
+- 带场景的规则**不进通用全局段 / 项目段**，原来被挤掉的规则回来。
+- 场景只来自 `--scene <s>[,<s>]` 参数（不读环境变量：环境变量跟进程走，`send` 换任务和嵌套启动都会带错场景）。
+- **先定范围再筛场景**：项目目录（或显式项目名）取全局 + 本项目的规则；pm 目录和未登记目录只取全局。`--worker` 时全局规则要求 `for_workers`，本项目规则不要求（项目记忆本来不能带 `--for-workers`）。
+- 有场景时多一段「场景规则（<场景>）：」，收范围内 `scenes` 与之相交的已确认规则，按 seq 倒序，整条取舍；单独预算 `BRIEF_SCENE_MAX_CHARS = 2000`（写死），放不下的计入提示 `ab search --scene <场景>`。整个 brief 的上限改为 `BRIEF_MAX_CHARS + BRIEF_SCENE_MAX_CHARS`，各段先按自己的预算整条取舍，末尾硬截断只作兜底；`markUsed` / `inject_log` 记的必须是最终实际输出的 id。
+- 没有场景时只多一行索引（用同一范围计数）：`场景规则：设计 N / 开发 N / review N 条；进入该场景先 ab search --scene <场景>`（N 为 0 的场景不列；一条都没有时整行不出）。
+- 头标签带上场景，便于核对：`<agentbrain project="x" worker scene="code">`。
+
+**search**：`ab search --scene <s>` 列出范围内该场景的全部规则（全文，按 seq 倒序，直接遍历投影，不走混合检索），照常记交付。`--scene` 不和关键词同用（同用报错）：混合检索两条通道都先截断再融合，事后过滤会漏（review 第 3 条）；场景内条目少，全列即可。
+
+**派活**：`tools/herdr-dispatch` 在 `start` 和 `send` 时按派活单类别算场景，在发出的文本里加一行显式指令「开工跑 `ab brief --worker --scene <场景>`（代替不带 --scene 的那次）」。这一行放在 pstack 命令前缀**之后**、单子正文之前，`/pstack`、`/skill:pstack-*` 仍在第一位（Pi 只认开头的斜杠命令）；opencode 的前缀是自然语言，同样放其后。
+
+| 类别 | 场景 |
+|---|---|
+| `编码`、`编码/*` | `code` |
+| `review/代码` | `review` |
+| `review/方案`、`review/技术`、其他 `review/*` 和 `review` | `design,review` |
+| `调研*`、`验证*`、空 | 不加这一行 |
+
+**主会话**：pm `CLAUDE.md` 加一句：写方案前 `ab search --scene design`，验收 review 前 `ab search --scene review`。
+
+**23 条规范的标签**（实现合并后由主会话用 `ab tag` 打）：G1–G3 → `design,code,review`；D1–D3、D7 → `design`；D4–D6、D8 → `design,code`（D8 是动手改表、接口前的门槛）；C1–C8 → `code`；R0–R3 → `review`。R2 先 `ab correct` 成自带判断标准的检查清单（不再只写 D2、C3 这类编号），review 场景就不用加载 D、C 全文。
+
+#### 11.10.3 不做
+
+- 不在每轮钩子里按提问猜场景自动注入（§11.9 刚去掉自动召回；先看派活这条路的效果）。
+- 不做通用自由标签。场景是封闭的三值，派活类别到场景的映射写在 `herdr-dispatch` 一处。
+- 不改导入的 data-asset 原条目；它们去留另行决定。
+
+#### 11.10.4 验收
+
+1. 单测（先红后绿）：投影 `scenes`（remember、tag 替换、没给字段不动、`none` 清空、旧数据缺省、correct 继承）；brief 有场景 / 无场景 / `--worker` / pm 目录 / 未登记目录 / 项目目录，项目甲的场景规则不出现在项目乙；带场景规则不出现在通用段；场景段预算、提示和总上限；`markUsed` 与实际输出 id 一致；`--scene` 非法值、配非 rule、与 guidance 同用报错；search `--scene` 列全、与关键词同用报错。`herdr-dispatch`：类别到场景的映射和指令行位置（带 pstack 前缀时仍在前缀之后）。
+2. 真实库：给 23 条打标签后，`ab brief data-asset` 的全局段恢复显示 29f68f98 等原规则，并有索引行；`ab brief data-asset --worker --scene code` 含 G、C、D4–D6、D8，不含 R。
+3. 真实派活：用 `herdr-dispatch` 派一个 `review/代码`、`- pstack：` 非「无」的免费模型试运行单，pi 会话记录里 pstack 技能照常展开，`ab brief --worker --scene review` 的输出含 `scene="review"` 和 R0；再派一个 `调研` 单，没有场景指令行。按坑 3bf3029b，再看 review 单的回答有没有按 R0 回答"会不会重选路线"。
+
 ## 12. 本地 Store、同步与迁移
 
 ### 12.1 已锁定边界
@@ -2184,6 +2241,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-10-30 新增 §11.10：规则按场景（design / code / review）打标签；带场景的规则移出 brief 通用段，按 `--scene` 单独成段加载，没有场景时只给一行索引；`herdr-dispatch` 按派活单类别在发出的文本里加显式 `--scene` 指令。用户同日提出并同意"写设计、派 astra review、再派实现"。astra xhigh 只读 review 报 6 重要 2 次要，主会话核实后全部采纳：场景段先按项目范围筛、correct 继承标签、search `--scene` 只列举不配关键词、去掉 `AB_SCENE` 改显式指令且放在 pstack 前缀之后、D8 加 code 并把 R2 改成自带标准的清单、总预算合同与实际交付 id、scenes 与 guidance 互斥。
 - 2026-10-29 用户授权修复 §11.9 review 核实的问题。查询事件独立记录、最终回答按宿主结束字段识别、钩子与用户轮一一归属、引用事务重建，宿主验证合为技能内的隔离断言驱动。不优化全量重扫，不改正式库和宿主全局配置。
 
 - 2026-10-29 用户批准实现 §11.9（"开始改吧"），11.9.6 三问按推荐定；入口对比评测改为 Claude Code、Codex、Pi 三宿主。
