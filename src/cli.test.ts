@@ -996,6 +996,77 @@ test("场景标签：remember --scene、ab tag 改与清空、brief/search 按�
   assert.deepEqual(usedIds, printed);
 });
 
+test("search --scene 列未确认规则并带标记；brief 的已确认门槛不变", () => {
+  const own = join(dir, "scene-unconfirmed");
+  const g = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "已确认的开发规范", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  const u = ab(["remember", "--global", "--kind", "rule", "--text", "未确认的开发规范待认可", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(u.code, 0, u.err);
+  const uid = /\[([0-9a-f]{8})\]/.exec(u.out)![1];
+
+  const listed = ab(["search", "--scene", "code"], alpha, own);
+  assert.equal(listed.code, 0, listed.err);
+  assert.match(listed.out, /已确认的开发规范/);
+  assert.match(listed.out, /未确认的开发规范待认可/);
+  const line = listed.out.split("\n").find((l) => l.includes("未确认的开发规范待认可"))!;
+  assert.match(line, /\[未确认\]/, line);
+  assert.match(line, new RegExp(uid));
+
+  // brief 两边都不放未确认的：通用段没有，场景段也没有
+  const b = ab(["brief", "--scene", "code"], alpha, own);
+  assert.match(b.out, /已确认的开发规范/);
+  assert.doesNotMatch(b.out, /未确认的开发规范待认可/);
+});
+
+test("search --scene 配 --kind 非 rule、配 --archived 在 CLI 边界报错退出 1；--kind rule 可接受", () => {
+  const own = join(dir, "scene-args");
+  const r = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "找到的开发规范", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(r.code, 0, r.err);
+  for (const kind of ["pitfall", "decision", "note"]) {
+    const bad = ab(["search", "--scene", "code", "--kind", kind], alpha, own);
+    assert.equal(bad.code, 1, `--kind ${kind}`);
+    assert.match(bad.err, /--scene/);
+  }
+  const arch = ab(["search", "--scene", "code", "--archived"], alpha, own);
+  assert.equal(arch.code, 1);
+  assert.match(arch.err, /--archived/);
+  const ok = ab(["search", "--scene", "code", "--kind", "rule"], alpha, own);
+  assert.equal(ok.code, 0, ok.err);
+  assert.match(ok.out, /找到的开发规范/);
+});
+
+test("brief --scene 的交付记录（prop_usage / inject_log）与场景段实际输出的 id 完全一致", () => {
+  const own = join(dir, "scene-delivery");
+  const ids = ["场景交付规则甲", "场景交付规则乙", "场景交付规则丙"].map((text) => {
+    const r = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", text, "--summary", "场景", "--scene", "review"], alpha, own);
+    assert.equal(r.code, 0, r.err);
+    return /\[([0-9a-f]{8})\]/.exec(r.out)![1];
+  });
+  // 别的场景的规则：不进场景段，也不该被记成交付
+  const other = ab(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "开发场景规则不入 review 段", "--summary", "场景", "--scene", "code"], alpha, own);
+  assert.equal(other.code, 0, other.err);
+  const db = new DatabaseSync(join(own, "store.db"));
+  db.exec("DELETE FROM prop_usage; DELETE FROM inject_log");
+  db.close();
+
+  const out = ab(["brief", "--scene", "review"], alpha, own);
+  assert.equal(out.code, 0, out.err);
+  const sceneSection = out.out.slice(out.out.indexOf("场景规则（review）："));
+  for (const id of ids) assert.ok(sceneSection.includes(`[${id}]`), `场景段里应出现 ${id}`);
+  assert.doesNotMatch(sceneSection, /开发场景规则不入 review 段/);
+  const printed = [...out.out.matchAll(/^- \[([0-9a-f]{8})\]/gm)].map((m) => m[1]).sort();
+
+  const db2 = new DatabaseSync(join(own, "store.db"));
+  const logged = (db2.prepare("SELECT DISTINCT prop_id FROM inject_log WHERE path='brief'").all() as { prop_id: string }[])
+    .map((r) => r.prop_id.slice(0, 8))
+    .sort();
+  const used = (db2.prepare("SELECT prop_id FROM prop_usage").all() as { prop_id: string }[]).map((r) => r.prop_id.slice(0, 8)).sort();
+  db2.close();
+  assert.deepEqual(logged, printed, "inject_log 与输出一致");
+  assert.deepEqual(used, printed, "prop_usage 与输出一致");
+  for (const id of ids) assert.ok(printed.includes(id), `交付记录里有 ${id}`);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;

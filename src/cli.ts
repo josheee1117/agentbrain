@@ -497,6 +497,9 @@ async function cmdSearch(argv: string[]): Promise<void> {
   if (scenes.length && query) die("ab search --scene 只列出该场景的规则，不和关键词同用");
   if (!query && !scenes.length) die("用法: ab search <关键词…>");
   if (values.kind && !KINDS.includes(values.kind as PropKind)) die(`--kind 必须是 ${KINDS.join("|")}`);
+  // 场景分支只列规则、只看有效条目（brief 的已确认门槛不变）
+  if (scenes.length && values.kind && values.kind !== "rule") die("ab search --scene 只列规则，不能配 --kind 其他种类");
+  if (scenes.length && values.archived) die("ab search --scene 不查归档条目，--archived 不能和 --scene 同用");
   if (values.project && values.all) die("--project 与 --all 不能同时用");
 
   const store = open();
@@ -517,11 +520,12 @@ async function cmdSearch(argv: string[]): Promise<void> {
     const names = namesOf(store);
     const props = store.project().props;
     if (scenes.length) {
-      // 场景内条目少，全列即可；不走混合检索（两条通道先截断再融合，事后过滤会漏，§11.10）
+      // 场景内条目少，全列即可；不走混合检索（两条通道先截断再融合，事后过滤会漏，§11.10）。
+      // 未确认的也列（带 [未确认] 标记）：场景内条目本来就少，用户要看得全。
       const inScope = (p: Proposition) =>
         projects === "all" || (p.project_id === null ? includeGlobal : projects.includes(p.project_id));
       const rows = [...props.values()]
-        .filter((p) => p.state === "active" && p.confirmed && p.kind === "rule" && p.scenes.some((s) => scenes.includes(s)) && inScope(p))
+        .filter((p) => p.state === "active" && p.kind === "rule" && p.scenes.some((s) => scenes.includes(s)) && inScope(p))
         .sort((a, b) => b.seq - a.seq);
       if (!rows.length) console.log("没有该场景的规则。");
       const links = linkIndex(props);
