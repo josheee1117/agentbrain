@@ -83,6 +83,22 @@ db.close();
     step cli-brief-confirmed drive_brief
     step cli-brief-confirmed-text bash -c "grep -qF '候选区已取消' '$EV/cli-brief-confirmed.log'"
 
+    # 3b. scene tags (§11.10): remember --scene → brief index line → tag 改 → brief --worker --scene
+    step cli-scene-remember env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --confirmed --global --for-workers --kind rule --text "场景规范：开发先写测试（verify）" --summary "场景标签" --scene design
+    SCENE_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-scene-remember.log" 2>/dev/null | head -1)
+    step cli-scene-brief-index bash -c "(cd '$REPO' && env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' brief) > '$EV/cli-scene-brief-index.log' 2>&1; grep -qF '场景规则：设计 1 条；进入该场景先 ab search --scene <场景>' '$EV/cli-scene-brief-index.log'"
+    step cli-scene-brief-index-out bash -c "! grep -qF '场景规范：开发先写测试（verify）' '$EV/cli-scene-brief-index.log'"
+    step cli-scene-tag env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" tag "$SCENE_ID" --scene design,code
+    drive_brief_worker_scene(){
+      (cd "$REPO" && env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" brief --worker --scene code)
+    }
+    step cli-scene-brief-worker drive_brief_worker_scene
+    step cli-scene-brief-worker-text bash -c "grep -qF '场景规范：开发先写测试（verify）' '$EV/cli-scene-brief-worker.log'"
+    step cli-scene-brief-worker-head bash -c "grep -qF 'worker scene=\"code\"' '$EV/cli-scene-brief-worker.log'"
+    step cli-scene-search env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" search --scene code
+    step cli-scene-search-text bash -c "grep -qF '场景规范：开发先写测试（verify）' '$EV/cli-scene-search.log'"
+    step cli-scene-search-mixed bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene code 测试 >/dev/null 2>&1"
+
     # 4. recall-hook drive
     drive_recall_hook(){
       printf '{"prompt":"验证规范","cwd":"%s"}\n' "$REPO" | env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" recall --hook
