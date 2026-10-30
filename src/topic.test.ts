@@ -195,7 +195,9 @@ test("话题模式：只处理已结束的话题，写进正式库（未确认�
   assert.equal(p.source.anchor, "a1");
   const ev = e.store.topicRunEvents(t.run);
   assert.equal(ev.length, 1);
-  assert.deepEqual({ ...ev[0].body.topic, window_id: "x" }, { run: t.run, window_id: "x", trigger: "idle", from: null, to: "a1", part: null, prompt_version: PROMPT_VERSION, model: "claude:haiku@max", class: "A" });
+  assert.deepEqual({ ...ev[0].body.topic, window_id: "x" }, { run: t.run, window_id: "x", trigger: "idle", from: null, to: "a1", part: null, class: "A" });
+  assert.equal(ev[0].body.model, "claude:haiku@max");
+  assert.equal(ev[0].body.prompt_version, PROMPT_VERSION);
   assert.equal(ev[0].body.window_id, ev[0].body.topic!.window_id);
   assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "a1");
   assert.equal(saved.at(-1)!.windows[0].created[0].id, ev[0].id, "运行报告记下写入的条目");
@@ -583,10 +585,10 @@ test("§8.7：一步式上限 8 条在话题沉淀里生效（多出的计 too_m
   const { ONE_PASS_SYSTEM, ONE_PASS_WORKER_NOTE, ONE_PASS_MAX_ITEMS } = await import("./onepass.ts");
   const { createHash } = await import("node:crypto");
   assert.equal(ONE_PASS_MAX_ITEMS, 8);
-  assert.equal(PROMPT_VERSION, createHash("sha256").update(`${ONE_PASS_SYSTEM}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
-  // 钉死当前值：系统提示词 = 评测 12 的 V1（sha256(ONE_PASS_SYSTEM)=eea066fc04d0，见 clireviewer.test）+ 现行子代理说明。改提示词要先过用户再改这里
-  assert.equal(PROMPT_VERSION, "1afa045d9d7c");
-  assert.notEqual(PROMPT_VERSION, createHash("sha256").update(`${ONE_PASS_SYSTEM.replace("漏记和错记一样有代价", "宁缺毋滥")}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
+  const legacyVersion = createHash("sha256").update(`${ONE_PASS_SYSTEM}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12);
+  // 旧 topic 版本仍按系统提示与 worker note 联合哈希解释（§8.8），不改历史期望值。
+  assert.equal(legacyVersion, "1afa045d9d7c");
+  assert.notEqual(legacyVersion, createHash("sha256").update(`${ONE_PASS_SYSTEM.replace("漏记和错记一样有代价", "宁缺毋滥")}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
   const e = env();
   e.register("s1", e.transcript("s1", TWO_TOPICS));
   const topics = ["前端", "数据库", "部署", "日志", "缓存", "鉴权", "队列", "监控", "备份", "文档"];

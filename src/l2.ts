@@ -52,7 +52,19 @@ export type CodeRef =
   | { path: string; line_start: number; line_end: number; quote: string }
   | { commit: string; quote: string };
 
-export interface RememberBody {
+export interface ModelProvenance {
+  model?: string;
+  prompt_version?: string;
+}
+
+export interface ModelOutput {
+  event_id: string;
+  kind: "remember" | "evidence" | "relate" | "verify";
+  model: string | null;
+  prompt_version: string | null;
+}
+
+export interface RememberBody extends ModelProvenance {
   kind: PropKind;
   text: string;
   why?: string;
@@ -103,16 +115,16 @@ export interface TopicProvenance {
   to: string;
   /** 话题太长拆开时为 "k/n"。 */
   part: string | null;
-  /** ONE_PASS_SYSTEM 等提示词全文的短哈希。 */
-  prompt_version: string;
-  /** 宿主:模型@推理强度。 */
-  model: string;
+  /** 旧事件的系统提示与 worker note 联合哈希，只读原值。新事件写顶层字段。 */
+  prompt_version?: string;
+  /** 旧事件的宿主:模型@推理强度，新事件写顶层字段。 */
+  model?: string;
   /** 模型给的价值类别 A/B/C。 */
   class: "A" | "B" | "C";
 }
 
 /** evidence 事件：给已有记忆追加一处来源（抽取判定为重复时）。 */
-export interface EvidenceBody {
+export interface EvidenceBody extends ModelProvenance {
   source: SourcePointer;
   basis: Basis;
   evidence: EvidenceRef[];
@@ -120,7 +132,7 @@ export interface EvidenceBody {
 }
 
 /** verify 事件：ab work 按仓库真实代码核验一条未确认记忆的结果。只有带可核对代码证据的结论才写 L1。 */
-export interface VerifyBody {
+export interface VerifyBody extends ModelProvenance {
   outcome: "verified" | "contradicted";
   head: string;
   refs: CodeRef[];
@@ -158,7 +170,7 @@ export interface TagBody {
 }
 
 /** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
-export interface RelateBody {
+export interface RelateBody extends ModelProvenance {
   outcome: "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
   target: string | null;
   reason: string;
@@ -198,6 +210,7 @@ export interface Proposition {
   confirmed_by: ConfirmedBy | null;
   /** 抽取判定为重复后追加的来源。 */
   extra_sources: ExtraSource[];
+  model_outputs: ModelOutput[];
   /** 代码核验通过时的证据。 */
   code_evidence: { head: string; refs: CodeRef[] } | null;
   /** 代码与这条矛盾（未确认条目才会被核验）。 */
@@ -284,6 +297,9 @@ export function fold(rows: EventRow[]): Projection {
         unreconciled: b.unreconciled === true,
         confirmed_by: b.confirmed !== false ? "user" : null,
         extra_sources: [],
+        model_outputs: b.origin === "extract" || b.origin === "curate" || b.topic || b.model !== undefined || b.prompt_version !== undefined
+          ? [{ event_id: r.id, kind: "remember", model: b.model ?? b.topic?.model ?? null, prompt_version: b.prompt_version ?? b.topic?.prompt_version ?? null }]
+          : [],
         code_evidence: null,
         stale: null,
         expired: false,
@@ -305,6 +321,10 @@ export function fold(rows: EventRow[]): Projection {
     if (!target) {
       orphans++; // unknown parent / purged target：fail-closed 跳过
       continue;
+    }
+    if (r.kind === "evidence" || r.kind === "relate" || r.kind === "verify") {
+      const b = JSON.parse(r.body) as ModelProvenance;
+      target.model_outputs.push({ event_id: r.id, kind: r.kind, model: b.model ?? null, prompt_version: b.prompt_version ?? null });
     }
     if (r.kind === "confirm") {
       const b = JSON.parse(r.body) as ConfirmBody;

@@ -18,8 +18,8 @@ import type { DatabaseSync } from "node:sqlite";
 import type { Host } from "./l2.ts";
 import type { Turn } from "./transcript.ts";
 import type { Store } from "./store.ts";
-import { ONE_PASS_SYSTEM, ONE_PASS_WORKER_NOTE } from "./onepass.ts";
-import type { Chat, WorkError } from "./llm.ts";
+import { ONE_PASS_SYSTEM } from "./onepass.ts";
+import { promptVersion, type Chat, type WorkError } from "./llm.ts";
 import { cliChat, type CliHost, type Runner } from "./clireviewer.ts";
 import { loadReviewConfig, REVIEW_FILE, type ReviewConfig } from "./review.ts";
 import { hostReviewerDefault } from "./setup.ts";
@@ -57,8 +57,8 @@ export function topicEnabled(home: string): boolean {
   }
 }
 
-/** 提示词版本：一步式系统提示 + 子代理说明全文的短哈希，提示词一改就变。 */
-export const PROMPT_VERSION = createHash("sha256").update(`${ONE_PASS_SYSTEM}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12);
+/** 只 hash 实发的系统提示词。旧 topic.prompt_version 保留原口径（§8.8）。 */
+export const PROMPT_VERSION = promptVersion(ONE_PASS_SYSTEM);
 
 // ---------- 压缩标记（存 work_meta，不加表） ----------
 

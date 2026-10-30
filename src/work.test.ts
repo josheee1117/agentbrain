@@ -518,7 +518,7 @@ test("印证转正：admit 与关系判定对同一目标状态生成相同的 c
       turns: [{ anchor: "u1", role: "user", text: quote }], context: [],
     }, [e.store.project().props.get(target)!], "window");
     assert.equal(checked.candidates.length, 1);
-    const admission = admit(checked.candidates.map((c) => ({ ...c, unreconciled: false })), intake.sessions(e.store.workDb)[0], e.pid, "window", e.store.project().props);
+    const admission = admit(checked.candidates.map((c) => ({ ...c, unreconciled: false })), intake.sessions(e.store.workDb)[0], e.pid, "window", e.store.project().props, "fake-llm");
     // 同一份新证据改走关系判定入口，admit 的结果不提交。
     auto(e, "s2", text, quote);
     const chat = fakeChat(() => json({ candidates: [] }), relateReply([{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }]));

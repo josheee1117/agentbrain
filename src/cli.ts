@@ -621,6 +621,11 @@ function cmdGet(argv: string[]): void {
       p.why ? `为什么: ${p.why}` : "",
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
+    if (p.model_outputs.length) {
+      const labels = { remember: "抽取", evidence: "追加证据", relate: "关系判定", verify: "代码核验" };
+      linesOut.push("模型产出记录:", ...p.model_outputs.map((o) =>
+        `  [${short(o.event_id)}] ${labels[o.kind]}: ${o.model ?? "未记录"}，提示词版本 ${o.prompt_version ?? "未记录"}`));
+    }
     // 双向关联（§11.6 (ii)）：每个一行，带对方状态和正文第一行；上面已带操作提示列出的待确认纠正不重复
     const all = store.project().props;
     const rel = (linkIndex(all).get(p.id) ?? []).filter((l) => !p.pending_corrections.includes(l.id));
