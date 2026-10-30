@@ -22,6 +22,14 @@ test("extract.json 自带 baseUrl：用它，key 读 agentbrain-extract；不需
   assert.equal(EXTRACT_KEYCHAIN_SERVICE, "agentbrain-extract");
 });
 
+test("extract.json 的 extraBody 原样带进配置，不是对象就报错", () => {
+  const h = home({ "extract.json": { baseUrl: "https://x/v1", model: "m", keyService: "k", extraBody: { reasoning_effort: "max" } } });
+  assert.deepEqual(loadChatConfig(h), { baseUrl: "https://x/v1", model: "m", keyService: "k", extraBody: { reasoning_effort: "max" } });
+  for (const bad of ["max", null, ["max"]]) {
+    assert.match((loadChatConfig(home({ "extract.json": { baseUrl: "https://x/v1", model: "m", extraBody: bad } })) as { error: string }).error, /extraBody 必须是对象/);
+  }
+});
+
 test("extract.json 没有 baseUrl：沿用 embedding 的 baseUrl 与 agentbrain-embedding 的 key", () => {
   const h = home({ "extract.json": { model: "qwen-flash" }, "embedding.json": EMB });
   assert.deepEqual(loadChatConfig(h), { baseUrl: EMB.baseUrl, model: "qwen-flash", keyService: KEYCHAIN_SERVICE });

@@ -86,7 +86,7 @@ export function parseRetryAfterMs(header: string | null, body: string | undefine
 
 export function loadChatConfig(home: string): ChatConfig | { error: string } {
   const path = join(home, "extract.json");
-  let o: { model?: unknown; baseUrl?: unknown; keyService?: unknown };
+  let o: { model?: unknown; baseUrl?: unknown; keyService?: unknown; extraBody?: unknown };
   try {
     o = JSON.parse(readFileSync(path, "utf8")) as typeof o;
   } catch {
@@ -96,7 +96,8 @@ export function loadChatConfig(home: string): ChatConfig | { error: string } {
   if (o.baseUrl !== undefined) {
     if (typeof o.baseUrl !== "string" || !o.baseUrl.trim()) return { error: `${path} 的 baseUrl 不是非空字符串` };
     const keyService = typeof o.keyService === "string" && o.keyService.trim() ? o.keyService : EXTRACT_KEYCHAIN_SERVICE;
-    return { baseUrl: o.baseUrl, model: o.model, keyService };
+    if (o.extraBody !== undefined && (typeof o.extraBody !== "object" || o.extraBody === null || Array.isArray(o.extraBody))) return { error: `${path} 的 extraBody 必须是对象` };
+    return { baseUrl: o.baseUrl, model: o.model, keyService, ...(o.extraBody !== undefined ? { extraBody: o.extraBody as Record<string, unknown> } : {}) };
   }
   const emb = loadEmbedConfig(home);
   if ("error" in emb) return { error: `${path} 没写 baseUrl，沿用 embedding 配置失败：${emb.error}` };
