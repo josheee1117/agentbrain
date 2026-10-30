@@ -349,20 +349,24 @@ export function neighborLabel(i: number): string {
   return `m${i + 1}`;
 }
 
-export function buildMessages(win: ExtractWindow, ctx: ProjectContext, neighbors: Proposition[]): ChatMessage[] {
+export function buildInput(win: ExtractWindow, ctx: ProjectContext, neighbors: Proposition[], workerNote: string): string {
   const blocks = [
     `项目：${ctx.name ?? "（未登记目录）"}`,
     ctx.docs ? `<repo_docs>\n${ctx.docs}\n</repo_docs>` : "",
     ctx.registry ? `<project_profile>\n${ctx.registry}\n</project_profile>` : "",
     ctx.confirmed ? `<confirmed_memories>\n${ctx.confirmed}\n</confirmed_memories>` : "",
     `<existing_memories>\n${neighbors.length ? neighbors.map((p, i) => `${neighborLabel(i)} [${p.kind}${p.confirmed ? "" : "，未确认"}] ${sanitize(p.text).text}`).join("\n") : "（无）"}\n</existing_memories>`,
-    win.worker ? WORKER_NOTE : "",
+    win.worker ? workerNote : "",
     win.context.length ? `<context_only 仅供理解，不能当证据>\n${renderTurns(win.context, "c")}\n</context_only>` : "",
     `<transcript>\n${renderTurns(win.turns, "")}\n</transcript>`,
   ].filter(Boolean);
+  return blocks.join("\n\n");
+}
+
+export function buildMessages(win: ExtractWindow, ctx: ProjectContext, neighbors: Proposition[]): ChatMessage[] {
   return [
     { role: "system", content: SYSTEM },
-    { role: "user", content: blocks.join("\n\n") },
+    { role: "user", content: buildInput(win, ctx, neighbors, WORKER_NOTE) },
   ];
 }
 

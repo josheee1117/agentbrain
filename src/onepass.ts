@@ -8,7 +8,7 @@
 import type { ChatMessage } from "./llm.ts";
 import { parseJsonLoose } from "./llm.ts";
 import type { Proposition } from "./l2.ts";
-import { buildMessages, neighborLabel, WORKER_NOTE, type ExtractWindow, type ProjectContext } from "./extract.ts";
+import { buildInput, neighborLabel, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { GOOD_MEMORY_STANDARD } from "./standard.ts";
 import { JUDGE_RULES } from "./review.ts";
 
@@ -43,7 +43,7 @@ ${ONE_PASS_CHECKLIST}## 你的任务
 
 下面的判断要点原本写给逐条审稿人：其中 discard 就是"不记"，keep/rewrite 就是 new（按标准写好），merge 就是 merge。
 
-${JUDGE_RULES.replace(/- 格式硬要求[\s\S]*$/, "").trim()}
+${JUDGE_RULES}
 - 格式硬要求：每条必须给 kind（rule/decision/pitfall）、class（A/B/C）和以"当"开头、含"时"的 scenario；merge 必须给存在的 into。缺这些的结论作废。
 
 只输出 JSON：{"items":[{"action":"new|merge","into":"m1（merge 必填）","kind":"rule|decision|pitfall","class":"A|B|C","text":"…","scenario":"当…时","why":"…","guidance":false,"reason":"一句话：为什么值得记"}]}`;
@@ -52,10 +52,9 @@ ${JUDGE_RULES.replace(/- 格式硬要求[\s\S]*$/, "").trim()}
 export const ONE_PASS_WORKER_NOTE = `注意：这是被委派的子代理（worker）会话。记录里的 user 轮是父 agent 写的派活提示，不是用户本人的话，不能单独证明"用户要求"；但其中的通用干活方法（测试写法、验证方式、临时产物放哪）按内容当 A 类判断，只有一次性任务限制不记。agent 自己从工具输出观察到的坑、代码里的设计理由，照常按 C/B 类判断。`;
 
 export function buildOnePassMessages(win: ExtractWindow, ctx: ProjectContext, neighbors: Proposition[]): ChatMessage[] {
-  const [, user] = buildMessages(win, ctx, neighbors);
   return [
     { role: "system", content: ONE_PASS_SYSTEM },
-    { role: "user", content: win.worker ? user.content!.replace(WORKER_NOTE, ONE_PASS_WORKER_NOTE) : user.content },
+    { role: "user", content: buildInput(win, ctx, neighbors, ONE_PASS_WORKER_NOTE) },
   ];
 }
 

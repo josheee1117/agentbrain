@@ -342,6 +342,40 @@ test("--from-worker 格式错误报错；找不到的子会话仍记下且来源
   assert.match(g.out, /（pi）（无 transcript）（经 pi 主会话转记）/);
 });
 
+test("会话解析：各入口保留原报错，首个冒号之后都是 session id", async () => {
+  const h = join(dir, "session-parsing");
+  const remember = ["remember", "--kind", "note", "--text", "子代理证据", "--summary", "解析测试", "--from-worker"];
+  for (const raw of ["nope:abc", "pi", ":abc", "pi:"]) {
+    for (const [args, message] of [
+      [[...remember, raw], `--from-worker 必须是 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
+      [["capture", raw], `会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
+      [["work", "--session", raw, "--dry-run"], `会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
+    ] as const) {
+      const r = ab([...args], alpha, h);
+      assert.equal(r.code, 1);
+      assert.equal(r.err, `${message}\n`);
+    }
+  }
+  const sid = "worker:part:tail";
+  const file = join(transcriptDir, `2026-01-01T00-00-00-000Z_${sid}.jsonl`);
+  writeFileSync(file, JSON.stringify({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "以后验证都要附证据" } }) + "\n");
+  const r = ab([...remember, `pi:${sid}`], alpha, h);
+  assert.equal(r.code, 0, r.err);
+  const captured = ab(["capture", `pi:${sid}`, "--transcript", file], alpha, h);
+  assert.equal(captured.code, 0, captured.err);
+  assert.match(captured.out, /已登记 pi:worker:part:tail/);
+  const work = ab(["work", "--session", `pi:${sid}`, "--dry-run"], alpha, h);
+  assert.equal(work.code, 0, work.err);
+  assert.match(work.out, /pi:worker:part:tail: 待处理窗口/);
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(h, "store.db"), join(h, "index.db"));
+  try {
+    assert.equal([...s.project().props.values()][0].source.session_id, sid);
+  } finally {
+    s.close();
+  }
+});
+
 test("没有 embedding 配置：search 提示仅全文检索，status 报不可用，不读 key", () => {
   rmSync(keyRead, { force: true });
   assert.equal(existsSync(join(home, "embedding.json")), false);

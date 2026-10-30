@@ -36,7 +36,7 @@ import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusLine, statusReport } from "./status.ts";
-import { disputed, KIND_LABEL, projectIdByName, searchDetail, short } from "./present.ts";
+import { disputed, KIND_LABEL, searchDetail, short } from "./present.ts";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
 const RECALL_EMBED_TIMEOUT_MS = 3000;
@@ -372,12 +372,11 @@ function cmdBrief(argv: string[]): void {
 
 const HOSTS: Host[] = ["claude", "codex", "pi", "opencode"];
 
-/** `--from-worker host:session`。host 必须是三个宿主之一。 */
-function parseFromWorker(raw: string): { host: Host; session_id: string } {
+function parseSessionKey(raw: string, errorMessage: string): { host: Host; session_id: string } {
   const i = raw.indexOf(":");
   const host = raw.slice(0, i);
   const session_id = raw.slice(i + 1);
-  if (i <= 0 || !HOSTS.includes(host as Host) || !session_id) die(`--from-worker 必须是 claude|codex|pi|opencode:<session_id>，收到: ${raw}`);
+  if (i <= 0 || !HOSTS.includes(host as Host) || !session_id) die(`${errorMessage}，收到: ${raw}`);
   return { host: host as Host, session_id };
 }
 
@@ -389,7 +388,7 @@ function relayedBy(): { host: Host; session_id: string | null } | null {
 
 /** 来源指向子代理。找不到它的 transcript 时 transcript 与 anchor 为 null，并提示。 */
 function workerSource(raw: string, summary: string): { source: SourcePointer; missing: boolean } {
-  const w = parseFromWorker(raw);
+  const w = parseSessionKey(raw, "--from-worker 必须是 claude|codex|pi|opencode:<session_id>");
   const found = locateTranscript(w.host, w.session_id);
   const transcript = found ? (w.host === "opencode" ? found : realpathSync(found)) : null;
   const anchor = transcript ? latestAnchor(w.host, transcript) : null;
@@ -431,11 +430,11 @@ async function cmdRemember(argv: string[]): Promise<void> {
     if (!values.global) {
       if (values.project) {
         if (!loadRegistry().some((e) => e.name === values.project)) die(`清单里没有项目: ${values.project}`);
-        projectId = projectIdByName(store, values.project);
+        projectId = store.ensureProject(values.project);
       } else {
         const here = resolveProject(process.cwd());
         if (!here) die("当前目录不是已登记项目。记全局记忆加 --global，或用 --project <名> 指定项目。");
-        projectId = projectIdByName(store, here.name);
+        projectId = store.ensureProject(here.name);
       }
     }
     const found = detectHost();
@@ -513,7 +512,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       projects = [hit.id];
     } else {
       const here = resolveProject(process.cwd());
-      projects = here ? [projectIdByName(store, here.name)] : [];
+      projects = here ? [store.ensureProject(here.name)] : [];
       if (!here) includeGlobal = true;
     }
     const names = namesOf(store);
@@ -939,14 +938,6 @@ function cmdView(argv: string[]): void {
 
 // ---------- capture / work（切片 3） ----------
 
-function parseSessionKey(raw: string): { host: Host; session_id: string } {
-  const i = raw.indexOf(":");
-  const host = raw.slice(0, i) as Host;
-  const session_id = raw.slice(i + 1);
-  if (i <= 0 || !HOSTS.includes(host) || !session_id) die(`会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`);
-  return { host, session_id };
-}
-
 /** SessionEnd 后拉起分离的 ab work，只处理这一个会话。宿主等不到它，它自己有租约。 */
 function spawnWork(key: string): void {
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1], "work", "--session", key], {
@@ -1036,7 +1027,7 @@ async function cmdCapture(argv: string[]): Promise<void> {
     return;
   }
   if (!positionals[0]) die("用法: ab capture <claude|codex|pi|opencode>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
-  const key = parseSessionKey(positionals[0]);
+  const key = parseSessionKey(positionals[0], "会话必须写成 claude|codex|pi|opencode:<session_id>");
   const found = values.transcript ?? locateTranscript(key.host, key.session_id);
   if (!found) die("找不到这个会话的 transcript，用 --transcript 指定");
   const transcript = allowedTranscript(key.host, found, key.session_id);
@@ -1069,7 +1060,7 @@ function workDeps(store: Store): WorkDeps {
     registry: loadRegistry(),
     registryDir: registryDir(),
     resolveProject: (cwd) => resolveProject(cwd),
-    projectId: (name) => projectIdByName(store, name),
+    projectId: (name) => store.ensureProject(name),
     debugDir: process.env.AB_DEBUG === "1" ? join(home(), "debug") : undefined,
     // 话题结束时一步式沉淀（§8.6）：extract.json "topic": true 才开（默认关）
     ...(topicEnabled(home()) ? { topic: { run: newTopicRun(new Date()), chatFor: topicChatFor(home()), save: (r) => void saveTopicReport(home(), r) } } : {}),
@@ -1117,7 +1108,7 @@ async function cmdWork(argv: string[]): Promise<void> {
   const store = open();
   try {
     const r = await runWork(workDeps(store), {
-      session: values.session ? parseSessionKey(values.session) : undefined,
+      session: values.session ? parseSessionKey(values.session, "会话必须写成 claude|codex|pi|opencode:<session_id>") : undefined,
       sweep: values.sweep === true,
       dryRun: values["dry-run"] === true,
       redo: values.redo === true,
@@ -1204,7 +1195,7 @@ async function cmdImport(argv: string[]): Promise<void> {
     const r = await importPensieve(
       {
         store,
-        projectId: (name) => projectIdByName(store, name),
+        projectId: (name) => store.ensureProject(name),
         embedder: deps.embedder,
         chat: "error" in deps.chat ? null : deps.chat,
         relateSim: RELATE_SIM,

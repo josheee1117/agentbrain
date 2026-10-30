@@ -151,28 +151,6 @@ export interface UnconfirmBody {
   note?: string;
 }
 
-/**
- * curate 事件（v3 第 2 阶段，审稿团）：把候选转进正式库（promote），或撤销这一步回到候选区（unpromote）。
- * 丢弃、改写、并入都用已有事件表达（archive reason=curate / remember origin=curate），都能 reactivate 撤销。
- * 只作用于候选；用户确认过的条目投影时忽略这个事件。
- */
-export interface CurateBody {
-  action: "promote" | "unpromote";
-  run: string;
-  verdict?: string;
-  reason?: string;
-}
-
-/**
- * stage 事件（v3）：把 agent 用 ab remember 直接写进正式库的条目移回候选区（stage），或撤销这一步（unstage）。
- * 用于补救候选区上线前后 agent 自记、未经审稿的条目。用户确认过的条目投影时忽略 stage；unstage 只对 stage 过的条目生效。
- */
-export interface StageBody {
-  action: "stage" | "unstage";
-  reason?: "agent_remember";
-  note?: string;
-}
-
 /** tag 事件：只改元数据标记，不改正文。scenes 整组替换，[] 清空；没给这个字段就不动。 */
 export interface TagBody {
   guidance?: boolean;

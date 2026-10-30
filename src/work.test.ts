@@ -11,9 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
-import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
+import { admit, allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
-import { sha256 } from "./extract.ts";
+import { sha256, validate } from "./extract.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "ab-work-")));
@@ -492,6 +492,43 @@ const src0 = (sid: string | null) => ({ host: "claude" as const, session_id: sid
 const auto = (e: Env, sid: string, text: string, quote: string, extra: Partial<RememberBody> = {}) =>
   e.store.remember(e.pid, sid, false, { kind: "rule", text, confirmed: false, origin: "extract", basis: "user_directive", evidence: [{ anchor: "u1", role: "user", quote_sha256: sha256(quote) }], source: src0(sid), ...extra });
 const relateReply = (results: object[]): Reply => () => json({ results });
+
+test("admit：关系未判定的目标收到另一会话的重复用户引文，不生成 confirm", async () => {
+  const e = env();
+  const target = auto(e, "s1", RULE.text, "以后 hook 命令都写 node 绝对路径", { unreconciled: true });
+  const quote = "hook 里一律用 node 的绝对路径";
+  e.register("s2", e.transcript("s2", [user("u1", `记住：${quote}`)]));
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, evidence: [{ anchor: "#1", role: "user", quote }], relation: { type: "duplicate", target: "m1" } }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.attached, 1, "新窗口确实判重复并追加另一会话的证据");
+  assert.deepEqual(e.store.project().props.get(target)!.extra_sources.map((s) => s.session_id), ["s2"]);
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM events WHERE kind='confirm' AND target_id=?").get(target)!.n, 0);
+  assert.equal(r.receipt.corroborated, 0);
+  assert.equal(e.store.project().props.get(target)!.confirmed, false);
+});
+
+test("印证转正：admit 与关系判定对同一目标状态生成相同的 confirm 事件", async () => {
+  for (const unreconciled of [false, true]) {
+    const e = env();
+    const target = auto(e, "s1", RULE.text, "以后 hook 命令都写 node 绝对路径", { unreconciled });
+    const quote = "hook 里一律用 node 的绝对路径";
+    const text = "hook 命令写 node 绝对路径，别依赖 PATH";
+    e.register("s2", e.transcript("s2", [user("u1", quote)]));
+    const checked = validate({ candidates: [{ ...RULE, text, evidence: [{ anchor: "#1", role: "user", quote }], relation: { type: "duplicate", target: "m1" } }] }, {
+      turns: [{ anchor: "u1", role: "user", text: quote }], context: [],
+    }, [e.store.project().props.get(target)!], "window");
+    assert.equal(checked.candidates.length, 1);
+    const admission = admit(checked.candidates.map((c) => ({ ...c, unreconciled: false })), intake.sessions(e.store.workDb)[0], e.pid, "window", e.store.project().props);
+    // 同一份新证据改走关系判定入口，admit 的结果不提交。
+    auto(e, "s2", text, quote);
+    const chat = fakeChat(() => json({ candidates: [] }), relateReply([{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }]));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.relate.duplicate, 1);
+    const confirms = e.store.workDb.prepare("SELECT body FROM events WHERE kind='confirm' AND target_id=?").all(target).map((row) => JSON.parse(String(row.body)));
+    assert.deepEqual(admission.appends.filter((a) => a.kind === "confirm").map((a) => a.body), confirms, `unreconciled=${unreconciled}`);
+    assert.deepEqual(confirms, unreconciled ? [] : [{ by: "corroboration", sessions: ["claude:s1", "claude:s2"] }]);
+  }
+});
 
 test("关系判定：重复 → 来源并入旧条目、本条归档（可撤销），不同会话不同原话 → 跨会话印证转正", async () => {
   const e = env();
