@@ -13,7 +13,7 @@ import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./st
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
-import { addHits, sanitize } from "./sanitize.ts";
+import { addHits, sanitize, secretKinds } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
 import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
@@ -357,6 +357,10 @@ export function projectContext(deps: WorkDeps, projectName: string | null, proje
     }
   }
   const registry = projectName ? readBounded(join(deps.registryDir, `${projectName}.md`), REGISTRY_MAX_CHARS) : "";
+  // 已登记项目清单（名字 + ~ 路径，与窗口同口径，§8.11.3）
+  const projects = deps.registry
+    .map((e) => `- ${e.name}${e.path ? ` ${e.path.replace(new RegExp(`^${homedir()}`), "~")}` : ""}`)
+    .join("\n");
   const rows = [...deps.store.project().props.values()]
     .filter((p) => p.state === "active" && p.confirmed && p.kind !== "note" && (p.project_id === null || p.project_id === projectId))
     .sort((a, b) => b.seq - a.seq);
@@ -371,6 +375,7 @@ export function projectContext(deps: WorkDeps, projectName: string | null, proje
     docs: sanitize(docs.join("\n\n")).text,
     registry: sanitize(registry).text,
     confirmed: sanitize(confirmed).text.trim(),
+    projects: sanitize(projects).text,
   };
 }
 
@@ -395,7 +400,7 @@ async function embedOrDefer(embedder: Embedder | null, texts: string[]): Promise
   }
 }
 
-async function prefetchNeighbors(deps: WorkDeps, turns: Turn[], projectId: string | null): Promise<Proposition[]> {
+async function prefetchNeighbors(deps: WorkDeps, turns: Turn[], projectIds: string[]): Promise<Proposition[]> {
   const embedder = deps.embedder;
   if (!embedder) throw new WorkFailure("embed_unavailable", "未配置 embedding");
   try {
@@ -408,9 +413,11 @@ async function prefetchNeighbors(deps: WorkDeps, turns: Turn[], projectId: strin
   const vecs = await embedOrDefer(embedder, queries);
   const best = new Map<string, { prop: Proposition; similarity: number }>();
   for (const v of vecs) {
-    for (const n of deps.store.nearestByVector(v, projectId, NEIGHBORS_PER_QUERY, VEC_MIN_SIM)) {
-      const prev = best.get(n.prop.id);
-      if (!prev || prev.similarity < n.similarity) best.set(n.prop.id, n);
+    for (const projectId of projectIds) {
+      for (const n of deps.store.nearestByVector(v, projectId, NEIGHBORS_PER_QUERY, VEC_MIN_SIM)) {
+        const prev = best.get(n.prop.id);
+        if (!prev || prev.similarity < n.similarity) best.set(n.prop.id, n);
+      }
     }
   }
   return [...best.values()].sort((a, b) => b.similarity - a.similarity).slice(0, MAX_NEIGHBORS).map((n) => n.prop);
@@ -437,7 +444,7 @@ export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { can
     // 关系不同（比如一条是对旧条目的纠正、一条是新提议）不合并，免得丢掉纠正信号
     const j = kept.findIndex(
       (k) =>
-        k.cand.scope === cur.cand.scope &&
+        k.cand.project === cur.cand.project &&
         k.cand.relation.type === cur.cand.relation.type &&
         k.cand.relation.target === cur.cand.relation.target &&
         cosine(k.vec, cur.vec) >= SAME_WINDOW_DUP_SIM,
@@ -505,6 +512,7 @@ export function admit(
   windowId: string,
   props: Map<string, Proposition>,
   model: string,
+  projectIdOf?: (name: string) => string,
 ): Admission {
   const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
   for (const c of candidates) {
@@ -516,9 +524,14 @@ export function admit(
       summary: `自动沉淀（ab work）：${c.trigger ?? c.text}`.slice(0, 120),
     };
     const target = c.relation.target ? props.get(c.relation.target) : undefined;
-    const pid = c.scope === "global" ? null : projectId;
-    if (!c.unreconciled && c.relation.type === "duplicate" && target && target.state === "active") {
-      const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence, window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
+    // §8.11.3：候选归属最终项目（global → null，会话项目 → projectId，别的项目 → 该项目的 id）
+    const pid = c.project === "global" ? null : c.project && c.project !== s.project ? projectIdOf?.(c.project) ?? projectId : projectId;
+    // §8.11.3：拒绝把候选当成别的项目条目的重复，这种情况按新条目处理
+    const crossProjectDup = c.relation.type === "duplicate" && target && target.project_id !== null && target.project_id !== pid;
+    if (!c.unreconciled && !crossProjectDup && c.relation.type === "duplicate" && target && target.state === "active") {
+      // duplicate 追加的证据事件也带 quote 和 said_at（§8.11.2），密钥检查在 store.commit 前由 checkRememberBody 负责；
+      // 证据事件不经过 checkRememberBody，这里用与 extract 相同的 secretKinds 自查，脏引文只丢该条证据
+      const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0), window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
       out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
@@ -547,9 +560,15 @@ export function admit(
       ...(c.valid_days ? { valid_days: c.valid_days } : {}),
       ...(c.said_at ? { said_at: c.said_at } : {}),
       ...(c.guidance ? { guidance: true } : {}),
+      ...(c.body ? { body: c.body } : {}),
+      ...(c.alternatives ? { alternatives: c.alternatives } : {}),
       ...(c.value ? { value: c.value } : {}),
     };
-    if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
+    if (crossProjectDup) {
+      // §8.11.3：候选被判定为别的项目条目的重复，按新条目处理（不并、不标关系未判定）
+      body.relation = { type: "new", target: null };
+      out.receipt.proposals++;
+    } else if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
       body.unreconciled = true;
       out.receipt.unreconciled++;
     } else if ((c.relation.type === "conflicts" || c.relation.type === "supersedes") && target && target.state === "active") {
@@ -591,9 +610,17 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
     receipt.no_signal += 1;
     return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
   }
-  const neighbors = await prefetchNeighbors(deps, c.turns, projectId);
+  const ctx = projectContext(deps, s.project, projectId);
+  // §8.11.3：生成前给模型的已有记忆 = 会话项目 + 全局 + 窗口里出现名字或路径的已登记项目
+  const mentioned = deps.registry
+    .filter((e) => {
+      const text = c.turns.map((t) => t.text).join("\n");
+      return text.includes(e.name) || (e.path !== null && text.includes(e.path.replace(new RegExp(`^${homedir()}`), "~")));
+    })
+    .map((e) => deps.projectId(e.name));
+  const neighbors = await prefetchNeighbors(deps, c.turns, [...new Set([projectId, ...mentioned])]);
   const win: ExtractWindow = { turns: c.turns, context: c.context, ...(worker ? { worker: true } : {}) };
-  const messages = buildMessages(win, projectContext(deps, s.project, projectId), neighbors);
+  const messages = buildMessages(win, ctx, neighbors);
   const db = deps.store.workDb;
   let r = await deps.chat.chat(messages, { json: true });
   intake.spend(db, deps.now(), 1, r.tokens);
@@ -607,7 +634,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
     parsed = parseJsonLoose(r.message.content);
     if (!parsed) throw new WorkFailure("invalid_output", "抽取输出两次都不是 JSON");
   }
-  const v = validate(parsed, win, neighbors, c.id);
+  const v = validate(parsed, win, neighbors, c.id, ctx);
   if (deps.debugDir) dumpDebug(deps.debugDir, s, c, r.message.content ?? "", v);
   receipt.candidates += Array.isArray((parsed as any).candidates) ? (parsed as any).candidates.length : 0;
   for (const [k, n] of Object.entries(v.dropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
@@ -618,16 +645,18 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   // 每条候选单独复查已有条目（§9.4.4 → unreconciled）：
   // 没给模型看过的高相似近邻，说明邻居检查不完整；给模型看过、模型仍说 new，说明模型与向量意见相左。
   // 两种都不由向量自动合并，交给用户裁决（§21 2026-10-12）。
+  // §8.11.3：归属解析成最终项目后，近邻去重和关系判定都在最终项目 + 全局里做
   const shown = new Set(neighbors.map((n) => n.id));
   const checked = merged.map(({ cand, vec }) => {
-    const hits = deps.store.nearestByVector(vec, projectId, RECHECK_TOP, DUP_CHECK_SIM);
+    const candProjectId = cand.project === "global" ? null : deps.projectId(cand.project);
+    const hits = deps.store.nearestByVector(vec, candProjectId, RECHECK_TOP, DUP_CHECK_SIM);
     const handled = new Set([cand.relation.target].filter(Boolean));
     return {
       ...cand,
       unreconciled: hits.some((n) => !shown.has(n.prop.id)) || (cand.relation.type === "new" && hits.some((n) => !handled.has(n.prop.id))),
     };
   });
-  return admit(checked, s, projectId, c.id, deps.store.project().props, deps.chat.model);
+  return admit(checked, s, projectId, c.id, deps.store.project().props, deps.chat.model, deps.projectId);
 }
 
 function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {
@@ -962,7 +991,7 @@ async function onePassWindow(
   const chat = t.chatFor(s.host);
   if ("error" in chat) throw new WorkFailure(chat.error, chat.message);
   wr.model = chat.model;
-  const neighbors = await prefetchNeighbors(deps, c.turns, projectId);
+  const neighbors = await prefetchNeighbors(deps, c.turns, [projectId]);
   const win: ExtractWindow = { turns: c.turns, context: c.context, ...(worker ? { worker: true } : {}) };
   const messages = buildOnePassMessages(win, projectContext(deps, s.project, projectId), neighbors);
   const db = deps.store.workDb;
