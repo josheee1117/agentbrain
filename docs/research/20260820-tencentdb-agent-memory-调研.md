@@ -183,7 +183,7 @@ TAM 主推**反向代理**：把 agent 的 LLM base URL 指向 MemoryProxy，"No
 
 ## 修订记录
 
-- 2026-10-15 增补（2026-10-22 落文并复核）：固定 `feat/server_team` 的 `37b1629`，比原快照多 46 个提交。记录四条机制借鉴与 Skill / SOP 出范围决定，对应总体设计 §8.8、§9.6、§8.9、§11.8，均为 CANDIDATE。一步式已有版本记录，场景目录已评测搁置，补缺口而不重新授权。此前各节仍是 8 月快照的历史结论，不外推到新提交。
+- 2026-10-15 增补（2026-10-22 落文并复核）：固定 `feat/server_team` 的 `37b1629`，比原快照多 46 个提交。记录四条机制借鉴与 Skill / SOP 出范围决定，对应总体设计 §8.10、§9.6、§8.9、§11.11，均为 CANDIDATE。一步式已有版本记录，场景目录已评测搁置，补缺口而不重新授权。此前各节仍是 8 月快照的历史结论，不外推到新提交。
 - 2026-08-20 v1.1：复核修订。区分内容抽象层与 authority 层；补 generation provenance、Agent 非 runtime、loadout 执行边界、scope lift 风险、v3 strict 默认关闭、分支测试资产差异；收紧对 SOT、生产成熟度和“零改造”的表述。
 - 2026-08-20 v1：初稿。基于 commit `97f9465`（feat/server_team）只读调研；README 宣称与实现差异、当前 commit 测试资产情况已逐项核对。
 
@@ -195,10 +195,10 @@ TAM 主推**反向代理**：把 agent 的 LLM base URL 指向 MemoryProxy，"No
 
 | 固定提交下的文件 | 核实内容 | agentbrain 的取舍 |
 |---|---|---|
-| [`MemoryCore/src/core/persona/jev-gate.ts:15-19`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/persona/jev-gate.ts#L15-L19) | `JEV_PROMPT_VERSION` 是手写字符串 `l3-memory-change-v1`。`JEV_INSTRUCTIONS` 区分 boundary_change，并说明已经同步的新结论不能因历史叙述被判冲突 | §8.8 为三类模型产出的 L1 事件补版本，采用系统提示词全文 SHA-256 前 12 位，不照搬手工版本。§9.6 两层共用关系集合，范围变化只记关系与待确认标记；已同步历史判 duplicate 或 refines。不借腾讯的 Persona 触发优先级改写旧记忆 |
+| [`MemoryCore/src/core/persona/jev-gate.ts:15-19`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/persona/jev-gate.ts#L15-L19) | `JEV_PROMPT_VERSION` 是手写字符串 `l3-memory-change-v1`。`JEV_INSTRUCTIONS` 区分 boundary_change，并说明已经同步的新结论不能因历史叙述被判冲突 | §8.10 为三类模型产出的 L1 事件补版本，采用系统提示词全文 SHA-256 前 12 位，不照搬手工版本。§9.6 两层共用关系集合，范围变化只记关系与待确认标记；已同步历史判 duplicate 或 refines。不借腾讯的 Persona 触发优先级改写旧记忆 |
 | [`MemoryCore/src/core/skill/prompts/skill-review-prompt-strict.ts:4-24`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/skill/prompts/skill-review-prompt-strict.ts#L4-L24) | 头注释把严格版用于冷启动、批量历史导入，称宽松版会产生大量低价值 Skill，严格版采用 `When in doubt, silence` | §8.9 只对 via=backfill 收紧；scan 是近期漏登记，不收紧。只收用户原话支撑的 rule/decision，不搬 Skill 分类、可执行能力门或 72 分评分标准 |
 | [`MemoryCore/src/core/skill/prompts/skill-review-prompt.ts:4-35`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/skill/prompts/skill-review-prompt.ts#L4-L35) | 普通版 v2 明写优先 capture，接受 SOP、Background、Preference，并去掉严格评分门。这是严格版注释所指的对照 | 只借按输入来源区分标准的理由，不声称腾讯做过 agentbrain 的 backfill/scan 评测。其注释里的 18/39 数字未在本次复现，不作为本项目收益证据 |
-| [`MemoryCore/src/core/prompts/scene-extraction.ts:55-65`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/prompts/scene-extraction.ts#L55-L65)、`:120-123`、`:175-186`、`:560-561` | 场景摘要目录供模型读取；场景正文要求连贯叙事、推断隐性信号，满额时合并删除，并累计 heat | §11.8 只借"目录在前、原条目按需打开"。场景只存标题与成员 id，放 L3 index.db，不写 L1、不成为 canonical writer。不生成叙事、隐性信号，不合并删除原记忆，不重复造热度计数 |
+| [`MemoryCore/src/core/prompts/scene-extraction.ts:55-65`](https://github.com/TencentCloud/TencentDB-Agent-Memory/blob/37b1629/MemoryCore/src/core/prompts/scene-extraction.ts#L55-L65)、`:120-123`、`:175-186`、`:560-561` | 场景摘要目录供模型读取；场景正文要求连贯叙事、推断隐性信号，满额时合并删除，并累计 heat | §11.11 只借"目录在前、原条目按需打开"。场景只存标题与成员 id，放 L3 index.db，不写 L1、不成为 canonical writer。不生成叙事、隐性信号，不合并删除原记忆，不重复造热度计数 |
 
 四条均先写设计，状态 CANDIDATE。用户审过并说"开始实现"后，才另行实施。当前设计与代码核对后需要保留以下差异：
 

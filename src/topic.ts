@@ -57,7 +57,7 @@ export function topicEnabled(home: string): boolean {
   }
 }
 
-/** 只 hash 实发的系统提示词。旧 topic.prompt_version 保留原口径（§8.8）。 */
+/** 只 hash 实发的系统提示词。旧 topic.prompt_version 保留原口径（§8.10）。 */
 export const PROMPT_VERSION = promptVersion(ONE_PASS_SYSTEM);
 
 // ---------- 压缩标记（存 work_meta，不加表） ----------

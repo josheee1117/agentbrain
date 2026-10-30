@@ -586,7 +586,7 @@ test("§8.7：一步式上限 8 条在话题沉淀里生效（多出的计 too_m
   const { createHash } = await import("node:crypto");
   assert.equal(ONE_PASS_MAX_ITEMS, 8);
   const legacyVersion = createHash("sha256").update(`${ONE_PASS_SYSTEM}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12);
-  // 旧 topic 版本仍按系统提示与 worker note 联合哈希解释（§8.8），不改历史期望值。
+  // 旧 topic 版本仍按系统提示与 worker note 联合哈希解释（§8.10），不改历史期望值。
   assert.equal(legacyVersion, "1afa045d9d7c");
   assert.notEqual(legacyVersion, createHash("sha256").update(`${ONE_PASS_SYSTEM.replace("漏记和错记一样有代价", "宁缺毋滥")}\n${ONE_PASS_WORKER_NOTE}`).digest("hex").slice(0, 12));
   const e = env();

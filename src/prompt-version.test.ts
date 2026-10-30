@@ -90,7 +90,7 @@ function checkOutput(f: Fixture, kind: keyof typeof labels, system: string, mode
 const ordinary = () => ({ candidates: [candidate] });
 const sys = (calls: ChatMessage[][], marker: string) => calls.find((c) => c[0].content!.includes(marker))![0].content!;
 
-test("§8.8 普通抽取的 L1、L2 与真实 ab get 记录同一模型和实发系统版本", async () => {
+test("§8.10 普通抽取的 L1、L2 与真实 ab get 记录同一模型和实发系统版本", async () => {
   const f = fixture();
   try {
     f.register();
@@ -100,7 +100,7 @@ test("§8.8 普通抽取的 L1、L2 与真实 ab get 记录同一模型和实发
   } finally { f.close(); }
 });
 
-test("§8.8 一步式只写顶层版本，运行报告与实发系统版本一致", async () => {
+test("§8.10 一步式只写顶层版本，运行报告与实发系统版本一致", async () => {
   const f = fixture();
   try {
     f.register();
@@ -115,7 +115,7 @@ test("§8.8 一步式只写顶层版本，运行报告与实发系统版本一�
   } finally { f.close(); }
 });
 
-test("§8.8 普通抽取判重复只追加 evidence，版本属于本次抽取", async () => {
+test("§8.10 普通抽取判重复只追加 evidence，版本属于本次抽取", async () => {
   const f = fixture();
   try {
     f.remember({ confirmed: true });
@@ -127,7 +127,7 @@ test("§8.8 普通抽取判重复只追加 evidence，版本属于本次抽取",
   } finally { f.close(); }
 });
 
-test("§8.8 work 关系判定记录 relate 和派生 evidence，不给 archive 或 confirm 加模型字段", async () => {
+test("§8.10 work 关系判定记录 relate 和派生 evidence，不给 archive 或 confirm 加模型字段", async () => {
   const f = fixture();
   try {
     f.remember({ kind: "rule", basis: "user_directive", source: { ...source, host: "claude", session_id: "s1" }, evidence: [{ role: "user", anchor: "u1", quote_sha256: "q1" }] });
@@ -140,7 +140,7 @@ test("§8.8 work 关系判定记录 relate 和派生 evidence，不给 archive �
   } finally { f.close(); }
 });
 
-test("§8.8 Pensieve 共用关系写入点覆盖正反 relate 和 evidence", async () => {
+test("§8.10 Pensieve 共用关系写入点覆盖正反 relate 和 evidence", async () => {
   const f = fixture();
   try {
     f.remember();
@@ -157,7 +157,7 @@ test("§8.8 Pensieve 共用关系写入点覆盖正反 relate 和 evidence", asy
   } finally { f.close(); }
 });
 
-test("§8.8 代码核验保留原抽取版本，L3 删除重建后展示一致且 L1 字节不变", async () => {
+test("§8.10 代码核验保留原抽取版本，L3 删除重建后展示一致且 L1 字节不变", async () => {
   const f = fixture();
   try {
     execFileSync("git", ["init", "-q", f.repo]);
@@ -186,7 +186,7 @@ test("§8.8 代码核验保留原抽取版本，L3 删除重建后展示一致�
   } finally { f.close(); }
 });
 
-test("§8.8 旧事件缺字段显示未记录，旧 topic 版本保留原值，顶层字段优先", () => {
+test("§8.10 旧事件缺字段显示未记录，旧 topic 版本保留原值，顶层字段优先", () => {
   const f = fixture();
   try {
     const old = f.remember();
@@ -201,7 +201,7 @@ test("§8.8 旧事件缺字段显示未记录，旧 topic 版本保留原值，�
   } finally { f.close(); }
 });
 
-test("§8.8 curate 改写不写模型元数据，真实 ab get 显示未记录且正常退出", () => {
+test("§8.10 curate 改写不写模型元数据，真实 ab get 显示未记录且正常退出", () => {
   const f = fixture();
   try {
     const original = f.remember();
@@ -216,7 +216,7 @@ test("§8.8 curate 改写不写模型元数据，真实 ab get 显示未记录�
   } finally { f.close(); }
 });
 
-test("§8.8 普通抽取与一步式的模型失败、空结论和非法输出不补造 L1 事件", async () => {
+test("§8.10 普通抽取与一步式的模型失败、空结论和非法输出不补造 L1 事件", async () => {
   for (const topic of [false, true]) {
     for (const result of ["failure", "empty", "invalid"] as const) {
       const f = fixture();
@@ -235,7 +235,7 @@ test("§8.8 普通抽取与一步式的模型失败、空结论和非法输出�
   }
 });
 
-test("§8.8 关系模型失败或目标编号非法，不补造 relate、evidence 或 archive", async () => {
+test("§8.10 关系模型失败或目标编号非法，不补造 relate、evidence 或 archive", async () => {
   for (const fails of [true, false]) {
     const f = fixture();
     try {
@@ -252,7 +252,7 @@ test("§8.8 关系模型失败或目标编号非法，不补造 relate、evidenc
   }
 });
 
-test("§8.8 核验失败、证据不符或无确定结论，不补造 verify", async () => {
+test("§8.10 核验失败、证据不符或无确定结论，不补造 verify", async () => {
   for (const outcome of ["failure", "bad-evidence", "not_verifiable", "inconclusive"] as const) {
     const f = fixture();
     try {
@@ -276,13 +276,13 @@ test("§8.8 核验失败、证据不符或无确定结论，不补造 verify", a
   }
 });
 
-test("§8.8 版本按 UTF-8 全文计算，不 trim，改一个字符或追加段就变", () => {
+test("§8.10 版本按 UTF-8 全文计算，不 trim，改一个字符或追加段就变", () => {
   for (const text of [" 系统提示词\n", "系统提示词", "系统提示词。", "系统提示词\n额外规则"]) assert.equal(llm.promptVersion(text), hash(text));
   assert.equal(new Set([" 系统提示词\n", "系统提示词", "系统提示词。", "系统提示词\n额外规则"].map(llm.promptVersion)).size, 4);
   assert.equal(PROMPT_VERSION, hash(ONE_PASS_SYSTEM));
 });
 
-test("§8.8 同一系统提示重启不变，只换会话或项目正文不变", () => {
+test("§8.10 同一系统提示重启不变，只换会话或项目正文不变", () => {
   const ctx = { name: "fixture", docs: "文档甲", registry: "档案甲", confirmed: "" };
   for (const build of [buildMessages, buildOnePassMessages]) {
     const a = build({ turns: [{ role: "user", anchor: "a", text: "正文甲" }], context: [] }, ctx, []);
