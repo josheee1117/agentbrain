@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / status(doctor) / capture / work。
+ * agentbrain 命令行（设计 §7.1）：brief / remember / correct / recall / search / get / confirm / archive / tag / status(doctor) / capture / work。
  * 预算类数字是代码常量（§2.2），零配置键。
  */
 import { parseArgs } from "node:util";
@@ -9,7 +9,7 @@ import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, type Embedder } from "./store.ts";
-import { type Host, type PropKind, type Proposition, type SourcePointer } from "./l2.ts";
+import { type Host, type PropKind, type Proposition, type Scene, type SourcePointer, SCENES } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandImport, expandSource, latestAnchor } from "./source.ts";
 import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState } from "./links.ts";
@@ -122,6 +122,16 @@ function findByPrefix(store: Store, prefix: string): Proposition {
 
 function namesOf(store: Store): Map<string, string> {
   return new Map(store.listProjects().map((p) => [p.id, p.name]));
+}
+
+/** `--scene` 的值只在 CLI 边界解析校验（§11.10）；之后内部只用 Scene[]。 */
+function parseScenes(raw: string, allowNone: boolean): Scene[] {
+  const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (allowNone && parts.length === 1 && parts[0] === "none") return [];
+  const bad = parts.filter((s) => !(SCENES as readonly string[]).includes(s));
+  if (!parts.length || bad.length)
+    die(`--scene 必须是 ${SCENES.join("|")} 的逗号组合${allowNone ? "，清空用 none" : ""}，收到: ${raw}`);
+  return [...new Set(parts)] as Scene[];
 }
 
 // ---------- 子命令 ----------
@@ -336,16 +346,17 @@ function markUsed(store: Store, ids: string[]): void {
 function cmdBrief(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { worker: { type: "boolean", default: false } },
+    options: { worker: { type: "boolean", default: false }, scene: { type: "string" } },
     strict: true,
     allowPositionals: true,
   });
+  const scenes = values.scene === undefined ? [] : parseScenes(values.scene, false);
   const store = open();
   try {
     let out: string;
     const used: string[] = [];
     try {
-      out = brief(store, process.cwd(), positionals[0], values.worker === true, used);
+      out = brief(store, process.cwd(), positionals[0], values.worker === true, used, scenes);
     } catch (e) {
       if (e instanceof BriefError) die(e.message);
       throw e;
@@ -402,11 +413,14 @@ async function cmdRemember(argv: string[]): Promise<void> {
       "for-workers": { type: "boolean", default: false },
       confirmed: { type: "boolean", default: false },
       "from-worker": { type: "string" },
+      scene: { type: "string" },
     },
     strict: true,
   });
   const kind = values.kind as PropKind | undefined;
   if (!kind || !KINDS.includes(kind)) die(`--kind 必须是 ${KINDS.join("|")}`);
+  const scenes = values.scene === undefined ? undefined : parseScenes(values.scene, false);
+  if (scenes && kind !== "rule") die("--scene 只能用于规则（--kind rule）");
   if (!values.text) die("缺少 --text");
   if (!values.summary) die("缺少 --summary");
   if (values["for-workers"] && !values.global) die("--for-workers 只能和 --global 一起用");
@@ -450,6 +464,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
       why: values.why,
       for_workers: values["for-workers"] || undefined,
       confirmed,
+      scenes,
       source,
     });
     let out = `已记住 [${short(id)}] ${KIND_LABEL[kind]}: ${values.text}`;
@@ -472,13 +487,19 @@ async function cmdSearch(argv: string[]): Promise<void> {
       archived: { type: "boolean", default: false },
       project: { type: "string" },
       all: { type: "boolean", default: false },
+      scene: { type: "string" },
     },
     strict: true,
     allowPositionals: true,
   });
+  const scenes = values.scene === undefined ? [] : parseScenes(values.scene, false);
   const query = positionals.join(" ");
-  if (!query) die("用法: ab search <关键词…>");
+  if (scenes.length && query) die("ab search --scene 只列出该场景的规则，不和关键词同用");
+  if (!query && !scenes.length) die("用法: ab search <关键词…>");
   if (values.kind && !KINDS.includes(values.kind as PropKind)) die(`--kind 必须是 ${KINDS.join("|")}`);
+  // 场景分支只列规则、只看有效条目（brief 的已确认门槛不变）
+  if (scenes.length && values.kind && values.kind !== "rule") die("ab search --scene 只列规则，不能配 --kind 其他种类");
+  if (scenes.length && values.archived) die("ab search --scene 不查归档条目，--archived 不能和 --scene 同用");
   if (values.project && values.all) die("--project 与 --all 不能同时用");
 
   const store = open();
@@ -497,6 +518,30 @@ async function cmdSearch(argv: string[]): Promise<void> {
       if (!here) includeGlobal = true;
     }
     const names = namesOf(store);
+    const props = store.project().props;
+    if (scenes.length) {
+      // 场景内条目少，全列即可；不走混合检索（两条通道先截断再融合，事后过滤会漏，§11.10）。
+      // 未确认的也列（带 [未确认] 标记）：场景内条目本来就少，用户要看得全。
+      const inScope = (p: Proposition) =>
+        projects === "all" || (p.project_id === null ? includeGlobal : projects.includes(p.project_id));
+      const rows = [...props.values()]
+        .filter((p) => p.state === "active" && p.kind === "rule" && p.scenes.some((s) => scenes.includes(s)) && inScope(p))
+        .sort((a, b) => b.seq - a.seq);
+      if (!rows.length) console.log("没有该场景的规则。");
+      const links = linkIndex(props);
+      for (const p of rows) {
+        console.log(`[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${marks(p)}${linkState(p)}${disputed(p)}: ${searchDetail(p.text, p)}`);
+        const rel = linkSummary(links.get(p.id) ?? [], props, short);
+        if (rel) console.log(`  关联: ${rel}`);
+      }
+      telemetry(() => {
+        const ctx = detectCtx(store, process.cwd());
+        const now = new Date();
+        logQuery(store.workDb, ctx, "search", now);
+        logInjections(store.workDb, ctx, "search", rows.map((p) => p.id), now);
+      });
+      return;
+    }
     const { embedder, reason } = createEmbedder();
     const { hits, degraded } = await store.searchHybrid(query, {
       projects,
@@ -508,7 +553,6 @@ async function cmdSearch(argv: string[]): Promise<void> {
     if (!hits.length) {
       console.log("没有匹配的记忆。");
     }
-    const props = store.project().props;
     const links = linkIndex(props);
     hits.slice(0, SEARCH_FULL_ROWS).forEach((h) => {
       const p = props.get(h.id);
@@ -658,6 +702,7 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       for_workers: old.for_workers || undefined,
       confirmed: values.confirmed === true,
       supersedes: old.id,
+      scenes: old.scenes.length ? old.scenes : undefined,
       source,
     });
     let out = `已纠正 [${short(id)}] 替代 [${short(old.id)}]: ${values.text}`;
@@ -709,6 +754,31 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
+/** ab tag：改元数据标记，不改正文。目前只有场景标签（§11.10）。 */
+function cmdTag(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: { scene: { type: "string" } },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (!positionals[0] || values.scene === undefined) die("用法: ab tag <id 前缀> --scene <design,code,review|none>");
+  const scenes = parseScenes(values.scene, true);
+  const store = open();
+  try {
+    const p = findByPrefix(store, positionals[0]);
+    if (p.kind !== "rule") die(`--scene 只能用于规则，这条是 ${KIND_LABEL[p.kind]}: ${short(p.id)}`);
+    if (scenes.length && p.guidance)
+      die(`[${short(p.id)}] 是干活偏好（guidance），不能带场景；先 ab guidance ${short(p.id)} --off`);
+    store.lifecycle("tag", p.id, null, { scenes });
+    console.log(
+      scenes.length ? `已设场景 [${short(p.id)}] ${scenes.join(",")}: ${p.text}` : `已清空场景 [${short(p.id)}]: ${p.text}`,
+    );
+  } finally {
+    store.close();
+  }
+}
+
 function cmdGuidance(argv: string[]): void {
   const { values, positionals } = parseArgs({ args: argv, options: { off: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
   if (!positionals[0]) die("用法: ab guidance <id 前缀> [--off]");
@@ -716,6 +786,8 @@ function cmdGuidance(argv: string[]): void {
   try {
     const p = findByPrefix(store, positionals[0]);
     const on = !values.off;
+    if (on && p.scenes.length)
+      die(`[${short(p.id)}] 带场景标签（${p.scenes.join(",")}），不能同时标成干活偏好；先 ab tag ${short(p.id)} --scene none`);
     if (p.guidance === on) return console.log(`未变 [${short(p.id)}] ${p.text}`);
     store.lifecycle("tag", p.id, null, { guidance: on });
     const note = on && !(p.project_id === null && p.confirmed && p.confirmed_by === "user") ? "（只有用户确认过的全局条目才会每轮常驻）" : "";
@@ -1183,14 +1255,17 @@ function cmdStatus(argv: string[] = []): void {
 }
 
 const USAGE = `用法:
-  ab brief [项目名] [--worker]      开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
+  ab brief [项目名] [--worker] [--scene design,code,review]
+                                    开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
+                                    --scene 另加载该场景的规则（设计/开发/review，可逗号多选）；不给只多一行索引
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
-              [--from-worker <claude|codex|pi|opencode>:<session_id>]
+              [--from-worker <claude|codex|pi|opencode>:<session_id>] [--scene design,code,review]
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
+                                    --scene 只用于规则：按场景打标签，brief 按场景加载
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--from-worker <claude|codex|pi|opencode>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
@@ -1198,11 +1273,14 @@ const USAGE = `用法:
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
                                     前 8 条全文并列出关联，第 9–16 名每条一行
+  ab search --scene <design,code,review>  只列出该场景的全部规则（含未确认；不和关键词、--archived、--kind 其他种类同用）
   ab get <id 前缀> [--expand]       看一条：双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
                                     --expand 展开记下这条时的原始讨论（Pensieve 导入条打开原 md 文件）
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入）
+  ab tag <id 前缀> --scene <design,code,review|none>
+                                    改规则的场景标签（整组替换；none 清空）
+  ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入；带场景标签的不能标）
   ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
                                     到期复审：未确认、过了预计有效期、期间没被注入过的条目；--archive 归档（可撤销），已确认的永不进清单
@@ -1392,6 +1470,7 @@ async function main(): Promise<void> {
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "archive") return cmdArchive(rest);
+    if (cmd === "tag") return cmdTag(rest);
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus(rest);

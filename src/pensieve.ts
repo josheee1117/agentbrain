@@ -264,6 +264,7 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
       origin: "import",
       import_ref: importRef(it),
       supersedes: old?.id,
+      scenes: old?.scenes.length ? old.scenes : undefined,
     };
     const id = deps.store.remember(pid, null, false, body);
     (old ? report.corrected : report.created).push(id);

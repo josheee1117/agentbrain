@@ -2,6 +2,7 @@
 
 ## Sub-features
 - 显式记录记忆 (`ab remember --kind <rule|decision|pitfall|note> --text ... --summary ... [--confirmed] [--global] [--for-workers]`)
+- 规则场景标签 (`ab remember ... --scene design,code` / `ab tag <id> --scene design,code|none`)，brief 按场景加载见 [scene.md](scene.md)
 - 记忆纠正与替换 (`ab correct <id> --text ... --summary ... [--confirmed]`)
 - 混合检索 (`ab search <query> [--kind ...] [--project ...] [--archived]`)，前 8 条全文加关联关系，第 9 至 16 条单行显示
 - 详情与关联查看 (`ab get <id> [--expand]`)，展示双向关联、待确认纠正、向量近邻与原始讨论出处

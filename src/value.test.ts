@@ -180,6 +180,18 @@ test("常驻偏好：只放用户确认的全局 guidance；有上限；子代�
   assert.equal(guidanceBlock([], false), "");
 });
 
+test("常驻偏好跳过带场景的条目（§11.10：curate 同时写上 guidance 与 scenes 也不每轮注入）", () => {
+  const s = new Store(":memory:", ":memory:");
+  const base = { kind: "rule" as const, source: src("m"), confirmed: true };
+  const both = s.remember(null, "m", false, { ...base, text: "带场景的偏好", guidance: true, scenes: ["code"] });
+  const plain = s.remember(null, "m", false, { ...base, text: "普通偏好", guidance: true });
+  const shown: string[] = [];
+  const out = guidanceBlock(s.project().props.values(), false, new Set(), shown);
+  assert.doesNotMatch(out, /带场景的偏好/);
+  assert.deepEqual(shown, [plain]);
+  assert.ok(!shown.includes(both));
+});
+
 test("audit worker-quotes：派活提示里转抄的是用户主会话的原话 → 不撤销；只在派活提示里出现的照常撤销", async () => {
   const { MainSaid, userQuoteHashes } = await import("./audit.ts");
   const { sha256 } = await import("./extract.ts");
