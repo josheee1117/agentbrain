@@ -17,6 +17,20 @@ test("prompt：题号 q、近邻编号 m、确认状态；正文脱敏", () => {
   assert.doesNotMatch(m, /sk-abcdefghij/);
 });
 
+test("§8.11.3 关系判定：body 与 alternatives 进输入，正文有实质差异不能判 duplicate", () => {
+  const withBody: RelateItem[] = [{
+    prop: prop("n1", "final 只显示不拦截", false),
+    neighbors: [prop("o1", "final 只显示不拦截", true)],
+  }];
+  (withBody[0].prop as any).body = "细节：只拦真实问题，误报放行。";
+  (withBody[0].prop as any).alternatives = [{ option: "继续硬拦", rejected_because: "拦下的全是误报", evidence: 0 }];
+  (withBody[0].neighbors[0] as any).body = "另一套细节：全部放行，不做任何拦截。";
+  const m = buildRelateMessages(withBody)[1].content!;
+  assert.match(m, /正文：细节：只拦真实问题，误报放行。/);
+  assert.match(m, /否掉的方案：继续硬拦（拦下的全是误报）/);
+  assert.match(m, /m1: \[rule，已确认\] final 只显示不拦截（正文：另一套细节：全部放行，不做任何拦截。）/);
+});
+
 test("校验：越界编号、缺 target、未知关系、重复题号都作废；unrelated 丢掉 target", () => {
   const v = parseRelate({ results: [
     { id: "q1", relation: "duplicate", target: "m3" },

@@ -103,6 +103,17 @@ test("not_verifiable 原样返回；工具额度用完后强制收尾", async ()
   assert.equal(r.verdict, "inconclusive");
 });
 
+test("§8.11.3 note 核验：body 送检，模型能对 body 里的断言给证据", async () => {
+  const withBody = { ...prop, kind: "note", text: "向量门槛与存储位置", body: "VEC_MIN_SIM 定义在 store.ts，值是 0.45。" } as unknown as Proposition;
+  const chat = scripted([
+    () => toolCall("search_code", { pattern: "VEC_MIN_SIM" }),
+    () => final({ verdict: "verified", evidence: [{ path: "src/store.ts", line_start: 2, line_end: 2, quote: "VEC_MIN_SIM = 0.45" }] }),
+  ]);
+  const r = await verifyProposition(chat, tools, withBody);
+  assert.equal(r.verdict, "verified");
+  assert.match(chat.seen[0][1].content!, /VEC_MIN_SIM 定义在 store.ts，值是 0\.45/);
+});
+
 test("仓库配置不能借 git 执行命令：core.fsmonitor 被关掉", () => {
   const marker = join(base, "pwned");
   const evil = join(base, "evil.sh");

@@ -24,7 +24,7 @@ export interface RelateVerdict {
 }
 
 const SYSTEM = `你是 agentbrain 的记忆关系判定器。每道题给你一条新记忆 N 和几条已有记忆（m1、m2…），判断 N 和它们的关系：
-- duplicate：N 说的和某条已有记忆是同一件事（措辞不同也算），记一条就够。
+- duplicate：N 说的和某条已有记忆是同一件事（措辞不同也算），记一条就够。有详情正文（body）时，正文有实质差异就不能判 duplicate。
 - refines：N 是某条已有记忆更具体的补充，两条都值得留。
 - conflicts：N 和某条已有记忆说法矛盾，不能同时成立。
 - unrelated：主题相近但说的是不同的事，各自独立。
@@ -39,7 +39,9 @@ export const RELATE_PROMPT_VERSION = promptVersion(SYSTEM);
 
 function line(p: Proposition): string {
   const why = p.why ? `（理由：${p.why}）` : "";
-  return sanitize(`[${p.kind}${p.confirmed ? "，已确认" : "，未确认"}] ${p.text}${why}`).text;
+  const body = p.body ? `（正文：${p.body.replace(/\s+/g, " ").trim().slice(0, 300)}）` : "";
+  const alts = p.alternatives?.length ? `（否掉的方案：${p.alternatives.map((a) => `${a.option}（${a.rejected_because}）`).join("；").slice(0, 300)}）` : "";
+  return sanitize(`[${p.kind}${p.confirmed ? "，已确认" : "，未确认"}] ${p.text}${why}${body}${alts}`).text;
 }
 
 export function buildRelateMessages(items: RelateItem[]): ChatMessage[] {
