@@ -246,7 +246,7 @@ function refreshCitations(store: Store, now: Date): { sessions: number; cited: n
   const props = store.project().props;
   const textOf = (id: string) => props.get(id)?.text ?? null;
   const preferences = [...props.values()]
-    .filter((p) => p.state === "active" && p.confirmed && p.guidance && p.project_id === null)
+    .filter((p) => p.state === "active" && p.confirmed && p.guidance && p.project_id === null && !p.scenes.length) // 和 guidanceBlock 同口径（§11.10）
     .map((p) => p.id);
   for (const s of (() => { try { return sessionsToScan(store.workDb); } catch { return []; } })()) {
     const file = s.transcript ?? locateTranscript(s.host, s.session_id);
