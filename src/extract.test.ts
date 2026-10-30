@@ -2,6 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildMessages, hasBackground, sha256, validate, type ExtractWindow } from "./extract.ts";
+import type { ProjectContext } from "./extract.ts";
 import type { Proposition } from "./l2.ts";
 
 const win: ExtractWindow = {
@@ -23,11 +24,13 @@ const good = {
   relation: { type: "new", target: null },
 };
 
-test("合格候选通过：锚点映射回宿主定位点，只存引文哈希", () => {
+test("合格候选通过：锚点映射回宿主定位点，引文哈希与存的 quote 一致", () => {
   const v = validate({ candidates: [good] }, win, [neighbor], "w1");
   assert.deepEqual(v.dropped, {});
   assert.equal(v.candidates.length, 1);
-  assert.deepEqual(v.candidates[0].evidence, [{ anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都用 node 的绝对路径") }]);
+  assert.deepEqual(v.candidates[0].evidence, [
+    { anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都用 node 的绝对路径"), quote: "以后 hook 命令都用 node 的绝对路径" },
+  ]);
   assert.deepEqual(v.candidates[0].relation, { type: "new", target: null });
 });
 
@@ -58,7 +61,7 @@ test("依据与引文角色要对得上：user_directive 必须引用户，obser
   assert.deepEqual(v.evidenceDropped, {});
 });
 
-test("正文里带秘密（模型还原或编出）的候选整条丢弃；note/procedure 不是可抽取种类", () => {
+test("正文里带秘密（模型还原或编出）的候选整条丢弃；note 是可抽取种类，procedure 不是", () => {
   const v = validate({
     candidates: [
       { ...good, text: "key 是 sk-abcdefghijklmnop1234" },
@@ -67,8 +70,9 @@ test("正文里带秘密（模型还原或编出）的候选整条丢弃；note/
       { ...good, text: "<agentbrain-recall>回声</agentbrain-recall>" },
     ],
   }, win, [], "w1");
-  assert.equal(v.candidates.length, 0);
-  assert.deepEqual(v.dropped, { secret: 1, bad_kind: 2, echo: 1 });
+  assert.equal(v.candidates.length, 1, "note 保留");
+  assert.equal(v.candidates[0].kind, "note");
+  assert.deepEqual(v.dropped, { secret: 1, bad_kind: 1, echo: 1 });
 });
 
 test("关系目标只能是给模型看过的近邻；正文与近邻相同时按重复处理", () => {
@@ -104,10 +108,10 @@ test("送模型的消息包含项目背景与近邻，并把会话声明为不�
 test("证据逐条判定：编造的那条只丢自己，剩下的仍满足 basis 就保留候选", () => {
   const v = validate({
     candidates: [
-      // 用户原文逐字对得上 + 助手那条是改写：保留，只存对得上的那条
+      // 用户原文逐字对得上 + 助手那条也是原文：保留
       { ...good, basis: "user_confirmed", kind: "decision", evidence: [
         { anchor: "#1", role: "user", quote: "以后 hook 命令都用 node 的绝对路径" },
-        { anchor: "#2", role: "assistant", quote: "我会运行 npm 的测试命令" },
+        { anchor: "#2", role: "assistant", quote: "调用 Bash: npm test" },
       ] },
       // 剩下的证据不满足 basis：user_directive 只剩工具输出
       { ...good, text: "另一条规则", evidence: [
@@ -117,9 +121,12 @@ test("证据逐条判定：编造的那条只丢自己，剩下的仍满足 basi
     ],
   }, win, [], "w1");
   assert.equal(v.candidates.length, 1);
-  assert.deepEqual(v.candidates[0].evidence, [{ anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都用 node 的绝对路径") }], "丢掉的引文不进 L1");
+  assert.deepEqual(v.candidates[0].evidence, [
+    { anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都用 node 的绝对路径"), quote: "以后 hook 命令都用 node 的绝对路径" },
+    { anchor: "a1", role: "assistant", quote_sha256: sha256("调用 Bash: npm test"), quote: "调用 Bash: npm test" },
+  ], "丢掉的引文不进 L1");
   assert.deepEqual(v.dropped, { basis_unsupported: 1 });
-  assert.deepEqual(v.evidenceDropped, { quote_mismatch: 2 });
+  assert.deepEqual(v.evidenceDropped, { quote_mismatch: 1 });
 });
 
 test("锚点容忍 [#1 user] / #1 user 写法，引文去首尾引号与省略号；核对本身不放宽", () => {
@@ -171,7 +178,7 @@ test("一次性授权不能成 rule/decision：整条以 one_off 丢弃；同样
   const why = "助手合并后没推送，用户发现远端还是旧代码，所以要求合并后推送";
   const v = validate({ candidates: [
     { ...good, text: "合并后 push", why, evidence: [{ anchor: "#1", role: "user", quote: "push 吧" }] },
-    { ...good, kind: "decision", basis: "user_confirmed", text: "这次直接 push", why, evidence: [{ anchor: "#1", role: "user", quote: "push 吧" }] },
+    { ...good, kind: "decision", basis: "user_directive", text: "这次直接 push", why, evidence: [{ anchor: "#1", role: "user", quote: "push 吧" }] },
     { ...good, text: "合并完都要 push 到远端", why, evidence: [{ anchor: "#2", role: "user", quote: "以后合并完都要 push 到远端" }] },
   ] }, w, [], "w-one-off");
   assert.equal(v.dropped.one_off, 2);
@@ -250,7 +257,7 @@ test("提问卡片的回答、斜杠命令参数算用户自己的话；pasted_c
   assert.equal(ownUserText("<command-name>/x</command-name><command-message>x</command-message><command-args>重构一版</command-args>"), "重构一版");
   assert.equal(ownUserText('<pasted_content id="1">别人写的规则</pasted_content>\n我的意见'), "我的意见");
   const w: ExtractWindow = { context: [], turns: [{ anchor: "u1", role: "user", text: reply }] };
-  const v = validate({ candidates: [{ ...good, kind: "decision", basis: "user_confirmed", text: "告警明细直接展示 detail 原文", why: "助手问告警格式时用户在提问卡片里确认只展示 detail 原文", evidence: [{ anchor: "#1", role: "user", quote: "对，直接展示 detail 原文" }] }] }, w, [], "w-reply");
+  const v = validate({ candidates: [{ ...good, kind: "decision", basis: "user_directive", text: "告警明细直接展示 detail 原文", why: "助手问告警格式时用户在提问卡片里确认只展示 detail 原文", evidence: [{ anchor: "#1", role: "user", quote: "对，直接展示 detail 原文" }] }] }, w, [], "w-reply");
   assert.equal(v.candidates.length, 1);
   assert.equal(v.evidenceDropped.quote_not_own, undefined);
 });
@@ -280,6 +287,170 @@ test("留出集：'修复了'是已完成陈述不是授权；'确认''改回去
 });
 
 import { hasExtractableSignal, substantiveUserText } from "./extract.ts";
+
+// ---------- §8.11.3 抽取（note、决策卡、原话入库、按目标项目归属、去重看完整内容） ----------
+
+const RICH_WIN: ExtractWindow = {
+  context: [{ anchor: "c1", role: "user", text: "上一段聊过 pi-ops 的仓库路径 ~/code_me/pi-ops" }],
+  turns: [
+    { anchor: "u1", role: "user", text: "以后 hook 命令都写 node 的绝对路径，别依赖 PATH" },
+    { anchor: "a1", role: "assistant", text: "pi-ops 的门禁太严，建议 final 阶段只显示不拦合并", ts: "2026-10-30T10:00:00Z" },
+    { anchor: "u2", role: "user", text: "可以，final 就只显示不拦截" },
+    { anchor: "a2", role: "assistant", text: "断言的用户轮经过 ownUserSegments 处理：贴入的块会被剥掉，只有用户自己打的字能当证据" },
+  ],
+};
+
+const CTX: ProjectContext = {
+  name: "agentbrain",
+  docs: "",
+  registry: "- 路径：`~/code_me/agentbrain`",
+  confirmed: "",
+  projects: "- agentbrain ~/code_me/agentbrain\n- pi-ops ~/code_me/pi-ops",
+};
+
+const DECISION = {
+  kind: "decision",
+  project: "agentbrain",
+  text: "pi-ops final 阶段只显示证据不拦合并",
+  why: "evidence-gate 拦下过的真实问题太少，留着只添乱",
+  body: "2026-10-30 定。final 拦过一次误报。",
+  alternatives: [{ option: "final 继续硬拦", rejected_because: "拦下的全是误报", evidence: 1 }],
+  basis: "user_confirmed",
+  evidence: [
+    { anchor: "#2", role: "assistant", quote: "建议 final 阶段只显示不拦合并" },
+    { anchor: "#3", role: "user", quote: "final 就只显示不拦截" },
+  ],
+  relation: { type: "new", target: null },
+};
+
+test("§8.11.3 原话：证据写回 quote 与 said_at，哈希与 quote 一致", () => {
+  const v = validate({ candidates: [DECISION] }, RICH_WIN, [], "w1", CTX);
+  assert.deepEqual(v.dropped, {});
+  assert.equal(v.candidates.length, 1);
+  const ev = v.candidates[0].evidence;
+  assert.equal(ev.length, 2);
+  assert.equal(ev[0].quote, "建议 final 阶段只显示不拦合并");
+  assert.equal(ev[0].quote_sha256, sha256("建议 final 阶段只显示不拦合并"));
+  assert.equal(ev[0].said_at, "2026-10-30T10:00:00Z");
+  assert.equal(ev[1].quote, "final 就只显示不拦截");
+  assert.equal(ev[1].quote_sha256, sha256("final 就只显示不拦截"));
+});
+
+test("§8.11.3 user_confirmed：缺用户认可或助手方案的原话都整条丢，并记 drop 原因", () => {
+  const v = validate({
+    candidates: [
+      DECISION,
+      { ...DECISION, evidence: [{ anchor: "#3", role: "user", quote: "final 就只显示不拦截" }] },
+      { ...DECISION, evidence: [{ anchor: "#2", role: "assistant", quote: "建议 final 阶段只显示不拦合并" }] },
+    ],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.dropped.user_confirmed_unsubstantiated, 2);
+});
+
+test("§8.11.3 note：body 写详情，证据是助手说出结论的原话（basis=agent_inference）", () => {
+  const v = validate({
+    candidates: [{
+      kind: "note",
+      project: "agentbrain",
+      text: "证据校验用 ownUserSegments 剥掉贴入的块",
+      body: "用户轮的引文只能对用户自己打的字核对：代码块、标签块、引用行都换成分隔符剥掉，只有用户自己打的字能当证据。",
+      basis: "agent_inference",
+      evidence: [{ anchor: "#4", role: "assistant", quote: "贴入的块会被剥掉" }],
+      relation: { type: "new", target: null },
+    }],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 1);
+  const c = v.candidates[0];
+  assert.equal(c.kind, "note");
+  assert.match(c.body!, /只有用户自己打的字能当证据/);
+  assert.equal(c.basis, "agent_inference");
+});
+
+test("§8.11.3 归属：project 为已登记项目名，按会话项目对齐；指向别的项目但缺 anchor → 留在会话项目并带 project_unresolved", () => {
+  const v = validate({ candidates: [DECISION] }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates[0].project, "agentbrain");
+  const noAnchor = validate({
+    candidates: [{ ...DECISION, project: "pi-ops", project_anchor: "#1" }],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(noAnchor.candidates.length, 1);
+  assert.equal(noAnchor.candidates[0].project, "agentbrain", "anchor 轮里没有项目名/路径，退回会话项目");
+  assert.ok(noAnchor.candidates[0].value?.flags?.includes("project_unresolved"));
+});
+
+test("§8.11.3 归属：未登记项目名、指向别的项目却缺 anchor、anchor 轮找不到名字和路径，三种都退回并带 project_unresolved", () => {
+  const ok = validate({ candidates: [{ ...DECISION, project: "pi-ops", project_anchor: "#2" }] }, RICH_WIN, [], "w1", CTX);
+  assert.equal(ok.candidates[0].project, "pi-ops");
+  assert.equal(ok.candidates[0].value?.flags?.includes("project_unresolved"), false);
+  const back = (c: object) => {
+    const v = validate({ candidates: [c as never] }, RICH_WIN, [], "w1", CTX);
+    assert.equal(v.candidates.length, 1);
+    assert.equal(v.candidates[0].project, "agentbrain", "退回会话项目");
+    assert.ok(v.candidates[0].value?.flags?.includes("project_unresolved"));
+  };
+  back({ ...DECISION, project: "no-such-project", project_anchor: "#2" });
+  back({ ...DECISION, project: "pi-ops" }); // 没给 anchor
+  back({ ...DECISION, project: "pi-ops", project_anchor: "#4" }); // anchor 轮里没有名字/路径
+});
+
+test("§8.11.3 归属：前置背景里出现项目名/路径也能当 anchor", () => {
+  const v = validate({
+    candidates: [{ ...DECISION, project: "pi-ops", project_anchor: "#c1" }],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates[0].project, "pi-ops");
+  assert.equal(v.candidates[0].value?.flags?.includes("project_unresolved"), false);
+});
+
+test("§8.11.3 去重：同窗口同 kind 同 text、body 不同的两条都保留", () => {
+  const v = validate({
+    candidates: [
+      DECISION,
+      { ...DECISION, body: "完全不同的正文：当时定了另一套细节。" },
+    ],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 2);
+});
+
+test("§8.11.3 写入自查：alternatives 下标越界的项丢掉，不丢整条", () => {
+  const v = validate({
+    candidates: [{
+      ...DECISION,
+      alternatives: [
+        { option: "方案 A", rejected_because: "理由 A", evidence: 1 },
+        { option: "方案 B", rejected_because: "理由 B", evidence: 9 },
+      ],
+    }],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 1);
+  assert.deepEqual(v.candidates[0].alternatives, [{ option: "方案 A", rejected_because: "理由 A", evidence: 1 }]);
+});
+
+test("§8.11.3 写入自查：body 或 alternatives 含密钥只丢该字段并记 flag，不丢整条、不抛错", () => {
+  const v = validate({
+    candidates: [{
+      ...DECISION,
+      body: "密钥 sk-abcdefghijklmnop1234 不能进正文",
+      alternatives: [{ option: "方案 A", rejected_because: "sk-abcdefghijklmnop1234 泄漏", evidence: 0 }],
+    }],
+  }, RICH_WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.candidates[0].body, undefined);
+  assert.equal(v.candidates[0].alternatives, undefined);
+  assert.ok(v.candidates[0].value?.flags?.includes("body_dropped"));
+  assert.ok(v.candidates[0].value?.flags?.includes("alternatives_dropped"));
+});
+
+test("prompt：只记三种之外多了 note，project 带锚点要求，decision 不套一句话/不写日期的要求", () => {
+  const sys = buildMessages(win, CTX, [])[0].content!;
+  assert.match(sys, /note（知识）/);
+  assert.match(sys, /project_anchor/);
+  assert.match(sys, /decision 例外，它的 text 点名具体对象、可以写日期/);
+});
+
+test("buildInput：附已登记项目清单（名字 + ~ 路径，与窗口同口径）", () => {
+  const m = buildMessages(win, CTX, [])[1].content!;
+  assert.match(m, /<registered_projects>\n- agentbrain ~\/code_me\/agentbrain\n- pi-ops ~\/code_me\/pi-ops\n<\/registered_projects>/);
+});
 
 test("预检：只有应答/命令/省略的工具输出的窗口跳过，其余保守抽取", () => {
   const u = (text: string) => ({ role: "user" as const, text, anchor: "a" });
