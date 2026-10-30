@@ -21,6 +21,7 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 - `cli-recall-hook`: `recall --hook` via stdin JSON
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
 - `cli-curate`: `review` and `audit worker-quotes`
+- `cli-detail`: `remember --body-file/--alternative` → `get` shows body + rejected options → `search` body hint → rule-with-body rejected → `correct` does not copy detail (see [features/detail.md](features/detail.md))
 - `cli-view`: `view --no-open --out <evidence>/view.html`
 - `cli-staging-report`: `scripts/staging-report.ts` on a seeded legacy candidate event
 
