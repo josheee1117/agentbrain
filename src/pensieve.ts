@@ -351,11 +351,11 @@ async function relateImports(deps: ImportDeps, ids: string[], report: ImportRepo
       const p = props.get(b.prop.id);
       const t = v.target ? props.get(v.target.id) : null;
       if (!p || p.state !== "active" || (v.target && t?.state !== "active")) return;
-      const { appends, merge } = applyVerdict(p, t ?? null, v, deps.chat!.model, { mode: "user-confirmed-wins" });
+      const { appends, merge, outcome } = applyVerdict(p, t ?? null, v, deps.chat!.model, { mode: "user-confirmed-wins" });
       if (merge === "new-into-target") report.relate.mergedIntoExisting++;
       else if (merge === "target-into-new") report.relate.mergedExisting++;
-      else if (v.outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
-      else if (v.outcome !== "duplicate") report.relate[v.outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
+      else if (outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
+      else if (outcome !== "duplicate") report.relate[outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
       deps.store.commit(appends, () => {});
     });
   }

@@ -117,3 +117,54 @@ test("§8.11.3 关系判定输入：正文每条最多 2000 字，超长注明�
   assert.ok(m.includes("丁".repeat(150)), "理由不被截短");
   assert.ok(m.includes("丙".repeat(150)), "方案不被截短");
 });
+
+// ---------- round4 条目 2：判定输入保留换行缩进；duplicate 但详情不同就改记 refines ----------
+
+test("round4 条目 2：判定输入保留正文内部的换行和缩进，只按 2000 字截断", () => {
+  const item: RelateItem[] = [{ prop: prop("n1", "提交时机"), neighbors: [prop("o1", "提交时机", true)] }];
+  const body = "if enabled:\n    write()\n    commit()";
+  (item[0].prop as any).body = body;
+  const m = buildRelateMessages(item)[1].content!;
+  assert.ok(m.includes(`（正文：${body}）`), `缩进被压平：\n${m}`);
+  assert.doesNotMatch(m, /if enabled: write\(\) commit\(\)/);
+  // 顶部空行不算内容，但内部换行和缩进都保留
+  (item[0].prop as any).body = "\n  a\n    b\n";
+  assert.ok(buildRelateMessages(item)[1].content!.includes("（正文：a\n    b）"), "首尾空白去掉、内部缩进留着");
+});
+
+test("round4 条目 2：duplicate 但正文不完全一致 → 不归档，改记 refines（linkIndex 两边都算），两条都留着", () => {
+  const p = full("new", { body: "if enabled:\n    write()\ncommit()" }), t = full("old", { body: "if enabled:\n    write()\n    commit()" });
+  const pol: MergePolicy = { mode: "absorb-new", corroborate: () => { throw new Error("不该调"); } };
+  const r = applyVerdict(p, t, { outcome: "duplicate", target: t, reason: "同一件事" }, "m", pol);
+  assert.deepEqual(shape(r), [["relate", "new", "old"]]);
+  assert.equal((r.appends[0].body as any).outcome, "refines", "本条记成补充");
+  assert.equal(r.merge, null, "不并");
+  assert.equal(r.corroborated, false);
+});
+
+test("round4 条目 2：目标没有正文、候选带正文 → 也算详情不同，改记 refines", () => {
+  const p = full("new", { body: "只在测试环境写入" }), t = full("old");
+  const r = applyVerdict(p, t, { outcome: "duplicate", target: t, reason: "同一件事" }, "m", { mode: "absorb-new", corroborate: () => null });
+  assert.deepEqual(shape(r), [["relate", "new", "old"]]);
+  assert.equal((r.appends[0].body as any).outcome, "refines");
+  assert.equal(r.merge, null);
+});
+
+test("round4 条目 2：详情完全一致时照旧走 duplicate 归档（两种策略）", () => {
+  const body = "用绝对路径启动 node 24";
+  const alt = [{ option: "靠 PATH 找 ab", rejected_because: "宿主 PATH 很少", evidence: 0 }];
+  const p = full("new", { body, alternatives: alt }), t = full("old", { body, alternatives: alt });
+  const r1 = applyVerdict(p, t, { outcome: "duplicate", target: t, reason: "同一件事" }, "m", { mode: "absorb-new", corroborate: () => null });
+  assert.deepEqual(shape(r1), [["relate", "new", "old"], ["evidence", "old", "relate:new"], ["archive", "new", "old"]]);
+  assert.equal(r1.merge, "new-into-target");
+  const r2 = applyVerdict(p, t, { outcome: "duplicate", target: t, reason: "同一件事" }, "m", { mode: "user-confirmed-wins" });
+  assert.deepEqual(shape(r2), [["relate", "new", "old"], ["evidence", "new", "import:old"], ["relate", "old", "new"], ["archive", "old", "new"]]);
+  assert.equal(r2.merge, "target-into-new");
+});
+
+test("round4 条目 2：否掉的方案不同也算详情不同", () => {
+  const p = full("new", { alternatives: [{ option: "绝对路径写死", rejected_because: "换机器要改配置" }] }), t = full("old", { alternatives: [{ option: "靠 PATH 找 ab", rejected_because: "宿主 PATH 很少" }] });
+  const r = applyVerdict(p, t, { outcome: "duplicate", target: t, reason: "同一件事" }, "m", { mode: "absorb-new", corroborate: () => null });
+  assert.equal(r.merge, null);
+  assert.equal((r.appends[0].body as any).outcome, "refines");
+});

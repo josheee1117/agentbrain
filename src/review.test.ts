@@ -468,3 +468,22 @@ test("§8.11 planAction：带 body 或 alternatives 的条目跳过改写，写�
   assert.match((plan[1] as { why: string }).why, /详情/);
   s.close();
 });
+
+// ---------- round4 条目 4：带详情的条目也不自动合并 ----------
+
+test("round4 条目 4：候选带正文或否掉的方案时，自动 merge 和 rewrite 一样 skip 并写进报告理由", () => {
+  const s = new Store(":memory:", ":memory:");
+  const bodyOnly = s.remember(null, "s", false, { kind: "decision", text: "带正文的决定", confirmed: false, source: src, body: "详情" });
+  const altOnly = s.remember(null, "s", false, { kind: "decision", text: "带方案的决定", confirmed: false, source: src, alternatives: [{ option: "甲", rejected_because: "乙" }] });
+  const plain = s.remember(null, "s", false, { kind: "rule", text: "普通条目", confirmed: false, source: src });
+  const live = s.remember(null, "s", false, { kind: "rule", text: "并入目标", confirmed: false, source: src });
+  const props = s.project().props;
+  // 近邻编号由上传入的 into 决定（planAction 直接取正式 id）
+  const mergeRes = (id: string) => ({ id, votes: [], decision: { route: "unanimous" as const, final: { verdict: "merge" as const, class: "B" as const, text: "合并后", scenario: "当x时", guidance: false, reason: "", into: live } } });
+  const plan = planAll([bodyOnly, altOnly, plain].map(mergeRes), props);
+  assert.deepEqual(plan.map((a) => a.op), ["skip", "skip", "merge"], "带详情的合并只跳过本条，不丢目标");
+  assert.match((plan[0] as { why: string }).why, /详情/);
+  assert.match((plan[1] as { why: string }).why, /详情/);
+  assert.equal(props.get(bodyOnly)!.state, "active", "跳过就是不动库");
+  s.close();
+});

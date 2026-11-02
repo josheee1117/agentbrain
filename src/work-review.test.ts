@@ -14,6 +14,9 @@ import { Store, VEC_TEXT_MAX_CHARS, type Embedder } from "./store.ts";
 import type { Chat, ChatMessage } from "./llm.ts";
 import { admit, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
+import { linkIndex } from "./links.ts";
+import { recall } from "./recall.ts";
+import { recallable } from "./visibility.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "ab-work-review-")));
@@ -439,7 +442,8 @@ test("review round3 条目 3：目标是 note 时纠正保留候选自己的种�
 test("review round3 条目 6：候选算向量复用 vectorText 截断，正文完整入库", async () => {
   const e = env();
   e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
-  const body = "a@b.co ".repeat(714).trim();
+  // round4 条目 7 后正文按脱敏后的 5000 字算，正文本身就到不了 6000；这里验的是向量输入照旧不超上限、正文完整入库
+  const body = "通知名单记录。".repeat(625);
   const chat = fakeChat(() => json({ candidates: [{ ...RULE, kind: "decision", text: "通知名单记录", body }] }));
   const sent: number[] = [];
   const embedder: Embedder = Object.assign(async (texts: string[]) => {
@@ -450,6 +454,203 @@ test("review round3 条目 6：候选算向量复用 vectorText 截断，正文�
   const r = await runWork(e.deps(chat, { embedder }), { sweep: false, dryRun: false });
   assert.deepEqual(r.windows, { done: 1, deferred: 0, failed: 0, skipped: 0 });
   const p = [...e.store.project().props.values()][0] as Proposition;
-  assert.ok([...p.body!].length > VEC_TEXT_MAX_CHARS, "正文仍完整保留");
+  assert.equal(p.body, body, "正文完整保留");
   assert.ok(sent.every((n) => n <= VEC_TEXT_MAX_CHARS), `向量输入超上限：${sent}`);
+});
+
+// ---------- round4 条目 1：证据超过上限只截断，不丢整条 ----------
+
+/** 06.json 那条被整条丢掉的决定：4 条证据（1 用户 + 3 助手）、带否掉的方案、带正文。 */
+function piOpsGateDecision() {
+  return {
+    kind: "decision",
+    project: "alpha",
+    scenario: "当在 alpha 上开 PR、判断能不能合并时",
+    text: "alpha 的 GitHub 门禁整体去掉：main 不要求任何必过检查，只留禁强推和禁删分支",
+    body: "2026-10-27 删掉必过检查，停用 final 和 evidence-gate 两个流程；门禁代码没删，可恢复。",
+    why: "final 门禁只要改了已登记为证明的测试就一律拒绝，#33–#37 连续 5 次合并这项全红，每次都用管理员权限强合，门禁既没拦住坏代码又架空了真正的测试检查。",
+    alternatives: [{ option: "维持现状：final 仍留在必过检查里，红了用管理员权限硬合", rejected_because: "final 从不放行，强行合并还会把 evidence-gate 的红一起带进来", evidence: 2 }],
+    basis: "user_directive",
+    evidence: [
+      { anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" },
+      { anchor: "#2", role: "assistant", quote: "final 阶段只显示不拦合并" },
+      { anchor: "#3", role: "assistant", quote: "强行合并连带架空了真正的测试检查" },
+      { anchor: "#4", role: "assistant", quote: "禁用 final 和 evidence-gate 两个流程" },
+    ],
+    relation: { type: "new", target: null },
+  };
+}
+
+/** 一次窗口里 1 用户 + 3 助手原话（证据 4 条，被截断时方案的下标要重映射）。 */
+function gateTranscript() {
+  return [
+    user("u1", "以后 hook 命令都写 node 绝对路径"),
+    asst("a1", "final 阶段只显示不拦合并"),
+    asst("a2", "强行合并连带架空了真正的测试检查"),
+    asst("a3", "禁用 final 和 evidence-gate 两个流程"),
+  ];
+}
+
+test("round4 条目 1：4 条证据的决定照样入库（MAX_EVIDENCE 提到 6），方案引用不丢", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", gateTranscript()));
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [piOpsGateDecision()] }))), { sweep: false, dryRun: false });
+  assert.deepEqual(r.receipt.dropped, {}, "不再整条丢");
+  assert.equal(r.receipt.proposals, 1);
+  const [p] = [...e.store.project().props.values()];
+  assert.equal(p.evidence.length, 4, "4 条证据都留下");
+  assert.equal(p.body, piOpsGateDecision().body, "正文入库");
+  assert.deepEqual(p.alternatives, [{ option: "维持现状：final 仍留在必过检查里，红了用管理员权限硬合", rejected_because: "final 从不放行，强行合并还会把 evidence-gate 的红一起带进来", evidence: 2 }]);
+  assert.equal(p.value?.flags?.includes("evidence_truncated"), false);
+});
+
+test("round4 条目 1：证据 7 条时只取前 6 条并记 evidence_truncated，整条照常入库", async () => {
+  const e = env();
+  const turns = [user("u1", "以后 hook 命令都写 node 绝对路径"), ...[1, 2, 3, 4, 5, 6].map((i) => asst(`a${i}`, `第 ${i} 段助手说明`))];
+  e.register("s1", e.transcript("s1", turns));
+  const cand = {
+    ...piOpsGateDecision(),
+    evidence: [
+      { anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" },
+      ...[1, 2, 3, 4, 5, 6].map((i) => ({ anchor: `#${i + 1}`, role: "assistant", quote: `第 ${i} 段助手说明` })),
+    ],
+    alternatives: [{ option: "维持现状", rejected_because: "final 从不放行", evidence: 6 }],
+  };
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [cand] }))), { sweep: false, dryRun: false });
+  assert.deepEqual(r.receipt.dropped, {}, "超 6 条也不整条丢");
+  const [p] = [...e.store.project().props.values()];
+  assert.equal(p.evidence.length, 6, "只保留前 6 条");
+  assert.deepEqual(p.evidence.map((x) => x.quote), ["以后 hook 命令都写 node 绝对路径", ...[1, 2, 3, 4, 5].map((i) => `第 ${i} 段助手说明`)]);
+  assert.ok(p.value?.flags?.includes("evidence_truncated"), "记下被截断");
+  assert.deepEqual(p.alternatives, [], "引用被截掉证据的方案整项丢掉（投影里是空数组）");
+  assert.ok(p.value?.flags?.includes("alternatives_dropped"));
+});
+
+// ---------- round4 条目 2：第 2 层判定不再吞详情 ----------
+
+const detailCand = (body: string) => ({
+  kind: "decision",
+  text: "hook 执行方式",
+  why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+  body,
+  basis: "user_directive",
+  evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" }],
+  relation: { type: "duplicate", target: "m1" },
+});
+
+test("round4 条目 2：判定输入保留正文的换行和缩进，只按 2000 字截断", async () => {
+  const e = env();
+  const body = "if enabled:\n    write()\n    commit()";
+  e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", body, confirmed: true, source: src0(null) });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(() => json({ candidates: [detailCand("if enabled:\n    write()\ncommit()")] }), () => json({ results: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(chat.relateCalls.length, 1);
+  const sent = chat.relateCalls[0][1].content!;
+  assert.ok(sent.includes(`（正文：${body}）`), `判定输入里的缩进被压平了：\n${sent}`);
+});
+
+test("round4 条目 2：模型说 duplicate 但正文只差缩进 → 不归档，改记 refines，两条都留着并互相关联", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", body: "if enabled:\n    write()\n    commit()", confirmed: true, source: src0(null) });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(() => json({ candidates: [detailCand("if enabled:\n    write()\ncommit()")] }), () => json({ results: [{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.relate.refines, 1, "改记成补充");
+  assert.equal(r.relate.duplicate, 0);
+  const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  assert.deepEqual([fresh.state, fresh.merged_into, fresh.related?.outcome], ["active", null, "refines"], "本条不归档，关系记成补充");
+  assert.equal(fresh.unreconciled, false, "第 2 层给出确定结论就解除未判定");
+  assert.equal(e.store.project().props.get(old)!.body, "if enabled:\n    write()\n    commit()", "目标的正文没被改");
+  const links = linkIndex(e.store.project().props);
+  assert.deepEqual(links.get(fresh.id), [{ type: "refines", id: old }], "新条目指出去");
+  assert.deepEqual(links.get(old), [{ type: "refined_by", id: fresh.id }], "目标指回来");
+});
+
+test("round4 条目 2：差异在被 2000 字截断挡住的正文尾部时，同样不归档（tail）", async () => {
+  const e = env();
+  const head = "甲".repeat(2100);
+  const old = e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", body: `${head}生产环境禁止写入`, confirmed: true, source: src0(null) });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(() => json({ candidates: [detailCand(`${head}生产环境允许写入`)] }), () => json({ results: [{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.relate.refines, 1);
+  const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  assert.equal(fresh.state, "active");
+  assert.equal(fresh.body, `${head}生产环境允许写入`, "尾部差异留在库里");
+  assert.equal(e.store.project().props.get(old)!.body, `${head}生产环境禁止写入`);
+});
+
+test("round4 条目 2：目标没有正文（empty-target），候选带正文判 duplicate 也改记 refines", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", confirmed: true, source: src0(null) });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(() => json({ candidates: [detailCand("只在测试环境写入")] }), () => json({ results: [{ id: "q1", relation: "duplicate", target: "m1", reason: "同一件事" }] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  assert.deepEqual([fresh.state, fresh.related?.outcome, e.store.project().props.get(old)!.body], ["active", "refines", null]);
+});
+
+// 详情完全一致的 duplicate 在第 1 层就直接并入（上面 review round3 条目 2 的反例），applyVerdict 层的同款行为在 relate.test.ts 里测。
+
+// ---------- round4 条目 3：候选键算上否掉的方案 ----------
+
+test("round4 条目 3：同标题、否掉的方案不同的两条候选都入库；没有方案的候选键不变、窗口重跑不重复", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const withAlt = (option: string, quote: string) => ({
+    ...detailCand(""),
+    body: undefined,
+    alternatives: [{ option, rejected_because: "宿主 PATH 很少" }],
+    evidence: [{ anchor: "#1", role: "user", quote }],
+    relation: { type: "new", target: null },
+  });
+  const chat = fakeChat(() => json({ candidates: [withAlt("靠 PATH 找 ab", "以后 hook 命令都写 node 绝对路径"), withAlt("绝对路径写死", "以后 hook 命令都写 node 绝对路径")] }));
+  const deps = e.deps(chat);
+  const r = await runWork(deps, { sweep: false, dryRun: false });
+  assert.deepEqual([r.receipt.proposals, r.receipt.merged], [2, 0], "方案不同是两份内容");
+  assert.deepEqual([...e.store.project().props.values()].map((p) => p.alternatives![0].option).sort(), ["abs", "靠 PATH 找 ab"].sort().map((x) => (x === "abs" ? "绝对路径写死" : x)));
+  // 没有方案的候选：键与旧口径一致，同窗口重跑不重复入库
+  const e2 = env();
+  e2.register("s1", e2.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const plain = { ...RULE, text: "hook 命令写 node 绝对路径，不依赖 PATH" };
+  const chat2 = fakeChat(() => json({ candidates: [plain] }));
+  await runWork(e2.deps(chat2), { sweep: false, dryRun: false });
+  await runWork(e2.deps(chat2), { sweep: false, dryRun: false });
+  assert.equal(e2.store.project().props.size, 1, "重跑不重复入库");
+});
+
+// ---------- round4 条目 5：显式 duplicate 被降级成新条目后标关系未判定 ----------
+
+test("round4 条目 5：详情不同被判成新条目时首次写入就标 unreconciled，第 2 层给出确定结论才解除", async () => {
+  for (const [name, reply, expected] of [
+    ["unsure", () => json({ results: [{ id: "q1", relation: "unsure", target: null, reason: "拿不准" }] }), true],
+    ["invalid", () => json({ results: [] }), true],
+    ["error", () => { throw new Error("fake unavailable"); }, true],
+    ["refines", () => json({ results: [{ id: "q1", relation: "refines", target: "m1", reason: "更具体" }] }), false],
+  ] as const) {
+    const e = env();
+    const old = e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", body: "旧正文", confirmed: true, source: src0(null) });
+    e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+    const r = await runWork(e.deps(fakeChat(() => json({ candidates: [detailCand("新增正文")] }), reply)), { sweep: false, dryRun: false });
+    const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+    assert.equal(fresh.state, "active", name);
+    assert.equal(fresh.unreconciled, expected, `${name}: 未判定状态`);
+    assert.equal(recallable(fresh, false), !expected, `${name}: 未判定的条目不进召回`);
+    assert.equal(r.relate.errors, name === "invalid" || name === "error" ? 1 : 0, `${name}: 出错计数`);
+    if (name === "refines") assert.equal(fresh.related?.outcome, "refines");
+  }
+});
+
+test("round4 条目 5：unreconciled 解除后召回才带上这条", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "decision", text: "hook 执行方式", why: "宿主 hook 子进程的 PATH 很少", body: "旧正文", confirmed: true, source: src0(null) });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const unsure = fakeChat(() => json({ candidates: [detailCand("新增正文")] }), () => json({ results: [{ id: "q1", relation: "unsure", target: null, reason: "拿不准" }] }));
+  await runWork(e.deps(unsure), { sweep: false, dryRun: false });
+  const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  const shown: string[] = [];
+  const embedder = Object.assign(async (texts: string[]) => texts.map(() => new Float32Array([1, 0])), { model: "fake" });
+  const text = await recall(e.store, "hook 执行方式", e.repo, () => embedder, shown, [], () => ({ name: "alpha", path: e.repo }));
+  assert.equal(shown.includes(fresh.id), false, `未判定的条目被召回：${text}`);
 });

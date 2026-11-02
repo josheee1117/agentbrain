@@ -581,11 +581,13 @@ export function admit(
       ...(c.value ? { value: c.value } : {}),
     };
     let bucket: "proposals" | "unreconciled" | "corrections";
+    // 显式 duplicate 因详情不同被改成新条目：关系还没定，首次写入就标待判（§9.4.4）
+    const demotedDup = detailDiffers && c.relation.type === "duplicate";
     if (crossProjectDup) {
       // §8.11.3：候选被判定为别的项目条目的重复，按新条目处理（不并、不标关系未判定）
       body.relation = { type: "new", target: null };
       bucket = "proposals";
-    } else if (c.unreconciled || rel.type === "unsure" || (rel.type !== "new" && !relTarget)) {
+    } else if (c.unreconciled || demotedDup || rel.type === "unsure" || (rel.type !== "new" && !relTarget)) {
       body.unreconciled = true;
       bucket = "unreconciled";
     } else if ((rel.type === "conflicts" || rel.type === "supersedes") && relTarget && relTarget.state === "active") {
@@ -1169,13 +1171,13 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const target = v.target ? props.get(v.target.id) : null;
       // 同一次运行里前面的并入可能已让本条被印证转正：已确认的条目一律不再自动改
       if (!p || p.state !== "active" || p.confirmed || p.related || (v.target && target?.state !== "active")) continue;
-      const { appends, corroborated } = applyVerdict(p, target ?? null, v, deps.chat.model, {
+      const { appends, corroborated, outcome } = applyVerdict(p, target ?? null, v, deps.chat.model, {
         mode: "absorb-new",
         corroborate: (np, t, basis) => corroborationConfirm(t, { source: np.source, basis, evidence: np.evidence }),
       });
       if (corroborated) report.relate.corroborated++;
       deps.store.commit(appends, () => {});
-      report.relate[v.outcome]++;
+      report.relate[outcome]++;
     }
   }
 }

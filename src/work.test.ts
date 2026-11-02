@@ -1004,12 +1004,16 @@ test("ab-used 行不送去抽取", async () => {
 
 test("review 条目 11：note 标题对得上、正文里一处断言与代码矛盾 → 最终投影标 stale，不转正", async () => {
   const e = env();
-  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 存在", { kind: "note", body: "VEC_MIN_SIM 定义在 store.ts，值是 0.45。" });
+  // 正文写错值 0.35，仓库代码里是 0.45：矛盾来自正文，不来自标题
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 存在", { kind: "note", body: "VEC_MIN_SIM 定义在 store.ts，值是 0.35。" });
   const chat = fakeChat((msgs, opts) => {
     if (!opts?.tools) return json({ candidates: [] });
-    assert.match(JSON.stringify(msgs), /值是 0\.45/, "核验请求里带上了正文");
+    assert.match(JSON.stringify(msgs), /值是 0\.35/, "核验请求里带上了正文");
     if (msgs.length === 2) return { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "search_code", arguments: JSON.stringify({ pattern: "VEC_MIN_SIM" }) } }] };
-    // 标题对应的断言能对上，但正文说 0.45 而代码里是 0.45——换成矛盾值来复现正文断言矛盾
+    // 返回矛盾结论之前确认：请求里既有正文的 0.35，也有工具查回来的代码 0.45
+    const sent = JSON.stringify(msgs);
+    assert.match(sent, /值是 0\.35/, "正文的 0.35 在请求里");
+    assert.match(sent, /VEC_MIN_SIM = 0\.45/, "工具返回的代码 0.45 在请求里");
     return json({ verdict: "contradicted", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "const VEC_MIN_SIM = 0.45;" }] });
   });
   const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
@@ -1018,4 +1022,23 @@ test("review 条目 11：note 标题对得上、正文里一处断言与代码�
   assert.equal(p.confirmed, false, "矛盾不转正");
   assert.ok(p.stale, "最终投影标 stale，读路径才能显示与代码不符");
   assert.equal(p.stale!.refs.length, 1);
+});
+
+// ---------- round4 条目 3：候选键算上否掉的方案 ----------
+
+test("round4 条目 3：同标题、否掉的方案不同的两条候选都入库，两份方案都留下", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const cand = (option: string) => ({
+    kind: "decision",
+    text: "hook 执行方式",
+    why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+    alternatives: [{ option, rejected_because: "宿主 PATH 很少", evidence: 0 }],
+    basis: "user_directive",
+    evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" }],
+    relation: { type: "new", target: null },
+  });
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [cand("靠 PATH 找 ab"), cand("绝对路径写死")] }))), { sweep: false, dryRun: false });
+  assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [2, 0, 2], "方案不同是两份内容");
+  assert.deepEqual([...e.store.project().props.values()].map((p) => p.alternatives![0].option).sort(), ["side", "靠 PATH 找 ab"].sort().map((x) => (x === "side" ? "绝对路径写死" : x)));
 });
