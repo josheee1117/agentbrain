@@ -5,7 +5,7 @@
 - 只在已登记项目目录里出：pm 目录本来就搜全库，不出
 - 给了 `--project` 或 `--all` 时不出
 - `--scene` 列举模式不出（那是列举不是搜索，也不走混合检索）
-- 取法：候选先限定为**其他项目**的 active 条目（不含本项目、不含全局），再按与查询向量的余弦排序，取 ≥0.6 的前 3 条
+- 取法：候选先限定为**其他项目**的 active 条目（不含本项目、不含全局），再按与查询向量的余弦排序，取 ≥0.65 的前 3 条
 - 一行一条：`[短id] <项目名> <种类>: <标题>（相似度）`，最多 60 字截断
 - 和主结果同一套交付记录：`inject_log` 里 `path='search'`，id 是跨项目段的条目
 - 查询向量算不出（degraded）时不出这一段，降级提示里加一句「跨项目段也要算查询向量，这次没查」
@@ -20,11 +20,11 @@
 - Proof: `cli-cross-search` / `cli-cross-search-section` / `cli-cross-search-delivered` / `cli-cross-suppressed` / `cli-cross-degraded` 全 pass
 
 ## 单测
-- `src/store.test.ts`：门槛 0.6 与最多 3 条、先限定再排序（本项目占满全库 top-N 时其他项目照样出）、本项目/全局/归档不进候选、degraded 不出且 pending 单报
+- `src/store.test.ts`：门槛 0.65 与最多 3 条、先限定再排序（本项目占满全库 top-N 时其他项目照样出）、本项目/全局/归档不进候选、degraded 不出且 pending 单报
 - `src/cli.test.ts`：段的位置和行格式、交付记录、四种不该出的场景、degraded 说明、pending 提示
 
 ## Gotchas
 - `searchHybrid` 在 pending 时仍返回 `degraded=null`，所以跨项目段自己数 pending（`CrossProjectResult.pending`），不靠 degraded 判断
 - `--kind` 同样限定跨项目段，否则 `ab search --kind note` 会混进出决定
 - 段在「更多（第 9–16 名）」和降级提示之间输出；主结果的 limit 和这一段的 3 条互不影响
-- 阈值 0.6 是 §8.11.6 第 4 条评测要调的，写成常量 `CROSS_PROJECT_MIN_SIM`，不加配置键
+- 阈值 0.65（由 `docs/eval/21-cross-project-threshold.md` 定下）写成常量 `CROSS_PROJECT_MIN_SIM`，不加配置键

@@ -861,12 +861,12 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 - **证据**：`EvidenceRef` 加 `quote?: string`、`said_at?: string`。`quote` 是抽取逐字核对、过滤密钥之后实际算哈希的那段（`src/extract.ts:471-491` 的 `kept`），长度沿用现有校验（`src/extract.ts:14-15`，不提高下限，"按你的方案来"这类短认可照样能存）；`said_at` 是这段原话所在轮的时间，没有就缺省，显示为"时间未知"，不拿条目的 `said_at` 代替。不变量：`sha256(quote) === quote_sha256`。
 - **追加证据也完整保存**：`ExtraSource` 的 `quote_sha256: string[]` 换成 `evidence: EvidenceRef[]`（`src/l2.ts:179-185,362-370`）。旧事件只有哈希，投影出不带 `quote` 的引用。这是同一份证据只留一个来源，不另存一份。
-- **`RememberBody.body?: string`**：详情正文，decision、note、pitfall 能带（Pensieve knowledge 有一部分映射成 pitfall，`src/pensieve.ts:253`），rule 不能带（规则必须一行说清）。上限 `BODY_MAX_CHARS = 40000`（data-asset 的 137 篇 Pensieve 文档中位 3957 字、p90 8010、最长 35179，全部放得下，不截断）。`text` 仍是一行标题。显示和向量输入另行截短，不影响存储。
-- **`RememberBody.alternatives?: { option: string; rejected_because: string; evidence: number }[]`**：只有 decision 能带，≤5 项，文字各 ≤200 字。`evidence` 是本条 `evidence[]` 的下标，指向支撑"为什么否掉"的那段原话；下标不存在的项丢掉。
+- **`RememberBody.body?: string`**：详情正文，decision、note、pitfall 能带（Pensieve knowledge 有一部分映射成 pitfall，`src/pensieve.ts:253`），rule 不能带（规则必须一行说清）。上限 `BODY_MAX_CHARS = 40000`（data-asset 的 137 篇 Pensieve 文档中位 3957 字、p90 8010、最长 35179，全部放得下，不截断）。抽取侧另有 5000 字上限（`src/extract.ts` 的 `MAX_BODY_CHARS`），超出只丢正文并记 `body_dropped`，存储上限仍是 40000。`text` 仍是一行标题。显示和向量输入另行截短，不影响存储。
+- **`RememberBody.alternatives?: { option: string; rejected_because: string; evidence: number }[]`**：只有 decision 能带，≤5 项，文字各 ≤200 字。`evidence` 是本条 `evidence[]` 的下标，指向支撑"为什么否掉"的那段原话；`null` 或非整数当作没有引用，保留方案；负数、越界或指向被删证据的整项丢掉并记 `alternatives_dropped`，不悄悄丢。
 - 背景仍放 `why`，不另加 context 字段；归属仍是事件的 `project_id`。
 - **补详情事件 `detail`**：`{ body?, alternatives? }`，只给已有条目补上原来没有的详情，不换 id、不改确认状态和关联。现在只有 Pensieve 重导用它（见 8.11.5）。投影时若条目已有 body，`detail` 不覆盖（fail-closed，计 orphans 同类诊断）。
 - **投影**：`Proposition.body: string | null`、`alternatives: …[]`，旧数据为 `null` / `[]`。
-- **向量文本**：从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超过向量模型输入上限时截 body。body 改变要重算向量。
+- **向量文本**：从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超过向量模型输入上限时截 body。body 改变要重算向量。全文索引和字面召回用 `text + why + 完整 body`，只有向量输入截短；`text_hash` 只按向量那份算，正文超出上限的部分变化不触发重算（`src/store.ts` 的 `indexText` / `vectorText` / `vectorTextOf`）。
 - **同一个脱敏边界**：`text`、`why`、`body`、`alternatives`、`quote` 在写入 L1 之前统一过 `hasSecret`（含代码块；Pensieve 旧映射先删代码块再检查 text、why，看不到代码块里的密钥，`src/pensieve.ts:73-80,186-190`）。命中时：CLI 报错退出 1；抽取丢掉该字段并记 flag，不丢整条；导入不写这个字段，并在报告里列出。手写、导入、抽取三条入口都过这一处。body 发往 DashScope 算向量，接收方和数据类别（记忆正文）与 §13.3 v2.6 条一致；实际出境的内容会变多（细节和代码片段），这一点在 §13.3 注明。
 
 #### 8.11.3 抽取
@@ -906,7 +906,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 - **`ab search`**：前 8 条全文里，decision / note / 带 body 的 pitfall 显示 body 前 300 字和"`ab get <id>` 看全文"。
 - **跨项目段**：
   - 什么时候出：在已登记项目目录里搜索，没给 `--project` / `--all`，结果末尾多一段「其他项目里相近的：」。pm 目录本来就搜全库，不加这一段。
-  - 怎么取：候选先限定为其他项目的 searchable 条目，再按与查询的向量相似度排序，取 ≥0.6 的前 3 条，一行一条带项目名，照常记交付。不从全库 top-N 里事后筛。
+  - 怎么取：候选先限定为其他项目的 searchable 条目，再按与查询的向量相似度排序，取 ≥0.65 的前 3 条，一行一条带项目名，照常记交付。不从全库 top-N 里事后筛。阈值是 `src/store.ts` 的 `CROSS_PROJECT_MIN_SIM = 0.65`，由 `docs/eval/21-cross-project-threshold.md` 的评测定下。
   - 向量不可用：查询向量算不出（degraded）时不出这一段，并在降级提示里说明。候选里有向量还没补齐的条目（`pending>0`，`src/store.ts:491-513`）时，段尾注明"另有 N 条其他项目的记忆还没算向量，可能漏"。
   - 主会话和子代理都能看到这一段（用户 2026-10-30 选 A，见 8.11.8），`ab search` 不加 `--worker` 之类的参数。
 - brief 不变。
@@ -941,7 +941,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
    - 至少产出一条 note，并且通过代码核验或被正确判为不可核验；
    - pm 会话里讲 pi-ops 的决定落到 pi-ops，或标「归属未定」，不落成 pm。
 3. **还原测试**：在隔离库挑 3 条新抽出的决定，删掉对应的原对话文件。只凭 `ab get` 要能答出：当时什么问题、定了什么、否掉了什么、谁说的原话。
-4. **跨项目阈值评测**：用于定 0.6 这个阈值，另起一组独立的测试题，不和开发时用的查询重复：
+4. **跨项目阈值评测**：用于定 0.65 这个阈值，另起一组独立的测试题，不和开发时用的查询重复：
    - 正例：在 data-asset 目录搜"比率指标怎么建模"，跨项目段要出现 ai-data 的 `2018b871`，另外再找 4 个类似的正例；
    - 负例：至少 5 个"术语相同、业务含义不同"的查询，再加 5 个和其他项目完全无关的查询；
    - 报告每个查询出了哪些条目、相似度多少，再据此调阈值。

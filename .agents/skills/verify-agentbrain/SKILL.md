@@ -22,7 +22,7 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
 - `cli-curate`: `review` and `audit worker-quotes`
 - `cli-detail`: `remember --body-file/--alternative` → `get` shows body + rejected options → `search` body hint → rule-with-body rejected → `correct` does not copy detail (see [features/detail.md](features/detail.md))
-- `cli-cross-*`: cross-project section in `ab search` (other projects' similar entries, sim >=0.6, max 3) using a mock embedding endpoint; asserts it is suppressed for `--project` / `--all` / pm dir / `--scene`, records delivery in `inject_log`, and explains itself when vectors are unavailable (see [features/cross-project.md](features/cross-project.md))
+- `cli-cross-*`: cross-project section in `ab search` (other projects' similar entries, sim >=0.65, max 3) using a mock embedding endpoint; asserts it is suppressed for `--project` / `--all` / pm dir / `--scene`, records delivery in `inject_log`, and explains itself when vectors are unavailable (see [features/cross-project.md](features/cross-project.md))
 - `cli-attr-*`: attribution display (see [features/attribution.md](features/attribution.md)) — a `project_unresolved` entry is marked 「[归属未定]」 in `ab search` and `ab get`, and `ab get` spells out 「会话在 X，抽取判定归属 Y」 for a successful cross-project attribution
 - `cli-view`: `view --no-open --out <evidence>/view.html`
 - `cli-staging-report`: `scripts/staging-report.ts` on a seeded legacy candidate event
