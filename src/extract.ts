@@ -401,14 +401,16 @@ export function isScenario(scenario: string | undefined, text: string): boolean 
   return a.length > 0 && !b.includes(a) && !a.includes(b);
 }
 
-/** 候选里项目名的解析：已登记项目名；未知名字（含 global）返回 null。 */
+/** 候选里项目名的解析：已登记项目名原样返回，global 记全局，其余（含未登记名字）返回 null。 */
 function projectNames(ctx: ProjectContext): Set<string> {
   return new Set((ctx.projects ?? "").split("\n").map((l) => l.replace(/^- /, "").trim().split(/\s+/)[0]).filter(Boolean));
 }
 
 function parseProject(raw: unknown, ctx: ProjectContext): string | null {
-  if (raw !== "global" && typeof raw === "string" && raw.trim() && projectNames(ctx).has(raw.trim())) return raw.trim();
-  return null;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const name = raw.trim();
+  if (name === "global") return "global";
+  return projectNames(ctx).has(name) ? name : null;
 }
 
 /** 那一轮的文字里有没有这个项目的名字或 ~ 路径（与窗口同口径，§8.11.3）。 */
@@ -454,8 +456,9 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     // scenario（"当…时"）是新字段；旧输出的 trigger 当作 scenario 兼容
     const rawScenario = c.scenario ?? c.trigger;
     const trigger = rawScenario === undefined || rawScenario === null || rawScenario === "" ? undefined : str(rawScenario, MAX_TEXT_CHARS);
-    const body = c.body === undefined || c.body === null || c.body === "" ? undefined : str(c.body, MAX_BODY_CHARS);
-    if (!text || why === null || trigger === null || body === null || c.evidence.length > MAX_EVIDENCE) {
+    // 正文超长只丢正文（§8.11.2），不丢整条；密钥和种类限制在下面的字段级自查里判
+    const body = typeof c.body === "string" && c.body.trim() ? c.body.trim() : undefined;
+    if (!text || why === null || trigger === null || c.evidence.length > MAX_EVIDENCE) {
       drop("too_long");
       continue;
     }
@@ -465,12 +468,10 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     if (c.findable === true) flags.push("findable");
     if (!isScenario(trigger, text)) flags.push("no_scenario");
     if (c.kind === "decision" ? /^(?:本次|这次|这一次)|[（(](?:本次|这次)/.test(text) : NARRATIVE.test(text)) flags.push("narrative");
+    // 决定的标题可以点名对象、写日期，但不放宽背景要求：why 把标题复述一遍等于没写
     if ((c.kind === "rule" || c.kind === "decision") && !hasBackground(why, text)) {
-      // decision 的标题允许"pi-ops final 只显示不拦截"、背景"pi-ops final：只显示不拦截"这种同文复述
-      if (c.kind === "rule" || norm(text).replace(/^[^。\n]*[：:]/, "") !== (norm(why ?? "").replace(/^[^。\n]*[：:]/, ""))) {
-        drop("no_why");
-        continue;
-      }
+      drop("no_why");
+      continue;
     }
     if ([text, why, trigger, body].some((s) => s && /<\/?agentbrain/.test(s))) {
       drop("echo");
@@ -487,8 +488,10 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     const seenEv = new Set<string>();
     const userQuotes: string[] = [];
     const assistantQuotes: string[] = [];
+    /** 模型给的证据下标 → 过滤后保留的证据下标；被删的证据不进映射。 */
+    const keptAt = new Map<number, number>();
     let saidAt: string | undefined;
-    for (const e of c.evidence) {
+    for (const [i, e] of (c.evidence as any[]).entries()) {
       const n = parseAnchor(e?.anchor);
       const turn = n ? win.turns[n - 1] : undefined;
       if (!turn) {
@@ -528,6 +531,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       const h = sha256(kept);
       if (seenEv.has(`${turn.anchor}|${h}`)) continue;
       seenEv.add(`${turn.anchor}|${h}`);
+      keptAt.set(i, evidence.length);
       evidence.push({ anchor: turn.anchor, role: turn.role, quote_sha256: h, quote: kept, ...(turn.ts ? { said_at: turn.ts } : {}) });
       if (turn.role === "user") userQuotes.push(kept);
       if (turn.role === "assistant") assistantQuotes.push(kept);
@@ -537,14 +541,16 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       drop("no_evidence");
       continue;
     }
-    // §8.11.3：user_confirmed 决定必须有用户认可的原话，还得有助手提出该方案的原话，否则整条丢
-    if (c.basis === "user_confirmed" && (!userQuotes.length || !assistantQuotes.length)) {
+    // §8.11.3：user_confirmed 的**决定**必须有用户认可的原话，还得有助手提出该方案的原话，否则整条丢
+    if (c.kind === "decision" && c.basis === "user_confirmed" && (!userQuotes.length || !assistantQuotes.length)) {
       drop("user_confirmed_unsubstantiated");
       continue;
     }
     const roles = new Set(evidence.map((e) => e.role));
     const need = BASIS_ROLE[c.basis as Basis];
-    if ((need && !roles.has(need)) || (c.kind === "rule" && !roles.has("user"))) {
+    // note 是助手自己写出结论（basis=agent_inference，至少一段助手原话），用户原话撑不起一条知识
+    const noteOk = c.kind !== "note" || (c.basis === "agent_inference" && roles.has("assistant"));
+    if ((need && !roles.has(need)) || (c.kind === "rule" && !roles.has("user")) || !noteOk) {
       drop("basis_unsupported");
       continue;
     }
@@ -554,9 +560,10 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       continue;
     }
     // §8.11.3 归属：project 只能是已登记项目名或 global；名字未登记、没给 anchor、anchor 里找不到名字/路径，都留在会话项目并标 project_unresolved
+    // §8.11.3 归属四种情况：global → 全局；已登记项目名 → 该项目；未登记的名字 → 会话项目 + project_unresolved；缺省 → 会话项目、不标记
     const project = parseProject(c.project, ctx);
     let projectAnchor: string | null = null;
-    if (project && project !== ctx.name && typeof c.project_anchor === "string") {
+    if (project && project !== "global" && project !== ctx.name && typeof c.project_anchor === "string") {
       const pa = /^#(c?)(\d+)$/.exec(c.project_anchor.trim());
       const isCtx = pa?.[1] === "c";
       const turn = pa ? (isCtx ? win.context[Number(pa[2]) - 1] : win.turns[Number(pa[2]) - 1]) : undefined;
@@ -583,33 +590,34 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     // §8.11.3：成功归到非会话项目时记下会话所在项目，ab get 才能显示“会话在 X，抽取判定归属 Y”
     const sessionProject = ctx.name && finalProject !== ctx.name ? ctx.name : undefined;
     // §8.11.3 写入自查：body 和 alternatives 用与 checkBodyField/checkAlternatives 同款规则；密钥或超长只丢该字段记 flag，不丢整条
+    // 方案里的 evidence 下标指向模型原始数组，证据被过滤后要按 keptAt 重映射；引用了被删证据或负数下标的项整项丢掉
     let alt: Alternative[] | undefined;
     if (Array.isArray(c.alternatives)) {
       const parsed = (c.alternatives as any[])
         .slice(0, MAX_ALTERNATIVES)
-        .map((a) => ({
+        .map((a) => ({ a, mapped: Number.isInteger(a?.evidence) ? keptAt.get(a.evidence as number) : undefined }))
+        .filter(({ a, mapped }) => a?.evidence === undefined || mapped !== undefined)
+        .map(({ a, mapped }) => ({
           option: str(a?.option, MAX_ALTERNATIVE_FIELD_CHARS),
           rejected_because: str(a?.rejected_because, MAX_ALTERNATIVE_FIELD_CHARS),
-          ...(Number.isInteger(a?.evidence) && (a?.evidence as number) >= 0 ? { evidence: a.evidence as number } : {}),
+          ...(mapped !== undefined ? { evidence: mapped } : {}),
         }));
       const bad = parsed.some((a) => !a.option || !a.rejected_because);
-      if (bad || c.kind !== "decision") flags.push("alternatives_dropped"); // 否掉的方案只有决定能带（写 L1 会抛错，不能进 commit）
+      // 否掉的方案只有决定能带；字段不合法或含密钥时整组丢掉并记 flag（写 L1 会抛错，不能进 commit）
+      if (bad || c.kind !== "decision") flags.push("alternatives_dropped");
       else if (parsed.some((a) => secretKinds(a.option!).length || secretKinds(a.rejected_because!).length)) flags.push("alternatives_dropped");
-      else {
-        alt = parsed as Alternative[];
-        const kept = alt.filter((a) => a.evidence === undefined || (a.evidence >= 0 && a.evidence < evidence.length));
-        alt = kept.length ? kept : undefined; // 下标越界的项丢掉
-      }
+      else alt = (parsed as Alternative[]).map((a) => ({ ...a, option: sanitize(a.option).text, rejected_because: sanitize(a.rejected_because).text }));
     }
+    // 正文只受抽取自己的长度上限约束（§8.11.3 提示词写的就是这个数），超了就丢正文记 flag，其余照常
     let finalBody = body;
     if (body) {
-      let err = "";
+      let err = [...body].length > MAX_BODY_CHARS ? `正文太长：${[...body].length} 字，上限 ${MAX_BODY_CHARS} 字` : "";
       try {
-        checkBodyField(c.kind, body);
+        if (!err) finalBody = checkBodyField(c.kind, body);
       } catch (e) {
         err = (e as Error).message;
       }
-      if (err || secretKinds(body).length) {
+      if (err) {
         finalBody = undefined;
         flags.push("body_dropped");
       }
@@ -623,7 +631,8 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       else type = "unsure";
     }
     const cleanText = fields[0].text;
-    const same = neighbors.find((p) => norm(p.text) === norm(cleanText));
+    // 标题相同只能当候选：正文不同的两条是不同的事，交给关系判定看完整内容（§8.11.3）
+    const same = finalBody === undefined ? neighbors.find((p) => norm(p.text) === norm(cleanText) && !p.body) : undefined;
     if (same && (type === "new" || type === "unsure")) {
       type = "duplicate";
       target = same.id;
@@ -647,7 +656,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       },
       why: why ? sanitize(why).text : undefined,
       trigger: trigger ? sanitize(trigger).text : undefined,
-      ...(finalBody ? { body: sanitize(finalBody).text } : {}),
+      ...(finalBody ? { body: finalBody } : {}),
       ...(alt ? { alternatives: alt } : {}),
       basis: c.basis,
       evidence,

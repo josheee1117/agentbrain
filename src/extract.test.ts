@@ -65,7 +65,8 @@ test("正文里带秘密（模型还原或编出）的候选整条丢弃；note 
   const v = validate({
     candidates: [
       { ...good, text: "key 是 sk-abcdefghijklmnop1234" },
-      { ...good, kind: "note" },
+      // note 要 basis=agent_inference + 助手原话（§8.11.3），用户原话撑不起来
+      { ...good, kind: "note", basis: "agent_inference", why: undefined, evidence: [{ anchor: "#2", role: "assistant", quote: "调用 Bash: npm test" }] },
       { ...good, kind: "procedure" },
       { ...good, text: "<agentbrain-recall>回声</agentbrain-recall>" },
     ],
