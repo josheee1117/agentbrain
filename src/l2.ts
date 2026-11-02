@@ -18,7 +18,7 @@ export type Host = "claude" | "codex" | "pi" | "opencode";
 /** 只表示条目还在不在用；可信程度另看 confirmed / confirmed_by（visibility.ts 的 trustOf）。候选区已去掉（§8.8）。 */
 export type PropState = "active" | "archived" | "superseded";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */
-export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative" | "project_unresolved" | "body_dropped" | "alternatives_dropped";
+export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative" | "project_unresolved" | "body_dropped" | "alternatives_dropped" | "evidence_truncated";
 /** 场景（§11.10）：规则按设计 / 开发 / review 打标签，开工只加载当前场景的。封闭三值，空表示不分场景。 */
 export const SCENES = ["design", "code", "review"] as const;
 export type Scene = (typeof SCENES)[number];

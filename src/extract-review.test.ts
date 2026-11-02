@@ -261,3 +261,39 @@ test("review round3 条目 7：重复证据也进下标映射，方案引用重�
 
 // 供类型检查：确保 Candidate 类型仍被引用
 export type _C = Candidate;
+
+// ---------- round4 条目 6/7/8：方案与正文的长度口径、方案条数上限 ----------
+
+test("round4 条目 6：方案长度按存储侧的脱敏后 200 字判，抽取不再自己卡 100 字", () => {
+  // 101 字：旧口径丢掉，新口径保留
+  const long = "甲".repeat(101);
+  const v = validate({ candidates: [{ ...DECISION, alternatives: [{ option: long, rejected_because: "原因" }] }] }, WIN, [], "w1", CTX).candidates[0];
+  assert.deepEqual(v.alternatives, [{ option: long, rejected_because: "原因" }], "101 字的方案要留下");
+  assert.equal(v.value?.flags?.includes("alternatives_dropped"), false);
+  // 脱敏后会变长的也要按脱敏后算：189 个甲 + 邮箱，原文 197 字、脱敏后 189+12=201 字 → 丢
+  const mail = "甲".repeat(189) + " a@b.co";
+  const tooLong = validate({ candidates: [{ ...DECISION, alternatives: [{ option: mail, rejected_because: "原因" }] }] }, WIN, [], "w1", CTX).candidates[0];
+  assert.equal(tooLong.alternatives, undefined, "按脱敏后的长度判");
+  assert.ok(tooLong.value?.flags?.includes("alternatives_dropped"));
+  // 200 个码点（emoji 算一个）正好在上限上，保留
+  const emoji = "😀".repeat(200);
+  const edge = validate({ candidates: [{ ...DECISION, alternatives: [{ option: emoji, rejected_because: "原因" }] }] }, WIN, [], "w1", CTX).candidates[0];
+  assert.deepEqual(edge.alternatives, [{ option: emoji, rejected_because: "原因" }], "按码点算，不是 UTF-16 长度");
+});
+
+test("round4 条目 7：正文先脱敏再判 5000 字，不会因为脱敏变短就丢", () => {
+  // 4950 + 两段 31 字的家目录路径 = 原文 5012 字，脱敏后 4990 字
+  const body = "甲".repeat(4950) + " /Users/alice/project/notes.md ".repeat(2);
+  const v = validate({ candidates: [{ ...DECISION, body }] }, WIN, [], "w1", CTX).candidates[0];
+  assert.ok(v.body, `脱敏后没超限却丢了正文：flags=${v.value?.flags}`);
+  assert.equal(v.value?.flags?.includes("body_dropped"), false);
+  assert.ok([...v.body!].length <= 5000);
+  assert.equal(v.body!.includes("/Users/alice"), false, "入库的是脱敏后的正文");
+});
+
+test("round4 条目 8：第 6 个方案起只截断、记 alternatives_dropped，不悄悄丢", () => {
+  const alternatives = Array.from({ length: 6 }, (_, i) => ({ option: `方案${i + 1}`, rejected_because: `原因${i + 1}` }));
+  const v = validate({ candidates: [{ ...DECISION, alternatives }] }, WIN, [], "w1", CTX).candidates[0];
+  assert.deepEqual(v.alternatives?.map((a) => a.option), ["方案1", "方案2", "方案3", "方案4", "方案5"], "按存储上限保留 5 项");
+  assert.ok(v.value?.flags?.includes("alternatives_dropped"), "截断要记 flag");
+});

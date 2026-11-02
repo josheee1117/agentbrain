@@ -1,7 +1,8 @@
 /** 运行：node --test src/extract.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildMessages, hasBackground, MAX_BODY_CHARS, sha256, validate, type ExtractWindow } from "./extract.ts";
+import { buildMessages, hasBackground, MAX_BODY_CHARS, MAX_EVIDENCE, sha256, validate, type ExtractWindow } from "./extract.ts";
+import { ALTERNATIVE_FIELD_MAX_CHARS, ALTERNATIVES_MAX } from "./l2.ts";
 import type { ProjectContext } from "./extract.ts";
 import type { Proposition } from "./l2.ts";
 
@@ -481,4 +482,11 @@ test("§8.11.3 归属：成功归到别的项目时在 value 里记下会话项�
 test("prompt：写明 body 上限，且与 MAX_BODY_CHARS 同源", () => {
   const sys = buildMessages(win, CTX, [])[0].content!;
   assert.ok(sys.includes(`最多 ${MAX_BODY_CHARS} 字`), `提示词里要写正文上限 ${MAX_BODY_CHARS}：\n${sys.slice(-800)}`);
+});
+
+test("prompt：写明证据条数、方案条数与方案字段上限，且与 l2 同源", () => {
+  const sys = buildMessages(win, CTX, [])[0].content!;
+  assert.ok(sys.includes(`每条候选最多 ${MAX_EVIDENCE} 段`), "证据条数写进提示词");
+  assert.ok(sys.includes(`最多 ${ALTERNATIVES_MAX} 项`), "方案条数写进提示词");
+  assert.ok(sys.includes(`各最多 ${ALTERNATIVE_FIELD_MAX_CHARS} 字`), "方案字段上限写进提示词");
 });
