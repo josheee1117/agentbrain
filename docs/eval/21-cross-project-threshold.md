@@ -222,9 +222,11 @@ pending 提示的计数口径是「其他项目里向量缺失或已过期的条
 
 ## 改动的文件
 
-只新增了本报告：`docs/eval/21-cross-project-threshold.md`。没有改 `src`，没有改任何工作仓库，没有改 `~/.agentbrain/`。
+只新增了本报告：`docs/eval/21-cross-project-threshold.md`。没有改 `src`，没有改任何工作仓库。
 
-## 跑过的命令（节选，全部带 `AB_HOME` 和 `AB_REGISTRY`）
+**真实库 `~/.agentbrain/`：数据没被写，但 `store.db` 的 mtime 被碰过。** 收尾核数时我跑了两个只读诊断脚本（`/tmp/pend.ts`、`/tmp/cnt2.ts`），它们直接 `new Store(~/.agentbrain/store.db, ~/.agentbrain/index.db)` 而不是副本；`Store` 构造函数会 `exec(SCHEMA)`（全部 `IF NOT EXISTS`）和一次 `PRAGMA table_info` 检查，所以 `store.db` 的 mtime 变成 14:52（`index.db` 仍 14:38，没被写），表结构和数据没变。证据：与 14:40 的副本逐表对得上（`prop_usage` 277、`memory_reports` 1895、`memory_report_ids` 224、`capture_windows` 852、`capture_candidates` 1253、`cite_scan` 956、`verify_attempts` 128、`work_meta` 5、`events` 2967）；真实库里 14:24 之后的新行全部来自其他人的 claude/pi 会话和 launchd（`inject_log` 里 host 是 `claude`/`pi`，`memory_queries` 全是 claude 的 `0a4c9d68`/`260113c5` 会话），没有一条是我的评测查询词。以后这类诊断脚本也要一律带 `AB_HOME` 指向副本。
+
+## 跑过的命令（节选。ab 命令全部带 `AB_HOME` 和 `AB_REGISTRY`；两个诊断脚本漏了，见上一节）
 
 ```
 sqlite3 ~/.agentbrain/store.db ".backup $PWD/ab/store.db"
@@ -263,8 +265,9 @@ node ~/.cache/agentbrain-eval/kd-cross/work/{score,summary,perquery,xcheck,cmp-a
 - 跑批脚本里 `IFS=$'\t' read -r id cat cwd q` 会少读第 5 列，剩下的自动粘到最后一个变量，查询词里就混进了期望文本。多列 TSV 读循环必须显式读一列 `rest` 兜住。（证据：第一轮 `cli-P1.txt` 首行查询里带着 `ai-data 2018b871（…）`，分数从 0.70 涨到 0.78。）
 - 在 `~/.cache/agentbrain-eval/kd-cross/` 里 `sqlite3 ... ".backup $PWD/ab/store.db"` 时，shell 在当前 shell 里先 `mkdir ab` 再 `cd` 的顺序稍有不对，`ab/` 里会生成 0 字节的 `store.db` 和随后 `no such table: events`；`.backup` 用绝对路径 + 先建目录才稳。（证据：14:39 那次的 `ab/store.db` 为 0 字节。）
 - `~/.agentbrain/store.db` 是 WAL 模式，直接 `sqlite3 -readonly` 打开会报 `unable to open database file (14)`（目录不可写、无法建 shm）。用 `.backup` 导出，或直接不带 `-readonly` 打开，都能读到。（证据：`sqlite3 -readonly ~/.agentbrain/store.db "select count(*) from events"` 报错，同一句去掉 `-readonly` 返回 2963。）
-- 真实库有 launchd 定时任务（`com.agentbrain.work`）在跑 `ab work --sweep`，评测期间真实库 `events` 从 2963 涨到 2967。要断言「真实库没被写」必须用 `memory_queries` 这类只跟 CLI 调用相关的表，别用 `events` 总数。（证据：真实库 `memory_queries` 全程 80 条，六个副本各 81–98 条。）
+- 真实库有 launchd 定时任务（`com.agentbrain.work`）在跑 `ab work --sweep`，评测期间真实库 `events` 从 2963 涨到 2967（都是 06:37–06:38 UTC）。要断言「真实库没被写」必须用 `memory_queries`、`prop_usage` 这类只跟该动作相关的表，别用 `events` 总数。（证据：真实库 `memory_queries` 在 14:24 之后新增的 9 条全部是 claude 会话的，六个副本各 81–98 条。）
 - 同一个 Pensieve id 可以出现在多个仓库（`project-structure` 在 data-asset 和 insuranceagent 都有）。按 id 跨库查导入条时必须同时过滤项目，否则会拿错仓库那条。
+- 直接 `new Store(<真实库路径>)` 开一个「只读」诊断脚本，也会把真实库文件的 mtime 改掉（构造函数跑 `SCHEMA` 和 `PRAGMA`）。要只读就读副本，或直接用 sqlite3。
 
 **决定**
 
