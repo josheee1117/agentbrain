@@ -286,8 +286,8 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
     let bodyText = it.body;
     if (bodyText !== undefined) {
       try {
-        // 写 L1 前的统一检查在这里跑（种类、长度、密钥）；不过就不写这个字段，其他字段照常导入
-        checkBodyField(it.kind, bodyText);
+        // 写 L1 前的统一检查在这里跑（种类、长度、密钥、脱敏）；不过就不写这个字段，其他字段照常导入
+        bodyText = checkBodyField(it.kind, bodyText);
       } catch (e) {
         report.detailSkipped.push({ id: it.doc.id, path: it.doc.path, reason: (e as Error).message });
         bodyText = undefined;

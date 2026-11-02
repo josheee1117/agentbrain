@@ -139,7 +139,8 @@ export interface PendingAppend {
   body: unknown;
 }
 
-const INDEX_VERSION = "2";
+/** 索引文本的口径改了（正文不再被向量上限截断），旧索引整表重建。 */
+const INDEX_VERSION = "3";
 
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -160,12 +161,15 @@ function openDb(path: string): DatabaseSync {
 /** 向量输入上限：超出时只截 body（§8.11.2），text 和 why 全进。 */
 export const VEC_TEXT_MAX_CHARS = 6000;
 
-/** 检索（全文和向量）用的文本：正文加为什么加详情。召回的字面通道也用它。 */
+/**
+ * 全文索引与字面召回的文本：text + why + 完整 body。
+ * 6000 字上限是向量模型的限制，不能套到字面检索上（§8.11.2 最长存 40000 字正文）。
+ */
 export function indexText(p: Proposition): string {
-  return vectorText(p);
+  return p.body ? `${p.text}\n${p.why ?? ""}\n${p.body}` : p.why ? `${p.text}\n${p.why}` : p.text;
 }
 
-/** 向量和全文索引的输入：text + why + body，body 超出上限时截短。 */
+/** 向量输入：text + why + body，body 超出上限时截短。向量是否过期（text_hash）也按这个口径算。 */
 export function vectorText(p: Proposition): string {
   const head = p.why ? `${p.text}\n${p.why}` : p.text;
   if (!p.body) return head;
@@ -334,7 +338,7 @@ export class Store {
       const p = props.get(r.id);
       if (!p || !searchable(p)) return [];
       if (p.project_id !== null && p.project_id !== projectId) return [];
-      if (r.text_hash !== textHash(indexText(p))) return [];
+      if (r.text_hash !== textHash(vectorText(p))) return [];
       const v = fromBlob(r.vec);
       if (v.length !== query.length) return [];
       const similarity = cosine(query, v);
@@ -536,7 +540,7 @@ export class Store {
         .map((r) => [r.id, r.text_hash]),
     );
     return [...this.project().props.values()].map((p) => {
-      const text = indexText(p);
+      const text = vectorText(p);
       return { id: p.id, text, text_hash: textHash(text) };
     }).filter((p) => hashes.get(p.id) !== p.text_hash);
   }
@@ -565,7 +569,7 @@ export class Store {
       const ins = this.fts.prepare("INSERT OR REPLACE INTO vecs(id,text_hash,vec) VALUES(?,?,?)");
       for (let i = 0; i < batch.length; i++) {
         const p = current.get(batch[i].id);
-        if (!p || textHash(indexText(p)) !== batch[i].text_hash) continue;
+        if (!p || textHash(vectorText(p)) !== batch[i].text_hash) continue;
         ins.run(p.id, batch[i].text_hash, toBlob(vectors[i]));
         embedded++;
       }
@@ -583,7 +587,7 @@ export class Store {
     const out = new Map<string, Float32Array>();
     for (const r of this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[]) {
       const p = props.get(r.id);
-      if (p && r.text_hash === textHash(indexText(p))) out.set(r.id, fromBlob(r.vec));
+      if (p && r.text_hash === textHash(vectorText(p))) out.set(r.id, fromBlob(r.vec));
     }
     return out;
   }
@@ -595,13 +599,13 @@ export class Store {
     if (!p) return null;
     const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
     const own = rows.find((r) => r.id === id);
-    if (!own || own.text_hash !== textHash(indexText(p))) return null;
+    if (!own || own.text_hash !== textHash(vectorText(p))) return null;
     const query = fromBlob(own.vec);
     return rows.flatMap((r) => {
       const n = props.get(r.id);
       if (!n || n.id === id || !searchable(n)) return [];
       if (n.project_id !== null && n.project_id !== p.project_id) return [];
-      if (r.text_hash !== textHash(indexText(n))) return [];
+      if (r.text_hash !== textHash(vectorText(n))) return [];
       const similarity = cosine(query, fromBlob(r.vec));
       return similarity >= VEC_MIN_SIM ? [{ prop: n, similarity }] : [];
     }).sort((a, b) => b.similarity - a.similarity);
@@ -618,7 +622,7 @@ export class Store {
     for (const row of rows) {
       if (!ids.has(row.id)) continue;
       const p = props.get(row.id);
-      if (!p || textHash(indexText(p)) !== row.text_hash) continue;
+      if (!p || textHash(vectorText(p)) !== row.text_hash) continue;
       out.set(row.id, cosine(queryVec, fromBlob(row.vec)));
     }
     return out;
@@ -651,7 +655,7 @@ export class Store {
         if (p.project_id === null ? !opts.includeGlobal : opts.projects !== "all" && !opts.projects.includes(p.project_id)) continue;
         if (opts.kind && p.kind !== opts.kind) continue;
         if (!opts.includeArchived && !searchable(p)) continue;
-        if (textHash(indexText(p)) !== row.text_hash) continue;
+        if (textHash(vectorText(p)) !== row.text_hash) continue;
         const similarity = cosine(queryVec, fromBlob(row.vec));
         if (similarity >= (opts.minSim ?? VEC_MIN_SIM)) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });
       }
@@ -691,7 +695,7 @@ export class Store {
       if (p.project_id === null || p.project_id === excludeProjectId || !searchable(p)) continue;
       if (kind && p.kind !== kind) continue;
       const row = stored.get(p.id);
-      const vec = row && row.text_hash === textHash(indexText(p)) ? fromBlob(row.vec) : null;
+      const vec = row && row.text_hash === textHash(vectorText(p)) ? fromBlob(row.vec) : null;
       if (!vec || vec.length !== query.length) {
         pending++;
         continue;

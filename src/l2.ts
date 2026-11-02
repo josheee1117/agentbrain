@@ -2,7 +2,7 @@
  * L2 合同（设计 §5.3、§9.1、§19.4）：L1 事件体、投影出的 Proposition，以及投影函数本身。
  * 这里是这些形状的唯一来源；未冻结的 facets、组合视图、projector version 见 §21 2026-10-10 切片 2 条目。
  */
-import { secretKinds } from "./sanitize.ts";
+import { sanitize, secretKinds } from "./sanitize.ts";
 
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate" | "detail";
@@ -509,28 +509,47 @@ export function keepAlternatives(alternatives: Alternative[] | undefined, eviden
   return kept?.length ? kept : undefined;
 }
 
-/** 正文这一个字段的检查（种类、长度、密钥）。导入重导时要单独判 body：不过就不写这个字段，其他字段照常导。 */
-export function checkBodyField(kind: PropKind, body: string | undefined): void {
-  if (body === undefined) return;
+/**
+ * 写入口的最后一个字段：检查完密钥和长度后把 body 换成脱敏结果（§8.11.2 统一脱敏边界）。
+ * 检查在前：含密钥的正文整条拒掉（CLI 报错、导入丢字段、抽取丢字段并记 flag），不是偷偷打码。
+ */
+function sanitizeBody(body: string | undefined): string | undefined {
+  return body === undefined ? undefined : sanitize(body).text;
+}
+
+/** 正文这一个字段的检查（种类、长度、密钥）与脱敏。导入重导时要单独判 body：不过就不写这个字段，其他字段照常导。 */
+export function checkBodyField(kind: PropKind, body: string | undefined): string | undefined {
+  if (body === undefined) return undefined;
   if (!BODY_KINDS.includes(kind)) throw new Error(`${KIND_LABEL[kind]}必须一行说清，不能带正文（正文只能给决定、事实、坑）`);
   if ([...body].length > BODY_MAX_CHARS) tooLong("正文", [...body].length, BODY_MAX_CHARS);
   scanSecret("正文", body);
+  return sanitizeBody(body);
 }
 
-/** 写 remember 事件前的检查：种类、长度、密钥。违反的抛错，调用方（CLI）报错退出。 */
+/** 写 remember 事件前的检查：种类、长度、密钥、脱敏。违反的抛错，调用方（CLI）报错退出；通过时就地换成脱敏后的字段。 */
 export function checkRememberBody(b: RememberBody): void {
-  checkBodyField(b.kind, b.body);
+  const body = checkBodyField(b.kind, b.body);
+  if (body !== undefined) b.body = body;
   checkAlternatives(b.kind, b.alternatives);
   scanSecret("正文", b.text);
   scanSecret("背景", b.why);
   for (const e of b.evidence ?? []) scanSecret("原话", e.quote);
-  // evidence 下标越界的方案在这里丢掉（导入、抽取、手写都不再各自判断）
-  b.alternatives = keepAlternatives(b.alternatives, b.evidence?.length ?? 0);
+  // evidence 下标越界的方案在这里丢掉（导入、抽取、手写都不再各自判断），通过的换成脱敏后的文字
+  b.alternatives = keepAlternatives(b.alternatives, b.evidence?.length ?? 0)?.map((a) => ({
+    ...a,
+    option: sanitize(a.option).text,
+    rejected_because: sanitize(a.rejected_because).text,
+  }));
 }
 
-/** 写 detail 事件前的检查。目标种类和原话条数由调用方从投影里取。 */
+/** 写 detail 事件前的检查与脱敏。目标种类和原话条数由调用方从投影里取。 */
 export function checkDetailBody(kind: PropKind, b: DetailBody, evidenceCount: number): void {
-  checkBodyField(kind, b.body);
+  const body = checkBodyField(kind, b.body);
+  if (body !== undefined) b.body = body;
   checkAlternatives(kind, b.alternatives);
-  b.alternatives = keepAlternatives(b.alternatives, evidenceCount);
+  b.alternatives = keepAlternatives(b.alternatives, evidenceCount)?.map((a) => ({
+    ...a,
+    option: sanitize(a.option).text,
+    rejected_because: sanitize(a.rejected_because).text,
+  }));
 }

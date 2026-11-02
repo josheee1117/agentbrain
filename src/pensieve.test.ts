@@ -317,3 +317,17 @@ test("§8.11 重导：源文件变了的新版本直接带 body", async () => {
   assert.equal(store.project().props.get(old)!.state, "superseded");
   store.close();
 });
+
+test("review 条目 3：Pensieve 正文里的邮箱和家目录路径脱敏后才进 body", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const pii = KNOW.replace("现已调整为只在源库 label 非空时覆盖。", "联系 alice@example.com，脚本在 /Users/alice/private/company 下。");
+  const r = repo({ "knowledge/k/content.md": pii });
+  await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  const p = [...store.project().props.values()][0];
+  assert.equal(p.body!.includes("alice@example.com"), false, "新导入的正文不能原样进库");
+  assert.equal(p.body!.includes("/Users/alice"), false);
+  assert.match(p.body!, /\[PII:email\]/);
+  store.close();
+});
