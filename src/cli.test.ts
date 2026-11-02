@@ -773,7 +773,7 @@ test("§8.11.4 跨项目段：已登记项目里搜索带出其他项目的相�
   writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
   const run = (args: string[], cwd = alpha) => ab(args, cwd, own);
   const betaIds: string[] = [];
-  for (const sim of [0.9, 0.8, 0.7, 0.55]) {
+  for (const sim of [0.9, 0.8, 0.7, 0.62]) {
     const r = run(["remember", "--confirmed", "--project", "beta", "--kind", "decision", "--text", `beta 的缓存决定 SIM${sim}`, "--summary", "缓存选型"]);
     assert.equal(r.code, 0, r.err);
     betaIds.push(r.out.match(/\[([0-9a-f]{8})\]/)![1]);
@@ -786,7 +786,7 @@ test("§8.11.4 跨项目段：已登记项目里搜索带出其他项目的相�
   const head = lines.indexOf("其他项目里相近的：");
   assert.ok(head >= 0, s.out);
   const cross = lines.slice(head + 1).filter(Boolean);
-  assert.equal(cross.length, 3, `门槛 0.6 挡掉 0.55，最多 3 条：\n${s.out}`);
+  assert.equal(cross.length, 3, `门槛 0.65 挡掉 0.62，最多 3 条：\n${s.out}`);
   assert.deepEqual(cross.map((l) => /（([0-9.]+)）$/.exec(l)?.[1]), ["0.90", "0.80", "0.70"]);
   assert.match(cross[0], new RegExp(`^\\[${betaIds[0]}\\] beta 决定: beta 的缓存决定 SIM0\\.9（0\\.90）$`), s.out);
   assert.ok(!s.out.includes(betaIds[3]), "过不了门槛的不出");
@@ -1368,6 +1368,46 @@ test("§8.11.3 归属显示：成功跨项目归属的条目，ab get 多一行�
   const g2 = ab(["get", same.slice(0, 8)], alpha, own);
   assert.doesNotMatch(g2.out, /^归属: /, `同项目不显示归属行：${g2.out}`);
 });
+// ---------- round3：导入正文长度按脱敏后判、ab get 提示正文未入库 ----------
+
+test("§8.11 导入：正文脱敏后超长只跳过正文并进报告，不让整个导入退出", () => {
+  const own = join(dir, "pensieve-long-home");
+  const r = repo("pensieve-long");
+  mkdirSync(join(r, ".pensieve/knowledge/long"), { recursive: true });
+  const head = "# 长正文边界\n\n## Summary\n正文边界。\n\n## Content\n";
+  const tail = "a@b.co\n";
+  const filler = "甲".repeat(39998 - head.length - tail.length);
+  writeFileSync(
+    join(r, ".pensieve/knowledge/long/content.md"),
+    `---\nid: long-body\ntype: knowledge\ntitle: 长正文边界\nstatus: active\n---\n${head}${filler}${tail}`,
+  );
+  const s = ab(["import", "pensieve", r], alpha, own);
+  assert.equal(s.code, 0, s.err);
+  assert.match(s.out, /正文没写进库的文档 1 篇/, s.out);
+  assert.match(s.out, /正文太长：40002 字/, "报告写脱敏后的长度");
+  const found = ab(["search", "长正文边界"], r, own);
+  const id = found.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const got = ab(["get", id], r, own);
+  assert.match(got.out, /长正文边界/, "条目照常导入");
+  assert.doesNotMatch(got.out, /正文:\n/, "只是不带正文");
+});
+
+test("§8.11 ab get：抽取时正文被拦下的条目提示「正文未入库」", async () => {
+  const own = join(dir, "body-dropped-home");
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const id = s.remember(s.ensureProject("alpha"), null, false, {
+    kind: "decision",
+    text: "告警只发测试环境",
+    confirmed: false,
+    origin: "extract",
+    source: { host: "claude", session_id: "x", transcript: null, anchor: null, summary: "x" },
+    value: { flags: ["body_dropped"] },
+  });
+  s.close();
+  assert.match(ab(["get", id.slice(0, 8)], alpha, own).out, /正文未入库/);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
@@ -1421,4 +1461,3 @@ test("brief 放不下的整条跳过，不硬截断结尾", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-

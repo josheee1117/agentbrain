@@ -9,8 +9,8 @@ import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync,
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { checkAlternatives, checkBodyField, checkRememberBody } from "./l2.ts";
-import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./store.ts";
+import { checkAlternatives, checkBodyField, checkRememberBody, sameAlternatives, sameBody } from "./l2.ts";
+import { VEC_MIN_SIM, vectorTextOf, type Store, type Embedder, type PendingAppend } from "./store.ts";
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
 import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
@@ -440,10 +440,7 @@ function cosine(a: Float32Array, b: Float32Array): number {
 export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { cand: Candidate; vec: Float32Array }[] {
   const score = (c: Candidate) => (KIND_FOR_BASIS[c.basis] === c.kind ? 10 : 0) + c.evidence.length;
   // 正文和否掉的方案不同就是不同的事（§8.11.3）：向量相近也不能合并，否则一份正文被丢掉
-  const flat = (s: string) => s.replace(/\s+/g, " ").trim();
-  const sameDetail = (a: Candidate, b: Candidate) =>
-    flat(a.body ?? "") === flat(b.body ?? "") &&
-    JSON.stringify(a.alternatives ?? []) === JSON.stringify(b.alternatives ?? []);
+  const sameDetail = (a: Candidate, b: Candidate) => sameBody(a.body, b.body) && sameAlternatives(a.alternatives, b.alternatives);
   const kept: { cand: Candidate; vec: Float32Array }[] = [];
   for (let i = 0; i < cands.length; i++) {
     const cur = { cand: cands[i], vec: vecs[i] };
@@ -535,11 +532,15 @@ export function admit(
     const pid = c.project === "global" ? null : c.project && c.project !== s.project ? projectIdOf?.(c.project) ?? projectId : projectId;
     // §8.11.3：所有关系目标必须在最终项目或全局里；越界关系清除，按新条目处理，交给第 2 层重新判
     const outOfScope = !!target && target.project_id !== null && target.project_id !== pid;
-    const rel = outOfScope ? { type: "new" as const, target: null } : c.relation;
-    const relTarget = outOfScope ? undefined : target;
+    let rel = outOfScope ? { type: "new" as const, target: null } : c.relation;
+    let relTarget = outOfScope ? undefined : target;
     // §8.11.3：拒绝把候选当成别的项目条目的重复，这种情况按新条目处理
     const crossProjectDup = outOfScope && c.relation.type === "duplicate" && !!target;
-    if (!c.unreconciled && !crossProjectDup && rel.type === "duplicate" && relTarget && relTarget.state === "active") {
+    // §8.11.3：候选带详情而目标没有或详情不同，判重复会丢内容：清掉关系按新条目写入，交给第 2 层判
+    const detailDiffers =
+      (c.body !== undefined || !!c.alternatives?.length) &&
+      (!relTarget || !sameBody(c.body, relTarget.body) || !sameAlternatives(c.alternatives, relTarget.alternatives));
+    if (!c.unreconciled && !crossProjectDup && rel.type === "duplicate" && relTarget && relTarget.state === "active" && !detailDiffers) {
       // duplicate 追加的证据事件也带 quote 和 said_at（§8.11.2），密钥检查在 store.commit 前由 checkRememberBody 负责；
       // 证据事件不经过 checkRememberBody，这里用与 extract 相同的 secretKinds 自查，脏引文只丢该条证据
       const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0), window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
@@ -553,6 +554,10 @@ export function admit(
         out.receipt.corroborated++;
       }
       continue;
+    }
+    if (detailDiffers && rel.type === "duplicate") {
+      rel = { type: "new", target: null };
+      relTarget = undefined;
     }
     const body: RememberBody = {
       model,
@@ -575,34 +580,38 @@ export function admit(
       ...(c.alternatives ? { alternatives: c.alternatives } : {}),
       ...(c.value ? { value: c.value } : {}),
     };
+    let bucket: "proposals" | "unreconciled" | "corrections";
     if (crossProjectDup) {
       // §8.11.3：候选被判定为别的项目条目的重复，按新条目处理（不并、不标关系未判定）
       body.relation = { type: "new", target: null };
-      out.receipt.proposals++;
+      bucket = "proposals";
     } else if (c.unreconciled || rel.type === "unsure" || (rel.type !== "new" && !relTarget)) {
       body.unreconciled = true;
-      out.receipt.unreconciled++;
+      bucket = "unreconciled";
     } else if ((rel.type === "conflicts" || rel.type === "supersedes") && relTarget && relTarget.state === "active") {
       body.supersedes = relTarget.id; // 未确认的纠正：只标"有待确认的纠正"，不盖掉旧条目（§9.2）
-      // 带详情的决定不强制改成目标种类（§8.11.3）：候选的正文或否掉的方案在目标种类下不合法时，保留候选自己的种类
-      try {
-        checkBodyField(relTarget.kind, c.body);
-        checkAlternatives(relTarget.kind, c.alternatives);
-        body.kind = relTarget.kind;
-      } catch {
-        // 保留候选自己的种类
+      // 目标是 note 时保留候选自己的种类（§8.11.3 旧行为）；其他目标带详情的决定不强制改成目标种类
+      if (relTarget.kind !== "note") {
+        try {
+          checkBodyField(relTarget.kind, c.body);
+          checkAlternatives(relTarget.kind, c.alternatives);
+          body.kind = relTarget.kind;
+        } catch {
+          // 保留候选自己的种类
+        }
       }
-      out.receipt.corrections++;
+      bucket = "corrections";
     } else {
-      out.receipt.proposals++;
+      bucket = "proposals";
     }
-    // 一条候选过不了写入口校验时只丢这一条（§8.11.3），不能拖垮整个窗口
+    // 一条候选过不了写入口校验时只丢这一条（§8.11.3），不能拖垮整个窗口；被丢的不算进任何计数
     try {
       checkRememberBody(body);
     } catch {
       out.receipt.dropped.body_rejected = (out.receipt.dropped.body_rejected ?? 0) + 1;
       continue;
     }
+    out.receipt[bucket]++;
     out.appends.push({ kind: "remember", project_id: pid, session_id: s.session_id, target_id: null, body });
     out.keys.push(c.key);
   }
@@ -665,8 +674,8 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   for (const [k, n] of Object.entries(v.dropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
   for (const [k, n] of Object.entries(v.evidenceDropped)) receipt.evidence_dropped[k] = (receipt.evidence_dropped[k] ?? 0) + (n ?? 0);
   const vecs = v.candidates.length
-    // 去重看完整内容（§8.11.3）：同标题不同正文的候选不能因为标题向量相同被合并
-    ? await embedOrDefer(deps.embedder, v.candidates.map((x) => [x.text, x.why, x.body].filter(Boolean).join("\n")))
+    // 去重看完整内容（§8.11.3）：同标题不同正文的候选不能因为标题向量相同被合并；向量输入与库里同口径截短
+    ? await embedOrDefer(deps.embedder, v.candidates.map((x) => vectorTextOf(x.text, x.why, x.body)))
     : [];
   const merged = mergeSameWindow(v.candidates, vecs);
   receipt.merged += v.candidates.length - merged.length;

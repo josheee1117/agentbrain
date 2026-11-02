@@ -679,6 +679,7 @@ function cmdGet(argv: string[]): void {
       p.why ? `为什么: ${p.why}` : "",
       ...altLines,
       p.body ? `正文:\n${p.body}` : "",
+      p.value?.flags?.includes("body_dropped") ? "正文未入库（抽取时被校验拦下）" : "",
       ...quotes,
       ownershipLine(p, names),
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
@@ -1360,7 +1361,7 @@ const USAGE = `用法:
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
                                     前 8 条全文并列出关联（带详情正文的显示前 300 字和 ab get 提示），第 9–16 名每条一行
-                                    在已登记项目目录里还会多出一段「其他项目里相近的」（相似度 ≥0.6 的前 3 条）
+                                    在已登记项目目录里还会多出一段「其他项目里相近的」（相似度 ≥0.65 的前 3 条）
   ab search --scene <design,code,review>  只列出该场景的全部规则（含未确认；不和关键词、--archived、--kind 其他种类同用）
   ab get <id 前缀> [--expand]       看一条：为什么、否掉的方案、详情正文、全部原话（带角色和时间），
                                     再列双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；

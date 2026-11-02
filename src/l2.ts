@@ -496,11 +496,21 @@ export function checkAlternatives(kind: PropKind, alternatives: Alternative[] | 
   if (alternatives.length > ALTERNATIVES_MAX) throw new Error(`否掉的方案最多 ${ALTERNATIVES_MAX} 项，收到 ${alternatives.length} 项`);
   for (const a of alternatives) {
     if (!a.option?.trim() || !a.rejected_because?.trim()) throw new Error("否掉的方案要同时写方案和否掉的原因");
-    if ([...a.option].length > ALTERNATIVE_FIELD_MAX_CHARS || [...a.rejected_because].length > ALTERNATIVE_FIELD_MAX_CHARS)
-      throw new Error(`否掉的方案每项最多 ${ALTERNATIVE_FIELD_MAX_CHARS} 字`);
     scanSecret("否掉的方案", a.option);
     scanSecret("否掉的方案", a.rejected_because);
+    // 脱敏可能变长，长度按脱敏后的结果判一次（与正文同一口径）
+    if ([...sanitize(a.option).text].length > ALTERNATIVE_FIELD_MAX_CHARS || [...sanitize(a.rejected_because).text].length > ALTERNATIVE_FIELD_MAX_CHARS)
+      throw new Error(`否掉的方案每项最多 ${ALTERNATIVE_FIELD_MAX_CHARS} 字`);
   }
+}
+
+/** 详情是否一致（§8.11.3）：正文只 trim 后比原文，内部换行和缩进都算内容；否掉的方案整项比。 */
+export function sameBody(a?: string | null, b?: string | null): boolean {
+  return (a ?? "").trim() === (b ?? "").trim();
+}
+
+export function sameAlternatives(a?: Alternative[] | null, b?: Alternative[] | null): boolean {
+  return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
 }
 
 /** 丢掉下标越界的方案（§8.11.2：引用的原话不存在就丢掉这一项，不丢整条）；没有剩下的返回 undefined。 */
@@ -510,20 +520,16 @@ export function keepAlternatives(alternatives: Alternative[] | undefined, eviden
 }
 
 /**
- * 写入口的最后一个字段：检查完密钥和长度后把 body 换成脱敏结果（§8.11.2 统一脱敏边界）。
+ * 写入口的最后一个字段：先查密钥，再脱敏，再按脱敏后的长度查上限（只查一次）。
  * 检查在前：含密钥的正文整条拒掉（CLI 报错、导入丢字段、抽取丢字段并记 flag），不是偷偷打码。
  */
-function sanitizeBody(body: string | undefined): string | undefined {
-  return body === undefined ? undefined : sanitize(body).text;
-}
-
-/** 正文这一个字段的检查（种类、长度、密钥）与脱敏。导入重导时要单独判 body：不过就不写这个字段，其他字段照常导。 */
 export function checkBodyField(kind: PropKind, body: string | undefined): string | undefined {
   if (body === undefined) return undefined;
   if (!BODY_KINDS.includes(kind)) throw new Error(`${KIND_LABEL[kind]}必须一行说清，不能带正文（正文只能给决定、事实、坑）`);
-  if ([...body].length > BODY_MAX_CHARS) tooLong("正文", [...body].length, BODY_MAX_CHARS);
   scanSecret("正文", body);
-  return sanitizeBody(body);
+  const clean = sanitize(body).text;
+  if ([...clean].length > BODY_MAX_CHARS) tooLong("正文", [...clean].length, BODY_MAX_CHARS);
+  return clean;
 }
 
 /** 写 remember 事件前的检查：种类、长度、密钥、脱敏。违反的抛错，调用方（CLI）报错退出；通过时就地换成脱敏后的字段。 */

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { validate, type Candidate, type ExtractWindow } from "./extract.ts";
 import type { ProjectContext } from "./extract.ts";
+import type { Proposition } from "./l2.ts";
 
 const CTX: ProjectContext = {
   name: "alpha",
@@ -134,14 +135,14 @@ test("review 条目 8：why 只是标题复述照样丢，决定的理由仍须�
 
 // ---------- 条目 9：双角色证据只对 user_confirmed 决定，note 走确定性校验 ----------
 
-test("review 条目 9：rule 的 user_directive 只需用户原话，不要求助手原话", () => {
+test("review 条目 9：rule 的 user_confirmed 只需用户原话，双角色要求只对决定", () => {
   const v = validate({
     candidates: [{
       kind: "rule",
       project: "alpha",
       text: "hook 命令用 node 绝对路径，不依赖 PATH",
       why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
-      basis: "user_directive",
+      basis: "user_confirmed",
       evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 的绝对路径" }],
       relation: { type: "new", target: null },
     }],
@@ -187,6 +188,75 @@ test("review 条目 3：正文和否掉的方案里的邮箱、家目录路径�
   assert.match(c.body!, /\[PII:email\]/);
   assert.equal(c.alternatives![0].option.includes("bob@example.com"), false);
   assert.equal(c.alternatives![0].rejected_because.includes("/Users/bob"), false);
+});
+
+// ---------- round3：判重复时不能丢详情 ----------
+
+const noteWith = (extra: Partial<Proposition>) => ({ id: "aaaaaaaa-1111", kind: "decision", text: "hook 执行方式", confirmed: true, body: null, alternatives: [], ...extra }) as Proposition;
+
+test("review round3 条目 2：同标题捷径只在双方都没有详情、或详情完全相同时走", () => {
+  const body = "用绝对路径启动 node 24";
+  const target = noteWith({ body, alternatives: [] });
+  const cand = (extra: object) => ({ ...DECISION, text: target.text, ...extra });
+  const noDetail = validate({ candidates: [cand({})] }, WIN, [target], "w1", CTX).candidates[0];
+  assert.deepEqual(noDetail.relation, { type: "new", target: null }, "目标带正文，候选没详情也不能走捷径");
+  const sameBody = validate({ candidates: [cand({ body })] }, WIN, [target], "w1", CTX).candidates[0];
+  assert.deepEqual(sameBody.relation, { type: "duplicate", target: target.id }, "详情完全相同照旧判重复");
+  const diffBody = validate({ candidates: [cand({ body: "只用 PATH 启动 node 26" })] }, WIN, [target], "w1", CTX).candidates[0];
+  assert.deepEqual(diffBody.relation, { type: "new", target: null }, "正文不同不能判重复");
+  const plain = noteWith({ body: null });
+  const withAlt = validate({ candidates: [cand({ alternatives: [{ option: "旧方案", rejected_because: "跨实例不一致" }] })] }, WIN, [plain], "w1", CTX).candidates[0];
+  assert.deepEqual(withAlt.relation, { type: "new", target: null }, "候选带否掉的方案，目标没详情也不能走捷径");
+  const targetAlt = noteWith({ body: null, alternatives: [{ option: "旧方案", rejected_because: "跨实例不一致" }] });
+  const noAlt = validate({ candidates: [cand({})] }, WIN, [targetAlt], "w1", CTX).candidates[0];
+  assert.deepEqual(noAlt.relation, { type: "new", target: null }, "目标带否掉的方案也不能走捷径");
+  const bothPlain = validate({ candidates: [cand({})] }, WIN, [plain], "w1", CTX).candidates[0];
+  assert.deepEqual(bothPlain.relation, { type: "duplicate", target: plain.id }, "双方都没详情照旧判重复");
+});
+
+// ---------- round3：方案引用空值、重复证据 ----------
+
+test("review round3 条目 4：方案引用是 null 或非整数时保留方案、去掉引用", () => {
+  const v = validate({
+    candidates: [{
+      ...DECISION,
+      alternatives: [
+        { option: "方案 A", rejected_because: "空引用", evidence: null },
+        { option: "方案 B", rejected_because: "非整数", evidence: 1.5 },
+        { option: "方案 C", rejected_because: "字符串", evidence: "1" },
+      ],
+    }],
+  }, WIN, [], "w1", CTX);
+  assert.deepEqual(v.candidates[0].alternatives, [
+    { option: "方案 A", rejected_because: "空引用" },
+    { option: "方案 B", rejected_because: "非整数" },
+    { option: "方案 C", rejected_because: "字符串" },
+  ]);
+  assert.equal(v.candidates[0].value?.flags?.includes("alternatives_dropped"), false, "保留的方案不记丢弃");
+  const dropped = validate({
+    candidates: [{ ...DECISION, alternatives: [{ option: "方案 D", rejected_because: "负数下标", evidence: -1 }] }],
+  }, WIN, [], "w1", CTX).candidates[0];
+  assert.equal(dropped.alternatives, undefined);
+  assert.ok(dropped.value?.flags?.includes("alternatives_dropped"), "整项丢掉时要记 flag，不能悄悄丢");
+});
+
+test("review round3 条目 7：重复证据也进下标映射，方案引用重复项时指向保留的那条", () => {
+  const quote = "建议 final 阶段只显示不拦合并";
+  const v = validate({
+    candidates: [{
+      ...DECISION,
+      evidence: [
+        { anchor: "#2", role: "assistant", quote },
+        { anchor: "#2", role: "assistant", quote },
+        { anchor: "#3", role: "user", quote: "final 就只显示不拦截" },
+      ],
+      alternatives: [{ option: "旧方案", rejected_because: "与决定相反", evidence: 1 }],
+    }],
+  }, WIN, [], "w1", CTX);
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.candidates[0].evidence.length, 2, "重复证据只留一条");
+  assert.equal(v.candidates[0].evidence[0].quote, quote);
+  assert.deepEqual(v.candidates[0].alternatives, [{ option: "旧方案", rejected_because: "与决定相反", evidence: 0 }], "引用重复项时映射到保留的那条");
 });
 
 // 供类型检查：确保 Candidate 类型仍被引用

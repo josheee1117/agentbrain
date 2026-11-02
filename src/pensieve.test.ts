@@ -263,7 +263,8 @@ test("§8.11 导入：正文超过 40000 字的文档不写 body，报告列出�
   const dir = join(base, `s${n++}`);
   mkdirSync(dir);
   const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
-  const r = repo({ "knowledge/huge/content.md": LONG_KNOW.replace("调用链细节说明。".repeat(600), "长".repeat(40001)) });
+  const huge = LONG_KNOW.replace("调用链细节说明。".repeat(600), "长".repeat(40001)).replace(/## 代码[\s\S]*$/, "");
+  const r = repo({ "knowledge/huge/content.md": huge });
   const rep = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
   const p = [...store.project().props.values()].find((x) => x.import_ref?.id === "long-know")!;
   assert.equal(p.body, null);

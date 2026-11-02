@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store, type Embedder } from "./store.ts";
+import { Store, VEC_TEXT_MAX_CHARS, type Embedder } from "./store.ts";
 import type { Chat, ChatMessage } from "./llm.ts";
 import { admit, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
@@ -29,13 +29,13 @@ const fakeEmbed: Embedder = Object.assign(async (texts: string[]) => texts.map((
 type Reply = (msgs: ChatMessage[], opts?: { json?: boolean }) => ChatMessage | Promise<ChatMessage>;
 const json = (o: object): ChatMessage => ({ role: "assistant", content: JSON.stringify(o) });
 
-function fakeChat(reply: Reply): Chat & { calls: ChatMessage[][]; relateCalls: ChatMessage[][] } {
+function fakeChat(reply: Reply, relate: Reply = () => json({ results: [] })): Chat & { calls: ChatMessage[][]; relateCalls: ChatMessage[][] } {
   const calls: ChatMessage[][] = [];
   const relateCalls: ChatMessage[][] = [];
   const f = (async (msgs: ChatMessage[], opts?: { json?: boolean }) => {
     if (msgs[0]?.content?.includes("记忆关系判定器")) {
       relateCalls.push(structuredClone(msgs));
-      return { message: json({ results: [] }), tokens: 50 };
+      return { message: await relate(msgs, opts), tokens: 50 };
     }
     calls.push(structuredClone(msgs));
     return { message: await reply(msgs, opts), tokens: 100 };
@@ -208,7 +208,7 @@ test("review 条目 2：带正文的决定被判成旧规则的冲突时，不�
   assert.equal(e.store.project().props.get(old)!.pending_corrections.length, 1);
 });
 
-test("review 条目 2：一条候选组装出的事件过不了写入口校验时只丢这一条、记 drop 原因，其余照常写入、进度推进", async () => {
+test("review 条目 2 / round3 条目 8：一条候选组装出的事件过不了写入口校验时只丢这一条、记 drop 原因，计数不含被丢的候选", async () => {
   const e = env();
   e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
   // 绕过 extract 自查、组装出来就过不了 checkRememberBody 的候选：规则带正文
@@ -221,6 +221,19 @@ test("review 条目 2：一条候选组装出的事件过不了写入口校验�
   );
   assert.equal(admission.receipt.dropped.body_rejected, 1, "被丢的候选记 drop 原因");
   assert.deepEqual(admission.appends.map((a) => (a.body as RememberBody).text), [RULE.text], "其余候选照常组装");
+  assert.equal(admission.receipt.proposals, 1, "被丢的候选不算提议");
+});
+
+test("review round3 条目 9：一条候选校验失败只丢它自己，真实 runWork 的 checkpoint 照常推进", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径"), asst("a1", "好的")]));
+  const bad = { ...RULE, text: "另一条规则", evidence: [{ anchor: "#1", role: "user", quote: "这句用户没说过" }] };
+  const chat = fakeChat(() => json({ candidates: [bad, RULE] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.deepEqual(r.windows, { done: 1, deferred: 0, failed: 0, skipped: 0 }, "窗口照常完成");
+  assert.deepEqual(r.receipt.dropped, { no_evidence: 1 });
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "a1", "checkpoint 推进");
+  assert.deepEqual([...e.store.project().props.values()].map((p) => p.text), [RULE.text], "其余候选照常写入");
 });
 
 // ---------- 条目 5：关系目标限定在最终项目 + 全局 ----------
@@ -325,4 +338,118 @@ test("review 条目 3：抽取出来的正文脱敏后才进库、才送去算�
   const embeddingInput = sent.flat().join("\n");
   assert.equal(embeddingInput.includes("alice@example.com"), false, `embedding 输入含原始邮箱：${embeddingInput}`);
   assert.equal(embeddingInput.includes("/Users/alice"), false, `embedding 输入含原始家目录：${embeddingInput}`);
+});
+
+// ---------- round3：决定和知识的正文、否掉的方案不能悄悄丢 ----------
+
+test("review round3 条目 1：正文只差缩进的两条决定不合并，两份正文都留下", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [
+    user("u1", "以后 hook 命令都写 node 绝对路径"),
+    user("u2", "提交前记得 commit"),
+  ]));
+  const bodyA = "if enabled:\n    write()\n    commit()";
+  const bodyB = "if enabled:\n    write()\ncommit()";
+  const cand = (body: string, anchor: string, quote: string) => ({
+    kind: "decision",
+    text: "提交时机",
+    why: "提交晚了下游读不到",
+    body,
+    basis: "user_directive",
+    evidence: [{ anchor, role: "user", quote }],
+    relation: { type: "new", target: null },
+  });
+  const chat = fakeChat(() => json({ candidates: [cand(bodyA, "#1", "以后 hook 命令都写 node 绝对路径"), cand(bodyB, "#2", "提交前记得 commit")] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.merged, 0, "缩进算内容，不能合并");
+  assert.deepEqual([...e.store.project().props.values()].map((p) => p.body).sort(), [bodyA, bodyB].sort());
+});
+
+test("review round3 条目 2：显式判重复但候选带不同正文时，按新条目写入并交给关系判定（输入含双方正文和方案）", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, {
+    kind: "decision",
+    text: "hook 执行方式",
+    why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+    body: "用绝对路径启动 node 24",
+    alternatives: [{ option: "靠 PATH 找 ab", rejected_because: "宿主 PATH 很少" }],
+    confirmed: true,
+    source: src0(null),
+  });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(
+    () => json({
+      candidates: [{
+        kind: "decision",
+        text: "hook 执行方式",
+        why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+        body: "改为 PATH 启动 node 26",
+        alternatives: [{ option: "绝对路径写死", rejected_because: "换机器要改配置", evidence: 0 }],
+        basis: "user_directive",
+        evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" }],
+        relation: { type: "duplicate", target: "m1" },
+      }],
+    }),
+    (msgs) => {
+      const text = msgs[1].content!;
+      assert.match(text, /用绝对路径启动 node 24/, "关系判定看得到目标正文");
+      assert.match(text, /改为 PATH 启动 node 26/, "关系判定看得到候选正文");
+      assert.match(text, /靠 PATH 找 ab/, "关系判定看得到目标的否掉方案");
+      assert.match(text, /绝对路径写死/, "关系判定看得到候选的否掉方案");
+      return json({ results: [] });
+    },
+  );
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.attached, 0, "正文不一致时不能只追加证据");
+  assert.equal(e.store.project().props.size, 2, "按新条目写入");
+  const fresh = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  assert.equal(fresh.body, "改为 PATH 启动 node 26");
+  assert.deepEqual(fresh.alternatives, [{ option: "绝对路径写死", rejected_because: "换机器要改配置", evidence: 0 }]);
+  assert.equal(chat.relateCalls.length, 1, "交给第 2 层关系判定");
+});
+
+test("review round3 条目 3：目标是 note 时纠正保留候选自己的种类", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, {
+    kind: "note",
+    text: "hook 命令直接写 ab，靠 PATH 找",
+    body: "现在 hook 里写的是 ab，靠 PATH 找到它",
+    confirmed: true,
+    source: src0(null),
+  });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const chat = fakeChat(() => json({
+    candidates: [{
+      kind: "decision",
+      text: "hook 走 node 绝对路径",
+      why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+      body: "绝对路径写进 hook 配置",
+      basis: "user_directive",
+      evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" }],
+      relation: { type: "supersedes", target: "m1" },
+    }],
+  }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const corr = [...e.store.project().props.values()].find((p) => p.id !== old)!;
+  assert.equal(corr.kind, "decision", "note 目标不把纠正改成 note");
+  assert.equal(corr.supersedes, old);
+  assert.equal(e.store.project().props.get(old)!.pending_corrections.length, 1);
+});
+
+test("review round3 条目 6：候选算向量复用 vectorText 截断，正文完整入库", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const body = "a@b.co ".repeat(714).trim();
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, kind: "decision", text: "通知名单记录", body }] }));
+  const sent: number[] = [];
+  const embedder: Embedder = Object.assign(async (texts: string[]) => {
+    sent.push(...texts.map((t) => [...t].length));
+    if (texts.some((t) => [...t].length > VEC_TEXT_MAX_CHARS)) throw new Error(`fixture input exceeds ${VEC_TEXT_MAX_CHARS}`);
+    return fakeEmbed(texts);
+  }, { model: "fake-embed" });
+  const r = await runWork(e.deps(chat, { embedder }), { sweep: false, dryRun: false });
+  assert.deepEqual(r.windows, { done: 1, deferred: 0, failed: 0, skipped: 0 });
+  const p = [...e.store.project().props.values()][0] as Proposition;
+  assert.ok([...p.body!].length > VEC_TEXT_MAX_CHARS, "正文仍完整保留");
+  assert.ok(sent.every((n) => n <= VEC_TEXT_MAX_CHARS), `向量输入超上限：${sent}`);
 });

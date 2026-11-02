@@ -4,7 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import type { Alternative, Basis, EvidenceRef, PropKind, Proposition, RelationType, RememberBody, ValueFlag } from "./l2.ts";
-import { checkBodyField } from "./l2.ts";
+import { checkBodyField, sameAlternatives, sameBody } from "./l2.ts";
 import { promptVersion, type ChatMessage } from "./llm.ts";
 import { hasSecret, sanitize, secretKinds } from "./sanitize.ts";
 import type { Turn } from "./transcript.ts";
@@ -485,10 +485,10 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     }
     // 证据逐条判定：过不了的只丢这一条（§21 2026-10-12）；留下的每条引文都逐字核对过，原文按 §8.11.2 存进 quote/said_at
     const evidence: Candidate["evidence"] = [];
-    const seenEv = new Set<string>();
+    const seenEv = new Map<string, number>();
     const userQuotes: string[] = [];
     const assistantQuotes: string[] = [];
-    /** 模型给的证据下标 → 过滤后保留的证据下标；被删的证据不进映射。 */
+    /** 模型给的证据下标 → 过滤后保留的证据下标；重复证据指向已保留的那条，被删的证据不进映射。 */
     const keptAt = new Map<number, number>();
     let saidAt: string | undefined;
     for (const [i, e] of (c.evidence as any[]).entries()) {
@@ -529,8 +529,13 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
         continue;
       }
       const h = sha256(kept);
-      if (seenEv.has(`${turn.anchor}|${h}`)) continue;
-      seenEv.add(`${turn.anchor}|${h}`);
+      const sig = `${turn.anchor}|${h}`;
+      const dup = seenEv.get(sig);
+      if (dup !== undefined) {
+        keptAt.set(i, dup); // 重复证据也要能当方案的引用目标，映射到保留的那条
+        continue;
+      }
+      seenEv.set(sig, evidence.length);
       keptAt.set(i, evidence.length);
       evidence.push({ anchor: turn.anchor, role: turn.role, quote_sha256: h, quote: kept, ...(turn.ts ? { said_at: turn.ts } : {}) });
       if (turn.role === "user") userQuotes.push(kept);
@@ -593,20 +598,31 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     // 方案里的 evidence 下标指向模型原始数组，证据被过滤后要按 keptAt 重映射；引用了被删证据或负数下标的项整项丢掉
     let alt: Alternative[] | undefined;
     if (Array.isArray(c.alternatives)) {
-      const parsed = (c.alternatives as any[])
-        .slice(0, MAX_ALTERNATIVES)
-        .map((a) => ({ a, mapped: Number.isInteger(a?.evidence) ? keptAt.get(a.evidence as number) : undefined }))
-        .filter(({ a, mapped }) => a?.evidence === undefined || mapped !== undefined)
-        .map(({ a, mapped }) => ({
+      let droppedRef = false;
+      const parsed = (c.alternatives as any[]).slice(0, MAX_ALTERNATIVES).flatMap((a) => {
+        const ev = a?.evidence;
+        let mapped: number | undefined;
+        if (ev !== undefined && ev !== null) {
+          // 空值或非整数只是没有引用：保留方案、去掉引用；负数、越界或指向被删证据的整项丢，记 flag
+          if (Number.isInteger(ev)) {
+            if (!keptAt.has(ev)) {
+              droppedRef = true;
+              return [];
+            }
+            mapped = keptAt.get(ev);
+          }
+        }
+        return [{
           option: str(a?.option, MAX_ALTERNATIVE_FIELD_CHARS),
           rejected_because: str(a?.rejected_because, MAX_ALTERNATIVE_FIELD_CHARS),
           ...(mapped !== undefined ? { evidence: mapped } : {}),
-        }));
+        }];
+      });
       const bad = parsed.some((a) => !a.option || !a.rejected_because);
       // 否掉的方案只有决定能带；字段不合法或含密钥时整组丢掉并记 flag（写 L1 会抛错，不能进 commit）
-      if (bad || c.kind !== "decision") flags.push("alternatives_dropped");
-      else if (parsed.some((a) => secretKinds(a.option!).length || secretKinds(a.rejected_because!).length)) flags.push("alternatives_dropped");
-      else alt = (parsed as Alternative[]).map((a) => ({ ...a, option: sanitize(a.option).text, rejected_because: sanitize(a.rejected_because).text }));
+      const unusable = bad || c.kind !== "decision" || parsed.some((a) => secretKinds(a.option!).length || secretKinds(a.rejected_because!).length);
+      if (unusable || droppedRef) flags.push("alternatives_dropped");
+      if (!unusable && parsed.length) alt = (parsed as Alternative[]).map((a) => ({ ...a, option: sanitize(a.option).text, rejected_because: sanitize(a.rejected_because).text }));
     }
     // 正文只受抽取自己的长度上限约束（§8.11.3 提示词写的就是这个数），超了就丢正文记 flag，其余照常
     let finalBody = body;
@@ -631,8 +647,14 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       else type = "unsure";
     }
     const cleanText = fields[0].text;
-    // 标题相同只能当候选：正文不同的两条是不同的事，交给关系判定看完整内容（§8.11.3）
-    const same = finalBody === undefined ? neighbors.find((p) => norm(p.text) === norm(cleanText) && !p.body) : undefined;
+    // 标题相同只能当候选：双方都没有详情，或详情完全一致时才走捷径；否则交给关系判定看完整内容（§8.11.3）
+    const candidateDetail = finalBody !== undefined || !!alt?.length;
+    const same = neighbors.find((p) => {
+      if (norm(p.text) !== norm(cleanText)) return false;
+      const targetDetail = !!p.body || !!p.alternatives?.length;
+      if (!candidateDetail && !targetDetail) return true;
+      return candidateDetail && targetDetail && sameBody(finalBody, p.body) && sameAlternatives(alt, p.alternatives);
+    });
     if (same && (type === "new" || type === "unsure")) {
       type = "duplicate";
       target = same.id;

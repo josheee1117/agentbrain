@@ -620,7 +620,7 @@ test("混合检索：两路各取 20 条，融合 limit 可超过 20", async () 
   } finally { s.close(); }
 });
 
-test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度排序，门槛 0.6、最多 3 条", async () => {
+test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度排序，门槛 0.65、最多 3 条", async () => {
   const s = mem();
   try {
     const here = s.ensureProject("here");
@@ -629,8 +629,8 @@ test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度�
     // 本项目 + 全局的条目相似度最高，但跨项目段只取其他项目
     s.remember(here, "s", false, body("本项目的缓存决定"));
     s.remember(null, "s", false, body("全局的缓存决定"));
-    // 其他项目：5 条按相似度递减，其中 2 条不过 0.6 门槛
-    const sims = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4];
+    // 其他项目：6 条按相似度递减，其中 3 条不过 0.65 门槛
+    const sims = [0.9, 0.8, 0.7, 0.64, 0.5, 0.4];
     const ids = sims.map((sim, i) => ({ sim, id: s.remember(other, "s", false, body(`别的项目第${i}条`)) }));
     const embedder: Embedder = async (texts) => texts.map((text) => {
       if (text === "查询") return Float32Array.from([1, 0]);
@@ -639,7 +639,7 @@ test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度�
     });
     await s.syncVectors(embedder, "fake");
     const r = await s.searchHybrid("查询", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, embedder);
-    assert.deepEqual(r.cross!.hits.map((h) => h.id), [ids[0].id, ids[1].id, ids[2].id], "门槛 0.6、最多 3 条，按相似度排序");
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [ids[0].id, ids[1].id, ids[2].id], "门槛 0.65、最多 3 条，按相似度排序");
     assert.deepEqual(r.cross!.hits.map((h) => h.similarity).map((x) => x.toFixed(2)), ["0.90", "0.80", "0.70"]);
     assert.equal(r.cross!.pending, 0);
     assert.equal(r.degraded, null);
@@ -798,6 +798,19 @@ test("§8.11 写入口校验：body 只给决定/事实/坑，上限 40000 字�
         { option: "丙", rejected_because: "手写没有原话" },
       ] });
     assert.deepEqual(s.project().props.get(id)!.alternatives.map((a) => a.option), ["甲", "丙"]);
+  } finally { s.close(); }
+});
+
+test("§8.11 正文和否掉方案的长度按脱敏后的结果判一次：脱敏变长就拒，不按原文放行", () => {
+  const s = mem();
+  try {
+    const pid = s.ensureProject("p");
+    const mk = (body: string) => s.remember(pid, null, false, { kind: "note", text: "x", confirmed: true, source: src(), body });
+    assert.ok(mk("甲".repeat(39988) + "a@b.co"), "脱敏后 39999 字通过");
+    assert.throws(() => mk("甲".repeat(39992) + "a@b.co"), /40003/, "原文不到 40000，脱敏后超过就要拒");
+    const alt = (option: string) => s.remember(pid, null, false, { kind: "decision", text: "d", confirmed: true, source: src(), alternatives: [{ option, rejected_because: "原因" }] });
+    assert.ok(alt("甲".repeat(188) + "a@b.co"), "脱敏后 199 字通过");
+    assert.throws(() => alt("甲".repeat(190) + "a@b.co"), /200/, "方案文字也按脱敏后的长度判");
   } finally { s.close(); }
 });
 

@@ -22,7 +22,7 @@ const HYBRID_VEC_K = 20;
 // 2026-10-10 测试集（53 条 / 121 查询）校准：0.45 召回 93%、负例误报 33%；每轮召回另用更严的 minSim。
 export const VEC_MIN_SIM = 0.45;
 /** §8.11.4 跨项目段：只取与查询向量的余弦 ≥ 这个值的其他项目条目。 */
-export const CROSS_PROJECT_MIN_SIM = 0.6;
+export const CROSS_PROJECT_MIN_SIM = 0.65;
 /** §8.11.4 跨项目段最多列几条。 */
 export const CROSS_PROJECT_MAX = 3;
 
@@ -171,12 +171,17 @@ export function indexText(p: Proposition): string {
 
 /** 向量输入：text + why + body，body 超出上限时截短。向量是否过期（text_hash）也按这个口径算。 */
 export function vectorText(p: Proposition): string {
-  const head = p.why ? `${p.text}\n${p.why}` : p.text;
-  if (!p.body) return head;
+  return vectorTextOf(p.text, p.why, p.body);
+}
+
+/** text + why + body 的向量文本，body 超出上限时截短；抽取算候选向量也走这一份（§8.11.2）。 */
+export function vectorTextOf(text: string, why?: string | null, body?: string | null): string {
+  const head = why ? `${text}\n${why}` : text;
+  if (!body) return head;
   const room = VEC_TEXT_MAX_CHARS - [...head].length - 1;
   if (room <= 0) return head;
-  const body = [...p.body];
-  return `${head}\n${body.length > room ? body.slice(0, room).join("") : p.body}`;
+  const chars = [...body];
+  return `${head}\n${chars.length > room ? chars.slice(0, room).join("") : body}`;
 }
 
 function textHash(text: string): string {
