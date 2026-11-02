@@ -253,7 +253,8 @@ test("同一窗口近重复：只留一条，优先 kind 与 basis 对得上的�
   const chat = fakeChat(() => json({ candidates: [
     { ...RULE, kind: "decision", text: "hook 命令都写 node 绝对路径，不依赖 PATH", evidence: [{ anchor: "#3", role: "user", quote: "hook 一律写 node 绝对路径" }] },
     { ...RULE, text: "hook 命令写 node 绝对路径，不依赖 PATH" },
-    { ...RULE, text: "提交信息用中文写", evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令" }] },
+    // 正文向量含 why（§8.11.3）：不相干的候选要用自己的背景，不能共用一条 why
+    { ...RULE, text: "提交信息用中文写", why: "仓库历史讨论都是中文，读 git log 的人不熟悉英文缩写", evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令" }] },
   ] }));
   const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
   assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [3, 1, 2]);
@@ -997,4 +998,24 @@ test("ab-used 行不送去抽取", async () => {
   assert.doesNotMatch(JSON.stringify(chat.calls[0]), /ab-used|deadbeef/);
   assert.match(JSON.stringify(chat.calls[0]), /好的/);
   assert.equal(sessionRow(e).processed_anchor, "a1");
+});
+
+// ---------- review 条目 11：note 正文矛盾 → 最终投影标 stale ----------
+
+test("review 条目 11：note 标题对得上、正文里一处断言与代码矛盾 → 最终投影标 stale，不转正", async () => {
+  const e = env();
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 存在", { kind: "note", body: "VEC_MIN_SIM 定义在 store.ts，值是 0.45。" });
+  const chat = fakeChat((msgs, opts) => {
+    if (!opts?.tools) return json({ candidates: [] });
+    assert.match(JSON.stringify(msgs), /值是 0\.45/, "核验请求里带上了正文");
+    if (msgs.length === 2) return { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "search_code", arguments: JSON.stringify({ pattern: "VEC_MIN_SIM" }) } }] };
+    // 标题对应的断言能对上，但正文说 0.45 而代码里是 0.45——换成矛盾值来复现正文断言矛盾
+    return json({ verdict: "contradicted", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "const VEC_MIN_SIM = 0.45;" }] });
+  });
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(r.verify.contradicted, 1);
+  const p = e.store.project().props.get(id)!;
+  assert.equal(p.confirmed, false, "矛盾不转正");
+  assert.ok(p.stale, "最终投影标 stale，读路径才能显示与代码不符");
+  assert.equal(p.stale!.refs.length, 1);
 });

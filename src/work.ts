@@ -9,6 +9,7 @@ import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync,
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { checkAlternatives, checkBodyField, checkRememberBody } from "./l2.ts";
 import { VEC_MIN_SIM, type Store, type Embedder, type PendingAppend } from "./store.ts";
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
@@ -438,6 +439,11 @@ function cosine(a: Float32Array, b: Float32Array): number {
 /** 同窗口近重复：余弦 ≥ SAME_WINDOW_DUP_SIM 的只留一条。kind 与 basis 对得上的优先，其次证据多的；证据取并集。 */
 export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { cand: Candidate; vec: Float32Array }[] {
   const score = (c: Candidate) => (KIND_FOR_BASIS[c.basis] === c.kind ? 10 : 0) + c.evidence.length;
+  // 正文和否掉的方案不同就是不同的事（§8.11.3）：向量相近也不能合并，否则一份正文被丢掉
+  const flat = (s: string) => s.replace(/\s+/g, " ").trim();
+  const sameDetail = (a: Candidate, b: Candidate) =>
+    flat(a.body ?? "") === flat(b.body ?? "") &&
+    JSON.stringify(a.alternatives ?? []) === JSON.stringify(b.alternatives ?? []);
   const kept: { cand: Candidate; vec: Float32Array }[] = [];
   for (let i = 0; i < cands.length; i++) {
     const cur = { cand: cands[i], vec: vecs[i] };
@@ -447,6 +453,7 @@ export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { can
         k.cand.project === cur.cand.project &&
         k.cand.relation.type === cur.cand.relation.type &&
         k.cand.relation.target === cur.cand.relation.target &&
+        sameDetail(k.cand, cur.cand) &&
         cosine(k.vec, cur.vec) >= SAME_WINDOW_DUP_SIM,
     );
     if (j < 0) {
@@ -466,7 +473,7 @@ export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { can
 interface Admission {
   appends: PendingAppend[];
   keys: string[];
-  receipt: Pick<intake.Receipt, "proposals" | "attached" | "corrections" | "unreconciled" | "corroborated">;
+  receipt: Pick<intake.Receipt, "proposals" | "attached" | "corrections" | "unreconciled" | "corroborated" | "dropped">;
 }
 
 function distinctUserSessions(p: Proposition, extra: { host: Host | null; session_id: string | null; basis: Basis; quote_sha256: string[] } | null): string[] {
@@ -514,7 +521,7 @@ export function admit(
   model: string,
   projectIdOf?: (name: string) => string,
 ): Admission {
-  const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
+  const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
   for (const c of candidates) {
     const source: SourcePointer = {
       host: s.host,
@@ -526,18 +533,22 @@ export function admit(
     const target = c.relation.target ? props.get(c.relation.target) : undefined;
     // §8.11.3：候选归属最终项目（global → null，会话项目 → projectId，别的项目 → 该项目的 id）
     const pid = c.project === "global" ? null : c.project && c.project !== s.project ? projectIdOf?.(c.project) ?? projectId : projectId;
+    // §8.11.3：所有关系目标必须在最终项目或全局里；越界关系清除，按新条目处理，交给第 2 层重新判
+    const outOfScope = !!target && target.project_id !== null && target.project_id !== pid;
+    const rel = outOfScope ? { type: "new" as const, target: null } : c.relation;
+    const relTarget = outOfScope ? undefined : target;
     // §8.11.3：拒绝把候选当成别的项目条目的重复，这种情况按新条目处理
-    const crossProjectDup = c.relation.type === "duplicate" && target && target.project_id !== null && target.project_id !== pid;
-    if (!c.unreconciled && !crossProjectDup && c.relation.type === "duplicate" && target && target.state === "active") {
+    const crossProjectDup = outOfScope && c.relation.type === "duplicate" && !!target;
+    if (!c.unreconciled && !crossProjectDup && rel.type === "duplicate" && relTarget && relTarget.state === "active") {
       // duplicate 追加的证据事件也带 quote 和 said_at（§8.11.2），密钥检查在 store.commit 前由 checkRememberBody 负责；
       // 证据事件不经过 checkRememberBody，这里用与 extract 相同的 secretKinds 自查，脏引文只丢该条证据
       const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0), window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
-      out.appends.push({ kind: "evidence", project_id: target.project_id, session_id: s.session_id, target_id: target.id, body });
+      out.appends.push({ kind: "evidence", project_id: relTarget.project_id, session_id: s.session_id, target_id: relTarget.id, body });
       out.keys.push(c.key);
       out.receipt.attached++;
-      const cb = corroborationConfirm(target, body);
+      const cb = corroborationConfirm(relTarget, body);
       if (cb) {
-        out.appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
+        out.appends.push({ kind: "confirm", project_id: relTarget.project_id, session_id: null, target_id: relTarget.id, body: cb });
         out.keys.push(`${c.key}:confirm`);
         out.receipt.corroborated++;
       }
@@ -556,7 +567,7 @@ export function admit(
       basis: c.basis,
       evidence: c.evidence,
       window_id: windowId,
-      relation: { type: c.relation.type, target: target ? target.id : null },
+      relation: { type: rel.type, target: relTarget ? relTarget.id : null },
       ...(c.valid_days ? { valid_days: c.valid_days } : {}),
       ...(c.said_at ? { said_at: c.said_at } : {}),
       ...(c.guidance ? { guidance: true } : {}),
@@ -568,15 +579,29 @@ export function admit(
       // §8.11.3：候选被判定为别的项目条目的重复，按新条目处理（不并、不标关系未判定）
       body.relation = { type: "new", target: null };
       out.receipt.proposals++;
-    } else if (c.unreconciled || c.relation.type === "unsure" || (c.relation.type !== "new" && !target)) {
+    } else if (c.unreconciled || rel.type === "unsure" || (rel.type !== "new" && !relTarget)) {
       body.unreconciled = true;
       out.receipt.unreconciled++;
-    } else if ((c.relation.type === "conflicts" || c.relation.type === "supersedes") && target && target.state === "active") {
-      body.supersedes = target.id; // 未确认的纠正：只标"有待确认的纠正"，不盖掉旧条目（§9.2）
-      body.kind = target.kind === "note" ? c.kind : target.kind;
+    } else if ((rel.type === "conflicts" || rel.type === "supersedes") && relTarget && relTarget.state === "active") {
+      body.supersedes = relTarget.id; // 未确认的纠正：只标"有待确认的纠正"，不盖掉旧条目（§9.2）
+      // 带详情的决定不强制改成目标种类（§8.11.3）：候选的正文或否掉的方案在目标种类下不合法时，保留候选自己的种类
+      try {
+        checkBodyField(relTarget.kind, c.body);
+        checkAlternatives(relTarget.kind, c.alternatives);
+        body.kind = relTarget.kind;
+      } catch {
+        // 保留候选自己的种类
+      }
       out.receipt.corrections++;
     } else {
       out.receipt.proposals++;
+    }
+    // 一条候选过不了写入口校验时只丢这一条（§8.11.3），不能拖垮整个窗口
+    try {
+      checkRememberBody(body);
+    } catch {
+      out.receipt.dropped.body_rejected = (out.receipt.dropped.body_rejected ?? 0) + 1;
+      continue;
     }
     out.appends.push({ kind: "remember", project_id: pid, session_id: s.session_id, target_id: null, body });
     out.keys.push(c.key);
@@ -608,7 +633,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   if ("error" in deps.chat) throw new WorkFailure(deps.chat.error, deps.chat.message);
   if (!hasExtractableSignal(c.turns)) {
     receipt.no_signal += 1;
-    return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } };
+    return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
   }
   const ctx = projectContext(deps, s.project, projectId);
   // §8.11.3：生成前给模型的已有记忆 = 会话项目 + 全局 + 窗口里出现名字或路径的已登记项目
@@ -639,7 +664,10 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   receipt.candidates += Array.isArray((parsed as any).candidates) ? (parsed as any).candidates.length : 0;
   for (const [k, n] of Object.entries(v.dropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + (n ?? 0);
   for (const [k, n] of Object.entries(v.evidenceDropped)) receipt.evidence_dropped[k] = (receipt.evidence_dropped[k] ?? 0) + (n ?? 0);
-  const vecs = v.candidates.length ? await embedOrDefer(deps.embedder, v.candidates.map((x) => x.text)) : [];
+  const vecs = v.candidates.length
+    // 去重看完整内容（§8.11.3）：同标题不同正文的候选不能因为标题向量相同被合并
+    ? await embedOrDefer(deps.embedder, v.candidates.map((x) => [x.text, x.why, x.body].filter(Boolean).join("\n")))
+    : [];
   const merged = mergeSameWindow(v.candidates, vecs);
   receipt.merged += v.candidates.length - merged.length;
   // 每条候选单独复查已有条目（§9.4.4 → unreconciled）：
@@ -796,7 +824,10 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     const known = intake.knownCandidates(db, adm.keys);
     const appends = adm.appends.filter((_, i) => !known.has(adm.keys[i]));
     const keys = adm.keys.filter((k) => !known.has(k));
-    Object.assign(receipt, adm.receipt);
+    // receipt.dropped 已在前面累加了抽取自己的丢弃原因，这里只并入准入阶段的，不能整体覆盖
+    const { dropped: admDropped, ...admReceipt } = adm.receipt;
+    Object.assign(receipt, admReceipt);
+    for (const [k, n] of Object.entries(admDropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + n;
     deps.store.commit(appends, (tx, ids) => {
       intake.recordCandidates(tx, keys.map((key, i) => ({ key, event_id: ids[i], window_id: c.id })));
       intake.finishWindow(tx, row, c, "done", null, receipt, deps.now());
@@ -811,7 +842,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
 
 // ---------- 话题结束时一步式沉淀（§8.6） ----------
 
-const emptyAdmission = (): Admission => ({ appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0 } });
+const emptyAdmission = (): Admission => ({ appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } });
 
 /**
  * 写库事务里确认租约还在自己手里（顺便续期）。租约过期被别人接管（如 ab work --undo、另一个 ab work）后，
@@ -948,7 +979,10 @@ async function processTopicSession(
     const appends = adm.appends.filter((_, i) => !known.has(adm.keys[i]));
     const keys = adm.keys.filter((k) => !known.has(k));
     wr.skipped_known = adm.keys.length - keys.length;
-    Object.assign(receipt, adm.receipt);
+    // receipt.dropped 已在前面累加了抽取自己的丢弃原因，这里只并入准入阶段的，不能整体覆盖
+    const { dropped: admDropped, ...admReceipt } = adm.receipt;
+    Object.assign(receipt, admReceipt);
+    for (const [k, n] of Object.entries(admDropped)) receipt.dropped[k] = (receipt.dropped[k] ?? 0) + n;
     const ids = deps.store.commit(appends, (tx, ids) => {
       holdsLease(tx, holder, deps.now());
       intake.recordCandidates(tx, keys.map((key, i) => ({ key, event_id: ids[i], window_id: c.id })));
