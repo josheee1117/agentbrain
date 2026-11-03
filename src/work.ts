@@ -745,6 +745,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
   }
+  if (!opts.dryRun && s.error_code === "source_unavailable") intake.setSessionError(db, s, null);
   const hitsByAnchor = new Map<string, Record<string, number>>();
   turns = turns.map((t) => {
     const r = sanitize(t.text);

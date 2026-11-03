@@ -984,7 +984,7 @@ test("sweep：未登记的坏 .zst 不阻断 sweep，其他会话照常抽取（
 
 test("processSession：dry-run 不写库（transcript 没落盘时不补登记）", async () => {
   const e = env();
-  const { home, id, zstPath } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7cc");
+  const { home, id } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7cc");
   intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: null, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
   const old = process.env.HOME;
   process.env.HOME = home;
@@ -992,7 +992,6 @@ test("processSession：dry-run 不写库（transcript 没落盘时不补登记�
     const r = await runWork(e.deps(null), { sweep: false, dryRun: true });
     assert.equal(r.dry.length, 1);
     assert.equal(intake.sessions(e.store.workDb)[0].transcript, null, "dry-run 不写库");
-    assert.ok(zstPath.endsWith(".jsonl.zst"), "dry-run 读到的是压缩文件");
   } finally {
     process.env.HOME = old;
   }
@@ -1055,6 +1054,35 @@ test("CLI sweep：坏 Codex 压缩文件不阻断其他会话的补登记", () =
     cliStore.close();
   }
 });
+
+for (const mode of ["普通", "话题"] as const) {
+  for (const scenario of ["无新内容", "定位点缺失", "dry-run", "其他错误码"] as const) {
+    test(`压缩会话恢复（${mode}）：${scenario}`, async () => {
+      const { e, home, id, zstPath } = zstHome(`recovery-${mode}-${scenario}`);
+      const oldHome = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: zstPath.slice(0, -4), cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+        const anchor = scenario === "定位点缺失" ? "missing" : "1";
+        const error = scenario === "其他错误码" ? "unregistered_project" : "source_unavailable";
+        e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor=?, error_code=? WHERE host=? AND session_id=?").run(anchor, error, "codex", id);
+        const chat = fakeChat(() => json({ candidates: [] }));
+        const extra: Partial<WorkDeps> = mode === "话题" ? { topic: { run: "recovery-fixture", chatFor: () => ({ chat, model: "fixture-model" }) } } : {};
+        const before = intake.sessions(e.store.workDb)[0];
+        const report = await runWork(e.deps(chat, extra), { sweep: false, dryRun: scenario === "dry-run" });
+        const after = intake.sessions(e.store.workDb)[0];
+        assert.equal(report.windows.done, 0);
+        assert.equal(chat.calls.length, 0);
+        assert.equal(after.processed_anchor, anchor);
+        assert.equal(after.error_code, scenario === "无新内容" ? null : error);
+        if (scenario === "dry-run") assert.deepEqual(after, before);
+      } finally {
+        e.store.close();
+        process.env.HOME = oldHome;
+      }
+    });
+  }
+}
 
 // ---------- 代码核验转正 ----------
 

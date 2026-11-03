@@ -14,8 +14,6 @@ import { opencodeId, opencodeSession } from "./opencode.ts";
 const ZST_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 /** `.jsonl.zst` 读开头时只读压缩文件前这么多字节（§7.6 实测 941 个文件都够用，0.86 ms）。 */
 const ZST_HEAD_READ_BYTES = 256 * 1024;
-/** 读开头时解压输出上限：开头只取元数据，不解出全文（够一个超大窗口用）。 */
-const ZST_HEAD_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /** 文件是否存在且是普通文件（跟随符号链接；准入另有 realpath 检查）。 */
 function isFile(p: string): boolean {
@@ -88,7 +86,7 @@ export function readTranscript(path: string, maxBytes?: number): string {
     try {
       const buf = Buffer.alloc(ZST_HEAD_READ_BYTES);
       const n = readSync(fd, buf, 0, ZST_HEAD_READ_BYTES, 0);
-      return zstdDecompressSync(buf.subarray(0, n), { maxOutputLength: ZST_HEAD_MAX_OUTPUT_BYTES }).subarray(0, maxBytes).toString("utf8");
+      return zstdDecompressSync(buf.subarray(0, n), { maxOutputLength: ZST_MAX_OUTPUT_BYTES }).subarray(0, maxBytes).toString("utf8");
     } finally {
       closeSync(fd);
     }

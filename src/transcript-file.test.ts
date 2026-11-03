@@ -91,7 +91,7 @@ test("readTranscript 开头：只读压缩文件前 256 KB，解压后截取前 
   try {
     const text = bigText();
     const p = join(e.roots.codex, "head.jsonl.zst");
-    const c = put(p, text, true);
+    put(p, text, true);
     const n = 16_384;
     const head = readTranscript(p, n);
     assert.equal(Buffer.byteLength(head, "utf8"), n, "maxBytes 按字节截");
@@ -102,7 +102,6 @@ test("readTranscript 开头：只读压缩文件前 256 KB，解压后截取前 
     const smallP = join(e.roots.codex, "small.jsonl.zst");
     writeFileSync(smallP, smallC);
     assert.equal(readTranscript(smallP, 1000), Buffer.from(small, "utf8").subarray(0, 1000).toString("utf8"));
-    assert.ok(c.length > 0);
   } finally {
     e.restore();
   }
@@ -232,13 +231,14 @@ test("readTranscript 开头：maxBytes 按字节截取，不按字符（多字�
   }
 });
 
-test("readTranscript 开头：解压超出上限抛错，防止小文件解出巨量内容", () => {
+test("readTranscript 开头：高压缩比的 17 MB Codex worker 仍能识别", () => {
   const e = env();
   try {
     const p = codexPath(e.roots.codex, "01a11967-19b1-7063-8631-c3dfad45ef95", ".jsonl.zst");
-    const c = zstdCompressSync(Buffer.alloc(20 * 1024 * 1024)); // 解压后 20 MB，超开头解压上限
-    writeFileSync(p, c);
-    assert.throws(() => readTranscript(p, 4096), /BUFFER_TOO_LARGE/);
+    const meta = JSON.stringify({ type: "session_meta", payload: { source: "exec", base_instructions: "x".repeat(17 * 1024 * 1024) } }) + "\n";
+    writeFileSync(p, zstdCompressSync(Buffer.from(meta)));
+    assert.equal(isWorkerTranscript(p), true);
+    assert.equal(readTranscript(p, 4096), Buffer.from(meta).subarray(0, 4096).toString("utf8"));
   } finally {
     e.restore();
   }
