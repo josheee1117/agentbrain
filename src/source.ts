@@ -153,13 +153,17 @@ export function expandSource(src: SourcePointer): string | null {
   if (!src.host || !src.transcript || !src.anchor) return null;
   const allowed = allowedTranscript(src.host, src.transcript);
   if (!allowed) return null; // L1 里的路径不算可信，每次读都先过准入（§7.6）
-  const text =
-    src.host === "pi"
-      ? readPi(src.transcript, src.anchor)
-      : src.host === "claude"
-        ? readClaude(src.transcript, src.anchor)
-        : readCodex(src.transcript, src.anchor);
-  return text || null;
+  try {
+    const text =
+      src.host === "pi"
+        ? readPi(allowed, src.anchor)
+        : src.host === "claude"
+          ? readClaude(allowed, src.anchor)
+          : readCodex(allowed, src.anchor);
+    return text || null;
+  } catch {
+    return null; // 读不了（坏帧、截断、已删）＝显式不可用，不抛到 ab get
+  }
 }
 
 /** 当前 transcript 的最新定位点；文件不存在或没有可用条目时返回 null。 */
@@ -173,7 +177,12 @@ export function latestAnchor(host: Host, transcriptPath: string): string | null 
   }
   const allowed = allowedTranscript(host, transcriptPath);
   if (!allowed) return null;
-  const lines = linesOf(allowed);
+  let lines: unknown[];
+  try {
+    lines = linesOf(allowed);
+  } catch {
+    return null; // 读不了＝显式不可用
+  }
   if (host === "pi") {
     let id: string | null = null;
     for (const e of lines as PiEntry[]) if (e.type === "message" && e.id) id = e.id;

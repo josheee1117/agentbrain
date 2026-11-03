@@ -113,7 +113,12 @@ export function piSessionId(file: string): string | null {
 }
 
 function headLines(file: string): any[] {
-  const raw = readTranscript(file, SCAN_HEAD_BYTES);
+  let raw: string;
+  try {
+    raw = readTranscript(file, SCAN_HEAD_BYTES);
+  } catch {
+    return []; // 读不了就跳过这一项，不能拖垮整个扫描
+  }
   return raw.split("\n").slice(0, 50).flatMap((l) => {
     try {
       return [JSON.parse(l)];
@@ -145,7 +150,7 @@ export function sessionStart(file: string, head?: any[]): number | null {
   }
 }
 
-function walk(dir: string, depth: number, out: string[]): void {
+function walk(host: Host, dir: string, depth: number, out: string[]): void {
   let ents: Dirent[];
   try {
     ents = readdirSync(dir, { withFileTypes: true });
@@ -154,8 +159,9 @@ function walk(dir: string, depth: number, out: string[]): void {
   }
   for (const e of ents) {
     const p = join(dir, e.name);
-    if (e.isDirectory() && depth > 0) walk(p, depth - 1, out);
-    else if (e.isFile() && (e.name.endsWith(".jsonl") || e.name.endsWith(".jsonl.zst"))) out.push(p);
+    if (e.isDirectory() && depth > 0) walk(host, p, depth - 1, out);
+    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
+    else if (e.isFile() && e.name.endsWith(".jsonl.zst") && host === "codex") out.push(p);
   }
 }
 
@@ -173,7 +179,7 @@ export function scan(deps: WorkDeps): number {
   ];
   for (const [host, rel, depth] of hosts) {
     const files: string[] = [];
-    walk(join(homedir(), rel), depth, files);
+    walk(host, join(homedir(), rel), depth, files);
     for (const f of files) {
       let mtime: number;
       try {
@@ -182,11 +188,10 @@ export function scan(deps: WorkDeps): number {
         continue;
       }
       if (mtime < since) continue;
-      const base = f.replace(/\.jsonl\.zst$/, "").replace(/\.jsonl$/, "");
       const id =
-        host === "claude" ? base.split(sep).pop()!
-        : host === "codex" ? (/-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(base)?.[1] ?? null)
-        : piSessionId(base);
+        host === "claude" ? f.split(sep).pop()!.replace(/\.jsonl$/, "")
+        : host === "codex" ? (/-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/.exec(f)?.[1] ?? null)
+        : piSessionId(f);
       if (!id || intake.knownSession(db, host, id)) continue;
       const head = headLines(f);
       const cwd = head.map((e) => e?.cwd ?? e?.payload?.cwd).find((c) => typeof c === "string") as string | undefined;
@@ -689,7 +694,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     const found = locateTranscript(s.host, s.session_id);
     const ok = found ? allowedTranscript(s.host, found, s.session_id) : null;
     if (ok) {
-      intake.setTranscript(db, s, ok);
+      if (!opts.dryRun) intake.setTranscript(db, s, ok); // dry-run 不写库，只在内存里继续
       s = { ...s, transcript: ok };
     }
   }
@@ -698,34 +703,30 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     return;
   }
   if (deps.store.sessionPurged(s.session_id)) {
-    intake.setSessionError(db, s, "purged");
+    if (!opts.dryRun) intake.setSessionError(db, s, "purged");
     report.windows.skipped++;
     return;
   }
   if (!deps.registry.some((e) => e.name === s.project)) {
-    intake.setSessionError(db, s, "unregistered_project");
+    if (!opts.dryRun) intake.setSessionError(db, s, "unregistered_project");
     report.windows.skipped++;
     return;
   }
   // §7.6：每次读之前对所有宿主过准入，库里记的路径不算可信（登记后可能被换成目录外符号链接等）；不过关记 source_unavailable、进度不动
-  const admitted = allowedTranscript(s.host, s.transcript, s.session_id);
-  if (!admitted) {
+  const file = allowedTranscript(s.host, s.transcript, s.session_id);
+  if (!file) {
     report.windows.skipped++;
-    intake.setSessionError(db, s, "source_unavailable");
+    if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
   }
-  const file = admitted; // 后面一律读准入返回的实际路径
-  if (admitted !== s.transcript) {
-    intake.setTranscript(db, s, admitted);
-    s = { ...s, transcript: admitted };
-  }
+  // 不改写库里的 transcript：§7.6 第 1 条，capture_sessions.transcript 保持登记时的路径，下一次压缩/恢复也不失效
   let turns: Turn[];
   let stripped = 0;
   let worker = false;
   try {
     const cleaned = cleanTranscript(s.host, file);
     if (cleaned.subagent) {
-      intake.markEphemeral(db, s);
+      if (!opts.dryRun) intake.markEphemeral(db, s);
       report.windows.skipped++;
       return;
     }
@@ -741,7 +742,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       s = { ...s, processed_anchor: to };
     }
   } catch {
-    intake.setSessionError(db, s, "source_unavailable");
+    if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
   }
   const hitsByAnchor = new Map<string, Record<string, number>>();
@@ -753,7 +754,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
   if (chunks === "anchor_missing") {
-    intake.setSessionError(db, s, "source_unavailable");
+    if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
   }
   if (opts.dryRun) {
@@ -860,7 +861,7 @@ async function processTopicSession(
   }
   const cut = topicChunks(s.host, s.session_id, turns, s.processed_anchor, { marks: topicMarks(db, s.host, s.session_id), ended, idleTail });
   if (cut === "anchor_missing") {
-    intake.setSessionError(db, s, "source_unavailable");
+    if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
   }
   if (opts.dryRun) {

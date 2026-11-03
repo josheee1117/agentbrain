@@ -25,7 +25,7 @@
 - 真实的抽取沉淀和代码核验依赖远程大模型 API key（`~/.agentbrain/extract.json`）
 - 本地无真实 key 时真实模型调用受限，通过 `--dry-run` 验证调度与积压扫描逻辑；429 延后与续做只能用单元测试覆盖，真实额度恢复未在本技能里跑
 - 自动抽取和 agent 自记都直接写成有效的未确认条目（不再进候选区），代码核验转正或用户 confirm 才变已确认
-- `.jsonl.zst` 只在 Codex 会话目录里被放行（§7.6）；Claude、Pi 的压缩文件照旧拒绝。解压上限 256 MB，超过或截断的帧按读取失败处理、报 source_unavailable、进度不动
+- `.jsonl.zst` 只在 Codex 会话目录里被放行（§7.6）；Claude、Pi 的压缩文件照旧拒绝。全文解压上限 256 MB；开头只读压缩文件前 256 KB，解压上限 16 MB，按字节截取。坏文件不阻断扫描，缺失文件报 source_unavailable，进度不动。`--dry-run` 不写库，处理和来源展开不改登记路径。回归测试在 `src/transcript-file.test.ts` 和 `src/work.test.ts`。
 - 模型产出段与版本口径只用单测覆盖（`src/prompt-version.test.ts` 用假 chat 跑真实的 `runWork` / `importPensieve` / `applyActions`，再调真实 `ab get`）。`ab work --dry-run` 不调模型，驱动不出这段，要看真实输出用 `ab get`
 - `ab curate --apply` 改写的条目本次不带 `model` / `prompt_version`，`ab get` 显示「未记录」，属已知范围例外（§8.10）
 - `extract.json` 可加 `extraBody`（对象，如 `{"reasoning_effort":"medium"}`）原样带进 chat 请求；写了非对象时 `ab status` / `ab doctor` 的「抽取模型」行显示「不可用（…/extract.json 的 extraBody 必须是对象）」

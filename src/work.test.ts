@@ -14,6 +14,7 @@ import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
 import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
 import { allowedTranscript } from "./transcript-file.ts";
+import { expandSource } from "./source.ts";
 import * as intake from "./intake.ts";
 import { sha256, validate } from "./extract.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
@@ -903,6 +904,156 @@ test("旧数据里的 scan 记录：开始早于第一次 hook 登记的改记 b
   const starts: Record<string, number> = { "/x/old.jsonl": Date.parse("2026-10-10T00:00:00Z"), "/x/new.jsonl": Date.parse("2026-10-12T03:50:00Z") };
   assert.equal(intake.reclassifyScanned(db, (t) => starts[t] ?? null), 1);
   assert.deepEqual(intake.sessions(db).map((s) => [s.session_id, s.via]).sort(), [["hk", "hook"], ["new", "scan"], ["old", "backfill"]]);
+});
+
+test("扫描兜底：坏 .zst 不影响同目录其他会话，也不崩溃（§7.6 round1 修复）", () => {
+  const e = env();
+  const home = join(base, "badhome");
+  mkdirSync(join(home, ".claude/projects/p"), { recursive: true });
+  mkdirSync(join(home, ".codex/sessions/2026/10/08"), { recursive: true });
+  const line = (cwd: string, ts: string) => JSON.stringify({ type: "user", uuid: "u", cwd, timestamp: ts, message: { content: "hi" } }) + "\n";
+  writeFileSync(join(home, ".codex/sessions/2026/10/08/rollout-bad-01a11967-19b1-7063-8631-c3dfad45ef93.jsonl.zst"), "not zstd");
+  writeFileSync(join(home, ".claude/projects/p/good.jsonl"), line(e.repo, "2026-10-01T00:00:00Z"));
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.equal(scan(e.deps(null)), 1, "坏文件跳过，好文件照常登记");
+    assert.deepEqual(intake.sessions(e.store.workDb).map((s) => s.session_id), ["good"]);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("扫描兜底：Pi 会话被补登记（round1 修复：piSessionId 传原路径）", () => {
+  const e = env();
+  const home = join(base, "pihome");
+  mkdirSync(join(home, ".pi/agent/sessions"), { recursive: true });
+  const line = (cwd: string, ts: string) => JSON.stringify({ type: "message", id: "e1", parentId: null, cwd, timestamp: ts, message: { role: "user", content: "hi" } }) + "\n";
+  writeFileSync(join(home, ".pi/agent/sessions/2026-10-06T00-00-00-000Z_01a11967-19b1-7063-8631-c3dfad45ef99.jsonl"), line(e.repo, "2026-10-06T00:00:00Z"));
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.equal(scan(e.deps(null)), 1, "Pi 会话被登记");
+    assert.deepEqual(intake.sessions(e.store.workDb).map((s) => [s.host, s.session_id]), [["pi", "01a11967-19b1-7063-8631-c3dfad45ef99"]]);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("扫描兜底：Claude 与 Pi 的 .zst 不进扫描，Codex 的进", () => {
+  const e = env();
+  const home = join(base, "zstwalkhome");
+  mkdirSync(join(home, ".claude/projects/p"), { recursive: true });
+  mkdirSync(join(home, ".pi/agent/sessions"), { recursive: true });
+  mkdirSync(join(home, ".codex/sessions/2026/10/08"), { recursive: true });
+  const line = (cwd: string, ts: string) => JSON.stringify({ type: "message", id: "e1", parentId: null, cwd, timestamp: ts, message: { role: "user", content: "hi" } }) + "\n";
+  // Claude 和 Pi 的 .zst（walk 只对 codex 收 .zst，这两个应该被无视）
+  writeFileSync(join(home, ".claude/projects/p/c.jsonl.zst"), zstdCompressSync(Buffer.from(line(e.repo, "2026-10-06T00:00:00Z"), "utf8")));
+  writeFileSync(join(home, ".pi/agent/sessions/2026-10-06T00-00-00-000Z_01a11967-19b1-7063-8631-c3dfad45ef98.jsonl.zst"), zstdCompressSync(Buffer.from(line(e.repo, "2026-10-06T00:00:00Z"), "utf8")));
+  // Codex 的 .zst 应该被扫描
+  const codexId = "01a11967-19b1-7063-8631-c3dfad45ef97";
+  const codexLine = JSON.stringify({ type: "session_meta", payload: { cwd: e.repo, source: "vscode" } }) + "\n" + JSON.stringify({ ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] } }) + "\n";
+  writeFileSync(join(home, `.codex/sessions/2026/10/08/rollout-2026-10-08T10-45-49-${codexId}.jsonl.zst`), zstdCompressSync(Buffer.from(codexLine, "utf8")));
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    scan(e.deps(null));
+    assert.deepEqual(intake.sessions(e.store.workDb).map((s) => [s.host, s.session_id]), [["codex", codexId]]);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("sweep：未登记的坏 .zst 不阻断 sweep，其他会话照常抽取（round1 修复）", async () => {
+  const e = env();
+  // 一个未登记的坏 .zst（scan 会遇到它），一个好会话已登记
+  const badZst = join(e.dir, ".codex/sessions/2026/10/08/rollout-2026-10-08T10-45-49-01a11967-19b1-7063-8631-c3dfad45ef94.jsonl.zst");
+  mkdirSync(join(e.dir, ".codex/sessions/2026/10/08"), { recursive: true });
+  writeFileSync(badZst, "not zstd");
+  const good = e.codexTranscript("01a11967-19b1-7063-8631-c3dfad45ef95", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "以后 hook 命令都写 node 绝对路径" }] } },
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: "01a11967-19b1-7063-8631-c3dfad45ef95", transcript: good, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const chat = fakeChat(() => json({ candidates: [RULE] }));
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(r.windows.done, 1, "好会话照常抽取，坏文件不阻断");
+  assert.equal(chat.calls.length, 1);
+  assert.equal(intake.knownSession(e.store.workDb, "codex", "01a11967-19b1-7063-8631-c3dfad45ef94"), false, "坏文件没被登记");
+});
+
+test("processSession：dry-run 不写库（transcript 没落盘时不补登记）", async () => {
+  const e = env();
+  const { home, id, zstPath } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7cc");
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: null, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const r = await runWork(e.deps(null), { sweep: false, dryRun: true });
+    assert.equal(r.dry.length, 1);
+    assert.equal(intake.sessions(e.store.workDb)[0].transcript, null, "dry-run 不写库");
+    assert.ok(zstPath.endsWith(".jsonl.zst"), "dry-run 读到的是压缩文件");
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("processSession：不改写库里的 transcript 路径（§7.6 第 1 条）", async () => {
+  const { e, home, id, zstPath } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7cb");
+  // 库里的路径是 .jsonl（压缩前登记的），实际文件只剩 .zst
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: zstPath.slice(0, -4), cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    assert.equal(intake.sessions(e.store.workDb)[0].transcript, zstPath.slice(0, -4), "capture_sessions.transcript 保持原路径");
+    const p = props(e.store)[0];
+    assert.equal(p.source.transcript, zstPath.slice(0, -4), "L1 来源保留登记路径");
+    assert.match(expandSource(p.source)!, /以后 hook 命令都写 node 绝对路径/);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("processSession：缺失文件记 source_unavailable，dry-run 不改任何工作表", async () => {
+  const e = env();
+  const missing = join(e.dir, ".claude/projects/fixture/missing.jsonl");
+  e.register("missing", missing, true);
+  const before = e.store.workDb.prepare("SELECT * FROM capture_sessions").all();
+  const changes = e.store.workDb.prepare("SELECT total_changes() AS n").get()!.n;
+  const chat = fakeChat(() => json({ candidates: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: true });
+  assert.deepEqual(e.store.workDb.prepare("SELECT * FROM capture_sessions").all(), before);
+  assert.equal(e.store.workDb.prepare("SELECT total_changes() AS n").get()!.n, changes);
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const s = intake.sessions(e.store.workDb)[0];
+  assert.equal(s.error_code, "source_unavailable");
+  assert.equal(s.processed_anchor, null);
+  assert.equal(chat.calls.length, 0);
+});
+
+test("CLI sweep：坏 Codex 压缩文件不阻断其他会话的补登记", () => {
+  const e = env();
+  const dirs = [join(e.dir, ".codex/sessions/2026/10/08"), join(e.dir, ".claude/projects/fixture")];
+  for (const d of dirs) mkdirSync(d, { recursive: true });
+  writeFileSync(join(dirs[0], "rollout-bad-01a11967-19b1-7063-8631-c3dfad45ef92.jsonl.zst"), "not zstd");
+  const good = join(dirs[1], "good.jsonl");
+  writeFileSync(good, JSON.stringify({ type: "user", uuid: "u1", cwd: e.repo, message: { content: "以后测试必须检查真实数据库变化" } }) + "\n");
+  writeFileSync(join(e.registryDir, "alpha.md"), `- 路径：\`${e.repo}\`\n`);
+  const abHome = join(e.dir, "cli-store");
+  const out = execFileSync(process.execPath, [join(import.meta.dirname, "cli.ts"), "work", "--sweep"], {
+    cwd: e.repo, encoding: "utf8", env: { ...process.env, AB_HOME: abHome, AGENTBRAIN_HOME: abHome, AB_REGISTRY: e.registryDir, HOME: e.dir, AGENTBRAIN_REVIEWER: "1" },
+  });
+  assert.ok(out.length > 0);
+  const cliStore = new Store(join(abHome, "store.db"), join(abHome, "index.db"));
+  try {
+    assert.ok(intake.knownSession(cliStore.workDb, "claude", "good"));
+    assert.equal(intake.knownSession(cliStore.workDb, "codex", "01a11967-19b1-7063-8631-c3dfad45ef92"), false);
+  } finally {
+    cliStore.close();
+  }
 });
 
 // ---------- 代码核验转正 ----------

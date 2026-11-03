@@ -3,7 +3,7 @@
  * 只做文件层的事：定位 `.jsonl` / `.jsonl.zst`、按需读（全文或开头）、准入与路径解析，不解析内容。
  * 调用方不再自己判断扩展名。
  */
-import { realpathSync, readFileSync, readSync, openSync, closeSync } from "node:fs";
+import { realpathSync, readFileSync, readSync, openSync, closeSync, statSync } from "node:fs";
 import { zstdDecompressSync } from "node:zlib";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -14,23 +14,25 @@ import { opencodeId, opencodeSession } from "./opencode.ts";
 const ZST_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 /** `.jsonl.zst` 读开头时只读压缩文件前这么多字节（§7.6 实测 941 个文件都够用，0.86 ms）。 */
 const ZST_HEAD_READ_BYTES = 256 * 1024;
+/** 读开头时解压输出上限：开头只取元数据，不解出全文（够一个超大窗口用）。 */
+const ZST_HEAD_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
+/** 文件是否存在且是普通文件（跟随符号链接；准入另有 realpath 检查）。 */
+function isFile(p: string): boolean {
+  try {
+    return statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
 
 /** 先试 `x.jsonl`，再试 `x.jsonl.zst`（与 Codex path_metadata.rs 的顺序一致）；都没有返回 null。 */
 export function resolveTranscript(path: string): string | null {
   const base = path.endsWith(".jsonl.zst") ? path.slice(0, -4) : path.endsWith(".jsonl") ? path : null;
   if (!base) return null;
-  try {
-    if (readFileSync(base, { flag: "r" }).length >= 0) return base;
-  } catch {
-    /* 没有未压缩那份 */
-  }
+  if (isFile(base)) return base;
   const alt = base + ".zst";
-  try {
-    if (readFileSync(alt, { flag: "r" }).length >= 0) return alt;
-  } catch {
-    /* 也没有压缩那份 */
-  }
-  return null;
+  return isFile(alt) ? alt : null;
 }
 
 /**
@@ -69,20 +71,27 @@ function zstFrameComplete(b: Buffer): boolean {
 
 /**
  * 读 transcript 全文（不给 maxBytes）。`.jsonl.zst` 解压前先查完整性，超过解压上限抛错，
- * 由调用方记 source_unavailable。坏文件、截断帧抛错；文件不存在时按空串返回（调用方自会判空）。
+ * 由调用方记 source_unavailable。坏文件、截断帧、文件不存在都抛错（不存在不能伪装成空会话，
+ * 调用方会把它当成 0 轮静默跳过）。
  */
 export function readTranscript(path: string, maxBytes?: number): string {
   const p = resolveTranscript(path);
-  if (!p) return "";
+  if (!p) throw new Error(`transcript 不存在: ${path}`);
   if (p.endsWith(".zst")) {
-    const c = readFileSync(p);
     if (maxBytes === undefined) {
+      const c = readFileSync(p);
       if (!zstFrameComplete(c)) throw new Error(`截断或损坏的压缩文件: ${p}`);
       return zstdDecompressSync(c, { maxOutputLength: ZST_MAX_OUTPUT_BYTES }).toString("utf8");
     }
     // 读开头：只读压缩文件前 256 KB 再解压（故意利用截断帧返回部分数据，这里不查完整性）。
-    const head = c.subarray(0, ZST_HEAD_READ_BYTES);
-    return zstdDecompressSync(head).toString("utf8").slice(0, maxBytes);
+    const fd = openSync(p, "r");
+    try {
+      const buf = Buffer.alloc(ZST_HEAD_READ_BYTES);
+      const n = readSync(fd, buf, 0, ZST_HEAD_READ_BYTES, 0);
+      return zstdDecompressSync(buf.subarray(0, n), { maxOutputLength: ZST_HEAD_MAX_OUTPUT_BYTES }).subarray(0, maxBytes).toString("utf8");
+    } finally {
+      closeSync(fd);
+    }
   }
   if (maxBytes === undefined) return readFileSync(p, "utf8");
   const fd = openSync(p, "r");
@@ -105,8 +114,8 @@ const TRANSCRIPT_ROOTS: Record<Host, string[]> = {
 /**
  * 准入：transcript 必须是真实文件、落在该宿主自己的会话目录下。先解析实际文件（`.jsonl` 或 `.jsonl.zst`），
  * 再做 realpath 和根目录检查，返回实际路径。只有 Codex 放行 `.jsonl.zst`，其他宿主照旧拒绝。
- * 两种都不存在时维持现状（Claude 的 transcript 可能晚于第一次 hook 才落盘）。
- * 每次读之前都查，不只查登记时：L1 与 capture_sessions 里的路径都不算可信（§7.6）。
+ * 两种都不存在时维持现状（§7.6 第 4 条）：`.jsonl` 结尾且在根目录内就返回 resolve(path)，
+ * 因为 Claude 的 transcript 可能晚于第一次 hook 才落盘。每次读之前都查，L1 与 capture_sessions 里的路径都不算可信。
  */
 export function allowedTranscript(host: Host, path: string, sessionId?: string): string | null {
   if (host === "opencode") {
@@ -118,24 +127,32 @@ export function allowedTranscript(host: Host, path: string, sessionId?: string):
       return null;
     }
   }
+  if (!path.endsWith(".jsonl") && !path.endsWith(".jsonl.zst")) return null;
+  if (host !== "codex" && path.endsWith(".jsonl.zst")) return null;
+  const inRoot = (real: string) =>
+    TRANSCRIPT_ROOTS[host].some((r) => {
+      const root = join(homedir(), r);
+      let rootReal = root;
+      try {
+        rootReal = realpathSync(root);
+      } catch {
+        /* 目录不存在时按字面比较 */
+      }
+      return real.startsWith(rootReal + sep);
+    });
   const found = resolveTranscript(path);
-  if (!found) return null;
-  if (host !== "codex" && found.endsWith(".zst")) return null;
+  if (found && host !== "codex" && found.endsWith(".zst")) return null;
+  if (!found) {
+    // 两种都不存在：按字面路径检查根目录（Claude 的文件可能还没写）
+    const literal = resolve(path);
+    return inRoot(literal) ? literal : null;
+  }
   let real: string;
   try {
     real = realpathSync(found);
   } catch {
     return null;
   }
-  const ok = TRANSCRIPT_ROOTS[host].some((r) => {
-    const root = join(homedir(), r);
-    let rootReal = root;
-    try {
-      rootReal = realpathSync(root);
-    } catch {
-      /* 目录不存在时按字面比较 */
-    }
-    return real.startsWith(rootReal + sep);
-  });
-  return ok ? real : null;
+  if (!real.endsWith(".jsonl") && !(host === "codex" && real.endsWith(".jsonl.zst"))) return null;
+  return inRoot(real) ? real : null;
 }
