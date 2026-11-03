@@ -25,7 +25,7 @@ const RULES: { kind: SanitizeKind; re: RegExp; keep?: (m: RegExpExecArray) => st
     re: /((?<!\[)(?:api[_-]?key|secret|token|password|passwd|auth[_-]?token|access[_-]?key)["']?\s*[:=]\s*["']?)([^\s"',;\[\]]{8,})/gi,
     keep: (m) => m[1],
     // 值本身不是秘密：${VAR} 环境变量占位符、文档里的算法公式（SHA256(...)、MD5(...)）
-    allow: (v) => v.startsWith("${") || /^(?:SHA\d+|MD5|HMAC[A-Z0-9-]*|BASE64[A-Z0-9]*-?)\(/i.test(v),
+    allow: (v) => /^\$\{[A-Za-z_][A-Za-z0-9_.-]*\}$/.test(v) || /^(?:SHA\d+|MD5|HMAC[A-Z0-9-]*|BASE64[A-Z0-9]*-?)\([^)]*\)?$/i.test(v),
   },
   { kind: "email", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
   { kind: "id_card", re: /(?<![0-9])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9])/g },

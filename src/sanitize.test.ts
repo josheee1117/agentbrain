@@ -51,3 +51,9 @@ test("跑两遍结果不变（占位符不会被再次打码）", () => {
   const once = sanitize("sk-abcdefghijklmnop1234 secret: [SECRET:api_key]").text;
   assert.equal(sanitize(once).text, once);
 });
+
+test("占位符和公式后面、默认值里跟着的内容不放行", () => {
+  for (const s of ["secret=${abc}realsecretvalue123", "secret=${OSS_SK:realsecretvalue}", "password=MD5(x)realsecret"]) {
+    assert.deepEqual(secretKinds(s), ["credential"], s);
+  }
+});
