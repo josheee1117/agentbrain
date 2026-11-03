@@ -10,7 +10,7 @@ agentbrain：以 abrain 为架构母体的本地 Agent 记忆系统。Pi、Claud
 
 ## 约定
 
-- 物理形态（设计 §19 已裁决）：`~/.agentbrain/store.db`（L1 + work store）+ `index.db`（FTS5，可删重建）；不透明 event_id + 自增定序；L2 是 L1 上的纯函数投影，不落盘；来源只存 Source Pointer，不存摘录。
+- 物理形态（设计 §12.2 已裁决）：`~/.agentbrain/store.db`（L1 + work store）+ `index.db`（FTS5，可删重建）；不透明 event_id + 自增定序；L2 是 L1 上的纯函数投影，不落盘；来源只存 Source Pointer，不存摘录。
 - 设计/技术文档：文件名带 YYYYMMDD 日期；每主题只留一份最新文档，原地覆盖修订，变更摘要写进文档内"修订记录"，不靠多文件保历史。
 - 新决策：先记入设计文档"修订记录"（含理由）；与已有决策冲突时停下问用户。
 - 非平凡改动实现前必须先更新设计文档并获用户明确授权（"开始实现"/"按这个做"）。

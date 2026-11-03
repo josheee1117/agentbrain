@@ -1257,7 +1257,7 @@ const USAGE = `用法:
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--from-worker <claude|codex|pi|opencode>:<session_id>] [--scene design,code,review]
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
-                                    --kind note 即事实（文件位置、函数名、字段、接口返回值这类）
+                                    --kind note 即事实
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
