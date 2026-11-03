@@ -1709,7 +1709,7 @@ ab-used: 调 pi/codex 测试用临时库 (7f3c2a1b)；含全局软链的目录�
 
 - 记忆在本机 agentbrain 库（`~/.agentbrain/`）。按范围分全局和项目（项目即 pm 的 `repos/<项目>.md`），按种类分规则、决定、坑、事实；用户的干活偏好每轮常驻注入（`<agentbrain-prefs>`）。
 - 怎么用：开工先跑 `ab brief`（子代理跑 `ab brief --worker`）；每轮相关记忆自动注入（`<agentbrain-recall>`）；要查用 `ab search <关键词>`、`ab get <id>`。与现场证据冲突时信现场。
-- 干活时不写记忆：后台会从会话里自动抽取候选，由审稿模型决定去留。只有用户明确要你记某件事时，才用 `ab remember --confirmed`（参数见 `ab --help`）。
+- 干活时不写记忆：后台会从会话里自动抽取，直接生效并标未确认；审稿是可选的手动操作。只有用户明确要你记某件事时，才用 `ab remember --confirmed`（参数见 `ab --help`）。
 - `<agentbrain-recall>` 里每条前面的 `[8 位 id]` 是它的编号。回答若实际依据了其中某条，在回复最后单独一行写：`ab-used: 简短标题 (id)`，多条用；分隔，例如 `ab-used: 调 pi/codex 测试用临时库 (7f3c2a1b)`。没用上就不写，不要为了写而硬套。
 - `<agentbrain-prefs>` 里的常驻偏好不用标。
 <!-- agentbrain:end managed -->

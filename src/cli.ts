@@ -1257,6 +1257,7 @@ const USAGE = `用法:
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--from-worker <claude|codex|pi|opencode>:<session_id>] [--scene design,code,review]
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
+                                    --kind note 即事实（文件位置、函数名、字段、接口返回值这类）
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
                                     默认记到当前目录所属项目；--global 记全局；--for-workers 让子代理也看到这条全局规则
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
@@ -1295,9 +1296,10 @@ const USAGE = `用法:
   ab setup --remove-notes [--dry-run]     只删托管块
                                     上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
   ab curate [--apply] [--host claude|codex|pi|opencode] [--limit N] | ab curate --undo <run>
-                                    审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审候选区
-                                    默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动候选、用户确认过的不动；--undo 整次撤销
-                                    --host：只审该宿主会话抽出的候选，用 review.json hostReviewers 里给它配的审稿人（用该宿主自己的额度）
+                                    审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审已生效的未确认条目，给出归档建议
+                                    只手动跑；自动抽取和 agent 自记的条目直接生效（未确认），不靠它转正
+                                    默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动未确认条目，用户确认过的不动；--undo 整次撤销
+                                    --host：只审该宿主会话抽出的未确认条目，用 review.json hostReviewers 里给它配的审稿人（用该宿主自己的额度）
   ab work [--session <host>:<id> [--redo]] [--sweep] [--dry-run]
                                     处理已静置或已结束会话的新内容，自动沉淀为未确认记忆
                                     --redo 清掉该会话的处理进度从头重跑（已入库的候选不重复）

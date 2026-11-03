@@ -202,7 +202,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
     let extract = readJson(extractPath) ?? {};
     let review = readJson(reviewPath) ?? { panel: [], arbiter: "" };
     if (want("fast")) {
-      u.say("\n【1/6】快模型（会话结束后抽取候选用，OpenAI 兼容接口）");
+      u.say("\n【1/6】快模型（会话结束后抽取新记忆用，OpenAI 兼容接口）");
       const baseUrl = await u.ask("baseUrl", extract.baseUrl);
       const model = await u.ask("model", extract.model);
       const keyService = await u.ask("钥匙串条目名", extract.keyService ?? "agentbrain-extract");
@@ -214,7 +214,7 @@ export async function runSetup(home: string, only: Step[] | null, io?: SetupIO, 
       u.say(`已写 ${extractPath}`);
     }
     if (want("reviewers")) {
-      u.say("\n【2/6】按宿主分的审稿人：某个宿主的会话结束后，用它自己的命令行无头审稿（用它自己的账号额度），只审从这个宿主会话抽出来的候选");
+      u.say("\n【2/6】按宿主分的审稿人：某个宿主的会话结束后，用它自己的命令行无头审稿（用它自己的账号额度），只审从这个宿主会话抽出来的未确认条目");
       const hr: Record<string, any> = { ...(review.hostReviewers ?? {}) };
       for (const host of ["claude", "codex", "pi"] as const) {
         const old = hr[host];
