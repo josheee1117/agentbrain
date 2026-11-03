@@ -31,6 +31,7 @@ const embedder: Embedder = Object.assign(async (texts: string[]) => texts.map(()
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "ab-prompt-version-"));
+  process.env.HOME = dir; // 夹具：transcript 都在这个 fake home 的宿主会话目录下，准入检查（§7.6 每次读都查）才能过
   const home = join(dir, "ab");
   const repo = join(dir, "repo");
   const registry = join(dir, "repos");
@@ -52,7 +53,9 @@ function fixture() {
     } },
   });
   const register = () => {
-    const transcript = join(dir, "session.jsonl");
+    const d = join(dir, ".claude/projects/fixture");
+    mkdirSync(d, { recursive: true });
+    const transcript = join(d, "session.jsonl");
     writeFileSync(transcript, JSON.stringify({ type: "user", uuid: "u1", message: { role: "user", content: quote } }) + "\n");
     upsertSession(store.workDb, { host: "claude", session_id: "fixture-session", transcript, cwd: repo, ended: true, ephemeral: false, via: "hook" }, () => "fixture", new Date());
   };

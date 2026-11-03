@@ -5,7 +5,7 @@
  */
 import { prune as pruneTelemetry, stripAbUsed } from "./telemetry.ts";
 import type { DatabaseSync } from "node:sqlite";
-import { closeSync, existsSync, mkdirSync, openSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
+import { closeSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -18,6 +18,7 @@ import { addHits, sanitize, secretKinds } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
 import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
+import { allowedTranscript, readTranscript, resolveTranscript } from "./transcript-file.ts";
 import { EXTRACT_PROMPT_VERSION, buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
 import * as intake from "./intake.ts";
@@ -105,44 +106,6 @@ export interface WorkReport {
 
 // ---------- 会话登记 ----------
 
-const TRANSCRIPT_ROOTS: Record<Host, string[]> = {
-  claude: [".claude/projects"],
-  codex: [".codex/sessions", ".codex/archived_sessions"],
-  pi: [".pi/agent/sessions"],
-  opencode: [],
-};
-
-/** transcript 必须在该宿主自己的会话目录下、以 .jsonl 结尾：防止借 capture 把任意文件送出本机。 */
-export function allowedTranscript(host: Host, path: string, sessionId?: string): string | null {
-  if (host === "opencode") {
-    const id = opencodeId(path);
-    if (!id || (sessionId !== undefined && id !== sessionId)) return null;
-    try {
-      return opencodeSession(path) ? path : null;
-    } catch {
-      return null;
-    }
-  }
-  let real: string;
-  try {
-    real = realpathSync(path);
-  } catch {
-    real = resolve(path); // Claude 的 transcript 可能晚于第一次 hook 才落盘
-  }
-  if (!real.endsWith(".jsonl")) return null;
-  const ok = TRANSCRIPT_ROOTS[host].some((r) => {
-    const root = join(homedir(), r);
-    let rootReal = root;
-    try {
-      rootReal = realpathSync(root);
-    } catch {
-      /* 目录不存在时按字面比较 */
-    }
-    return real.startsWith(rootReal + sep);
-  });
-  return ok ? real : null;
-}
-
 /** Pi 文件名是 <时间>_<session id>.jsonl。 */
 export function piSessionId(file: string): string | null {
   const m = /_([^_/]+)\.jsonl$/.exec(file);
@@ -150,19 +113,8 @@ export function piSessionId(file: string): string | null {
 }
 
 function headLines(file: string): any[] {
-  const buf = Buffer.alloc(SCAN_HEAD_BYTES);
-  let n = 0;
-  try {
-    const fd = openSync(file, "r");
-    try {
-      n = readSync(fd, buf, 0, SCAN_HEAD_BYTES, 0);
-    } finally {
-      closeSync(fd);
-    }
-  } catch {
-    return [];
-  }
-  return buf.subarray(0, n).toString("utf8").split("\n").slice(0, 50).flatMap((l) => {
+  const raw = readTranscript(file, SCAN_HEAD_BYTES);
+  return raw.split("\n").slice(0, 50).flatMap((l) => {
     try {
       return [JSON.parse(l)];
     } catch {
@@ -186,7 +138,7 @@ export function sessionStart(file: string, head?: any[]): number | null {
     if (Number.isFinite(ms)) return ms;
   }
   try {
-    const st = statSync(file);
+    const st = statSync(resolveTranscript(file)!);
     return st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
   } catch {
     return null;
@@ -203,7 +155,7 @@ function walk(dir: string, depth: number, out: string[]): void {
   for (const e of ents) {
     const p = join(dir, e.name);
     if (e.isDirectory() && depth > 0) walk(p, depth - 1, out);
-    else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
+    else if (e.isFile() && (e.name.endsWith(".jsonl") || e.name.endsWith(".jsonl.zst"))) out.push(p);
   }
 }
 
@@ -225,15 +177,16 @@ export function scan(deps: WorkDeps): number {
     for (const f of files) {
       let mtime: number;
       try {
-        mtime = statSync(f).mtimeMs;
+        mtime = statSync(resolveTranscript(f)!).mtimeMs;
       } catch {
         continue;
       }
       if (mtime < since) continue;
+      const base = f.replace(/\.jsonl\.zst$/, "").replace(/\.jsonl$/, "");
       const id =
-        host === "claude" ? f.split(sep).pop()!.replace(/\.jsonl$/, "")
-        : host === "codex" ? (/-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(f)?.[1] ?? null)
-        : piSessionId(f);
+        host === "claude" ? base.split(sep).pop()!
+        : host === "codex" ? (/-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(base)?.[1] ?? null)
+        : piSessionId(base);
       if (!id || intake.knownSession(db, host, id)) continue;
       const head = headLines(f);
       const cwd = head.map((e) => e?.cwd ?? e?.payload?.cwd).find((c) => typeof c === "string") as string | undefined;
@@ -634,7 +587,7 @@ function transcriptMtime(s: intake.SessionRow): number {
     if (!session) throw new Error("opencode session does not exist");
     return session.time_updated;
   }
-  return statSync(s.transcript!).mtimeMs;
+  return statSync(resolveTranscript(s.transcript!)!).mtimeMs;
 }
 
 function settled(s: intake.SessionRow, now: Date): boolean {
@@ -754,12 +707,23 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     report.windows.skipped++;
     return;
   }
+  // §7.6：每次读之前对所有宿主过准入，库里记的路径不算可信（登记后可能被换成目录外符号链接等）；不过关记 source_unavailable、进度不动
+  const admitted = allowedTranscript(s.host, s.transcript, s.session_id);
+  if (!admitted) {
+    report.windows.skipped++;
+    intake.setSessionError(db, s, "source_unavailable");
+    return;
+  }
+  const file = admitted; // 后面一律读准入返回的实际路径
+  if (admitted !== s.transcript) {
+    intake.setTranscript(db, s, admitted);
+    s = { ...s, transcript: admitted };
+  }
   let turns: Turn[];
   let stripped = 0;
   let worker = false;
   try {
-    if (s.host === "opencode" && !allowedTranscript(s.host, s.transcript, s.session_id)) throw new Error("invalid opencode source");
-    const cleaned = cleanTranscript(s.host, s.transcript);
+    const cleaned = cleanTranscript(s.host, file);
     if (cleaned.subagent) {
       intake.markEphemeral(db, s);
       report.windows.skipped++;

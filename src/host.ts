@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Host } from "./l2.ts";
 import { opencodeRef, opencodeSession } from "./opencode.ts";
+import { resolveTranscript } from "./transcript-file.ts";
 
 const MAX_ANCESTORS = 20;
 
@@ -76,25 +77,6 @@ export function ancestors(startPid: number): Proc[] {
   return chain;
 }
 
-function findFile(dir: string, pred: (name: string) => boolean, depth: number): string | null {
-  let ents;
-  try {
-    ents = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-  for (const e of ents) {
-    if (!e.isDirectory() && pred(e.name)) return join(dir, e.name);
-  }
-  if (depth <= 0) return null;
-  for (const e of ents) {
-    if (!e.isDirectory()) continue;
-    const hit = findFile(join(dir, e.name), pred, depth - 1);
-    if (hit) return hit;
-  }
-  return null;
-}
-
 export function locateTranscript(host: Host, sessionId: string): string | null {
   if (host === "opencode") {
     const ref = opencodeRef(sessionId);
@@ -105,9 +87,38 @@ export function locateTranscript(host: Host, sessionId: string): string | null {
     }
   }
   const home = homedir();
-  if (host === "claude") return findFile(join(home, ".claude/projects"), (n) => n === `${sessionId}.jsonl`, 2);
-  if (host === "codex") return findFile(join(home, ".codex/sessions"), (n) => n.startsWith("rollout-") && n.endsWith(`-${sessionId}.jsonl`), 4);
-  return findFile(join(home, ".pi/agent/sessions"), (n) => n.endsWith(`_${sessionId}.jsonl`), 2);
+  // 先 sessions 后 archived_sessions；每个目录先精确找 `.jsonl`，再找 `.jsonl.zst`，不靠目录遍历顺序（§7.6）
+  if (host === "claude") return locateIn(join(home, ".claude/projects"), (n) => n === `${sessionId}.jsonl`, 2);
+  if (host === "codex") {
+    for (const root of [join(home, ".codex/sessions"), join(home, ".codex/archived_sessions")]) {
+      const hit = locateIn(root, (n) => n.startsWith("rollout-") && (n.endsWith(`-${sessionId}.jsonl`) || n.endsWith(`-${sessionId}.jsonl.zst`)), 4);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  return locateIn(join(home, ".pi/agent/sessions"), (n) => n.endsWith(`_${sessionId}.jsonl`), 2);
+}
+
+/** 在目录树里先精确找 `.jsonl`，再找 `.jsonl.zst`；两个都返回路径（resolveTranscript 按 Codex 顺序先试未压缩那份）。 */
+function locateIn(dir: string, match: (name: string) => boolean, depth: number): string | null {
+  let ents;
+  try {
+    ents = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const names = ents.filter((e) => !e.isDirectory()).map((e) => e.name);
+  const plain = names.filter(match).filter((n) => n.endsWith(".jsonl")).map((n) => join(dir, n));
+  if (plain.length) return resolveTranscript(plain[0]);
+  const zst = names.filter(match).filter((n) => n.endsWith(".jsonl.zst")).map((n) => join(dir, n));
+  if (zst.length) return resolveTranscript(zst[0]);
+  if (depth <= 0) return null;
+  for (const e of ents) {
+    if (!e.isDirectory()) continue;
+    const hit = locateIn(join(dir, e.name), match, depth - 1);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export interface Detection {

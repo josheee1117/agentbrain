@@ -123,6 +123,7 @@ interface Env {
 
 function env(): Env {
   const dir = join(base, `e${n++}`);
+  process.env.HOME = dir; // 夹具：transcript 都在这个 fake home 的宿主会话目录下，准入检查（§7.6 每次读都查）才能过
   const repo = join(dir, "alpha");
   mkdirSync(repo, { recursive: true });
   const regDir = join(dir, "repos");
@@ -147,7 +148,9 @@ function env(): Env {
       ...extra,
     }),
     transcript: (sid, lines, idleMin = 0) => {
-      const p = join(dir, `${sid}.jsonl`);
+      const d = join(dir, ".claude/projects/fixture");
+      mkdirSync(d, { recursive: true });
+      const p = join(d, `${sid}.jsonl`);
       writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
       // 默认 transcript 刚改过（最后一段还在聊）；idleMin 给出最后修改距"现在"多少分钟
       const m = new Date(T0 + (120 - idleMin) * MIN);

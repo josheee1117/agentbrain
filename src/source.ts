@@ -3,12 +3,13 @@
  * 从记忆时的定位点回溯，还原"当时是怎么讨论出来的"。
  * agentbrain 自身不存对话原文。
  */
-import { closeSync, constants as fsConstants, existsSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { closeSync, constants as fsConstants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { extname, isAbsolute, sep } from "node:path";
 import { sanitize } from "./sanitize.ts";
 import type { SourcePointer, Host } from "./l2.ts";
 import { opencodeId, opencodeParts } from "./opencode.ts";
+import { allowedTranscript, readTranscript } from "./transcript-file.ts";
 
 const MAX_ENTRIES = 30;
 const MAX_CHARS_PER_ENTRY = 600;
@@ -29,7 +30,7 @@ function textOf(content: unknown): string {
 
 export function linesOf(file: string): unknown[] {
   const out: unknown[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  for (const line of readTranscript(file).split("\n")) {
     if (!line.trim()) continue;
     try {
       const v = JSON.parse(line);
@@ -149,7 +150,9 @@ export function expandSource(src: SourcePointer): string | null {
       return null;
     }
   }
-  if (!src.host || !src.transcript || !src.anchor || !existsSync(src.transcript)) return null;
+  if (!src.host || !src.transcript || !src.anchor) return null;
+  const allowed = allowedTranscript(src.host, src.transcript);
+  if (!allowed) return null; // L1 里的路径不算可信，每次读都先过准入（§7.6）
   const text =
     src.host === "pi"
       ? readPi(src.transcript, src.anchor)
@@ -168,8 +171,9 @@ export function latestAnchor(host: Host, transcriptPath: string): string | null 
       return null;
     }
   }
-  if (!existsSync(transcriptPath)) return null;
-  const lines = linesOf(transcriptPath);
+  const allowed = allowedTranscript(host, transcriptPath);
+  if (!allowed) return null;
+  const lines = linesOf(allowed);
   if (host === "pi") {
     let id: string | null = null;
     for (const e of lines as PiEntry[]) if (e.type === "message" && e.id) id = e.id;

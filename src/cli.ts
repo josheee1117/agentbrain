@@ -17,7 +17,8 @@ import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
 import { chatClient, loadChatConfig } from "./llm.ts";
-import { allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
+import { allowedTranscript } from "./transcript-file.ts";
+import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
@@ -363,9 +364,9 @@ function projectIdOf(store: Store, cwd: string): string | null {
   }
 }
 
-/** Claude 是 <uuid>.jsonl，Codex 是 rollout-…-<uuid>.jsonl：取末尾 uuid。 */
+/** Claude 是 <uuid>.jsonl，Codex 是 rollout-…-<uuid>.jsonl（可能带 .zst）：取末尾 uuid。 */
 function codexOrClaudeId(file: string): string | null {
-  const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(file);
+  const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/i.exec(file);
   return m ? m[1] : null;
 }
 

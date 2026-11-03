@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_VALID_DAYS, ownClock, reviewList, sourceClock, validDays } from "./expiry.ts";
 import { validate, type ExtractWindow } from "./extract.ts";
+import { zstdCompressSync } from "node:zlib";
+import { rmSync } from "node:fs";
 
 const src: RememberBody["source"] = { host: "pi", session_id: "s", transcript: null, anchor: null, summary: "讨论" };
 const DAY = 86_400_000;
@@ -107,4 +109,20 @@ test("抽取时把证据所在轮的时间记成 said_at（取最晚一条证据
   ] };
   const c = { kind: "pitfall", scope: "project", text: "node 20 没有 node:sqlite", trigger: "跑测试", basis: "observed_failure", evidence: [{ anchor: "#1", role: "tool", quote: "node:sqlite 不存在" }, { anchor: "#2", role: "tool", quote: "还是 node:sqlite 不存在" }], relation: { type: "new", target: null } };
   assert.equal(validate({ candidates: [c] }, win, [], "w-said").candidates[0].said_at, "2026-09-02T00:00:00.000Z");
+});
+
+test("sourceClock（§7.6）：缓存键用解析后的路径，.jsonl 与 .jsonl.zst 同源", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-clock-zst-"));
+  const start = new Date(Date.now() - 120 * DAY).toISOString();
+  const plain = join(dir, "s.jsonl");
+  writeFileSync(plain, JSON.stringify({ type: "session", timestamp: start }) + "\n");
+  const s = new Store(":memory:", ":memory:");
+  const id = s.remember(null, "s", false, { kind: "pitfall", text: "legacy", confirmed: false, source: { ...src, transcript: plain } });
+  const clock = sourceClock();
+  assert.equal(clock(s.project().props.get(id)!), start);
+  // 同一份 transcript 变成只剩 .zst：解析后的路径相同，两个条目拿到同一会话开始时间
+  writeFileSync(plain + ".zst", zstdCompressSync(Buffer.from(JSON.stringify({ type: "session", timestamp: start }) + "\n", "utf8")));
+  rmSync(plain);
+  const id2 = s.remember(null, "s", false, { kind: "pitfall", text: "legacy zst", confirmed: false, source: { ...src, transcript: plain + ".zst" } });
+  assert.equal(clock(s.project().props.get(id2)!), start);
 });

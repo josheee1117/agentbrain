@@ -5,6 +5,7 @@
  */
 import type { PropKind, Proposition } from "./l2.ts";
 import { sessionStart } from "./work.ts";
+import { resolveTranscript } from "./transcript-file.ts";
 
 export const DEFAULT_VALID_DAYS: Record<PropKind, number> = { pitfall: 90, note: 90, decision: 180, rule: 180 };
 const DAY_MS = 86_400_000;
@@ -44,11 +45,13 @@ export function sourceClock(): Clock {
     if (p.said_at) return p.said_at;
     const file = p.source.transcript;
     if (!file) return p.ts;
-    if (!cache.has(file)) {
-      const ms = sessionStart(file);
-      cache.set(file, ms === null ? null : new Date(ms).toISOString());
+    // 缓存键用解析后的路径：`.jsonl` 与 `.jsonl.zst` 是同一份 transcript（§7.6）
+    const key = resolveTranscript(file) ?? file;
+    if (!cache.has(key)) {
+      const ms = sessionStart(key);
+      cache.set(key, ms === null ? null : new Date(ms).toISOString());
     }
-    const start = cache.get(file);
+    const start = cache.get(key);
     return start && start < p.ts ? start : p.ts;
   };
 }

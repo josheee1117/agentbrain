@@ -3,13 +3,18 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandSource, latestAnchor } from "./source.ts";
 import type { SourcePointer } from "./l2.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "ab-src-"));
+const base = mkdtempSync(join(tmpdir(), "ab-src-"));
+process.env.HOME = base; // 夹具：transcript 都放在这个 fake home 的宿主会话目录下，展开先过准入（§7.6）
+const roots = { pi: join(base, ".pi/agent/sessions/x"), claude: join(base, ".claude/projects/p"), codex: join(base, ".codex/sessions/2026/10/08") };
+for (const d of Object.values(roots)) mkdirSync(d, { recursive: true });
+const dir = base;
+const file = (host: "pi" | "claude" | "codex", name: string) => join(roots[host], name);
 const ptr = (over: Partial<SourcePointer>): SourcePointer => ({
   host: null,
   session_id: null,
@@ -20,7 +25,7 @@ const ptr = (over: Partial<SourcePointer>): SourcePointer => ({
 });
 
 test("pi：沿 parentId 回溯，按时间顺序；跳过非 user/assistant；其他分支不读", () => {
-  const f = join(dir, "pi.jsonl");
+  const f = file("pi", "2026-01-01T00-00-00-000Z_x.jsonl");
   const lines = [
     { type: "session", version: 3, id: "x" },
     { type: "message", id: "e1", parentId: null, message: { role: "user", content: "我们用 SQLite 还是文件？" } },
@@ -41,7 +46,7 @@ test("pi：沿 parentId 回溯，按时间顺序；跳过非 user/assistant；�
 });
 
 test("claude：沿 parentUuid 回溯；没有文本的条目跳过；字符串与数组 content 都读", () => {
-  const f = join(dir, "claude.jsonl");
+  const f = file("claude", "claude.jsonl");
   const lines = [
     { type: "queue-operation", sessionId: "s" },
     { uuid: "u1", parentUuid: null, type: "user", message: { content: "第一条" } },
@@ -64,7 +69,7 @@ test("claude：沿 parentUuid 回溯；没有文本的条目跳过；字符串�
 });
 
 test("codex：只取 response_item 消息；跳过宿主注入；ordinal 不大于 anchor 的最后若干条", () => {
-  const f = join(dir, "codex.jsonl");
+  const f = file("codex", "codex.jsonl");
   const msg = (ordinal: number, role: string, text: string) => ({
     timestamp: "t",
     ordinal,
@@ -93,7 +98,7 @@ test("codex：只取 response_item 消息；跳过宿主注入；ordinal 不大�
 });
 
 test("codex：只丢已知宿主注入，<task> 开头的用户消息保留", () => {
-  const f = join(dir, "codex-task.jsonl");
+  const f = file("codex", "codex-task.jsonl");
   const msg = (ordinal: number, text: string) => ({
     timestamp: "t",
     ordinal,
@@ -107,14 +112,14 @@ test("codex：只丢已知宿主注入，<task> 开头的用户消息保留", ()
 });
 
 test("jsonl 里夹一行 null 不抛错", () => {
-  const f = join(dir, "null-line.jsonl");
+  const f = file("pi", "null-line.jsonl");
   writeFileSync(f, 'null\n{"type":"message","id":"e1","parentId":null,"message":{"role":"user","content":"还在"}}\n');
   assert.match(expandSource(ptr({ host: "pi", transcript: f, anchor: "e1" }))!, /还在/);
 });
 
 test("文件不存在返回 null", () => {
-  const f = join(dir, "nope.jsonl");
+  const f = file("pi", "nope.jsonl");
   assert.equal(expandSource(ptr({ host: "pi", transcript: f, anchor: "e1" })), null);
-  assert.equal(latestAnchor("claude", f), null);
-  rmSync(dir, { recursive: true, force: true });
+  assert.equal(latestAnchor("claude", file("claude", "nope.jsonl")), null);
+  rmSync(base, { recursive: true, force: true });
 });

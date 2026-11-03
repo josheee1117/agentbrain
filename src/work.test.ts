@@ -6,12 +6,14 @@ import { test } from "node:test";
 import { reviewList } from "./expiry.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
-import { admit, allowedTranscript, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
+import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
+import { allowedTranscript } from "./transcript-file.ts";
 import * as intake from "./intake.ts";
 import { sha256, validate } from "./extract.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
@@ -48,15 +50,17 @@ const json = (o: object): ChatMessage => ({ role: "assistant", content: JSON.str
 interface Env {
   store: Store;
   repo: string;
+  dir: string;
   registryDir: string;
   deps: (chat: Chat | null, extra?: Partial<WorkDeps>) => WorkDeps;
   transcript: (sid: string, lines: object[], idle?: boolean) => string;
-  register: (sid: string, file: string, ended?: boolean) => void;
+  codexTranscript: (sid: string, lines: object[], idle?: boolean) => string;  register: (sid: string, file: string, ended?: boolean) => void;
   pid: string;
 }
 
 function env(): Env {
   const dir = join(base, `e${n++}`);
+  process.env.HOME = dir; // 夹具：transcript 都在这个 fake home 的宿主会话目录下，准入检查（§7.6 每次读都查）才能过
   const repo = join(dir, "alpha");
   mkdirSync(repo, { recursive: true });
   writeFileSync(join(repo, "AGENTS.md"), "实现交给 Codex。hook 命令要写 node 绝对路径。\n");
@@ -71,6 +75,7 @@ function env(): Env {
   const pid = store.ensureProject("alpha");
   return {
     store,
+    dir,
     repo,
     registryDir: regDir,
     pid,
@@ -86,7 +91,17 @@ function env(): Env {
       ...extra,
     }),
     transcript: (sid, lines, idle = true) => {
-      const p = join(dir, `${sid}.jsonl`);
+      const d = join(dir, ".claude/projects/fixture");
+      mkdirSync(d, { recursive: true });
+      const p = join(d, `${sid}.jsonl`);
+      writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+      return p;
+    },
+    codexTranscript: (sid, lines, idle = true) => {
+      const d = join(dir, ".codex/sessions/fixture");
+      mkdirSync(d, { recursive: true });
+      const p = join(d, `rollout-2026-10-08T10-45-49-${sid}.jsonl`);
       writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
       if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
       return p;
@@ -488,7 +503,7 @@ test("Codex 子 agent 会话：不调模型、标 ephemeral、不算疑似漏登
   const e = env();
   const meta = (source: unknown) => ({ type: "session_meta", payload: { cwd: e.repo, timestamp: new Date().toISOString(), source } });
   const msg = { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "以后 hook 命令都写 node 绝对路径" }] } };
-  const f = e.transcript("g1", [meta({ subagent: { other: "guardian" } }), msg]);
+  const f = e.codexTranscript("g1", [meta({ subagent: { other: "guardian" } }), msg]);
   intake.upsertSession(e.store.workDb, { host: "codex", session_id: "g1", transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "scan" }, () => "alpha", new Date());
   const chat = fakeChat(() => json({ candidates: [RULE] }));
   const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
@@ -497,17 +512,17 @@ test("Codex 子 agent 会话：不调模型、标 ephemeral、不算疑似漏登
   assert.equal(intake.sessions(e.store.workDb)[0].ephemeral, 1);
   assert.equal(intake.stats(e.store.workDb, new Date()).sessions.scanned, 0);
 
+  // 下面 scan 要换 HOME；跑完恢复到夹具的 fake home（环境是进程级的，不回退会污染后续用例）
   const home = join(base, "subhome");
   const id = "01a11967-19b1-7063-8631-c3dfad45ef88";
   mkdirSync(join(home, ".codex/sessions/2026/10/08"), { recursive: true });
   writeFileSync(join(home, `.codex/sessions/2026/10/08/rollout-2026-10-08T10-45-49-${id}.jsonl`), JSON.stringify(meta({ subagent: { thread_spawn: { depth: 1 } } })) + "\n");
-  const old = process.env.HOME;
   process.env.HOME = home;
   try {
     assert.equal(scan(e.deps(null)), 0);
     assert.equal(intake.knownSession(e.store.workDb, "codex", id), false);
   } finally {
-    process.env.HOME = old;
+    process.env.HOME = e.dir;
   }
 });
 
@@ -530,6 +545,106 @@ test("hook 登记时 transcript 还没落盘：处理时按 session id 找到 ro
     const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
     assert.equal(r.windows.done, 1);
     assert.equal(intake.sessions(e.store.workDb)[0].transcript, realpathSync(f));
+    assert.equal(props(e.store).length, 1);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+/** Codex 压缩会话（§7.6）：同一会话的 `.jsonl` 被压成 `.jsonl.zst`，原文件消失，agentbrain 读时解析。 */
+function zstHome(sid: string) {
+  const e = env();
+  const home = join(base, `zsthome-${n++}`);
+  const dir = join(home, ".codex/sessions/2026/10/12");
+  mkdirSync(dir, { recursive: true });
+  const id = sid;
+  const lines = [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    { ordinal: 1, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "以后 hook 命令都写 node 绝对路径" }] } },
+  ].map((l) => JSON.stringify(l)).join("\n") + "\n";
+  const zstPath = join(dir, `rollout-2026-10-12T10-00-00-${id}.jsonl.zst`);
+  writeFileSync(zstPath, zstdCompressSync(Buffer.from(lines, "utf8")));
+  return { e, home, dir, id, zstPath, lines };
+}
+
+test("§7.6 Codex 压缩会话：登记时 transcript 没落盘，处理时找到 .jsonl.zst 并抽取", async () => {
+  const { e, home, id } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7c7");
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: null, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    assert.ok(intake.sessions(e.store.workDb)[0].transcript!.endsWith(".jsonl.zst"));
+    assert.equal(props(e.store).length, 1);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("§7.6 压缩会话：截断的 .jsonl.zst 读取失败，记 source_unavailable、不调模型、进度不动", async () => {
+  const { e, home, id, zstPath } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7c8");
+  const c = readFileSync(zstPath);
+  writeFileSync(zstPath, c.subarray(0, c.length - 1)); // Node 解压静默返回部分数据，不报错
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: zstPath, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 0, "坏文件不算完成");
+    assert.equal(chat.calls.length, 0, "坏文件内容不能送进模型");
+    const row = intake.sessions(e.store.workDb)[0];
+    assert.equal(row.error_code, "source_unavailable");
+    assert.equal(row.processed_anchor, null, "进度不动");
+    assert.equal(props(e.store).length, 0);
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("§7.6 压缩会话：登记后文件被换成目录外符号链接，内容不送模型、进度不动", async () => {
+  const { e, home, id, zstPath, lines } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7c9");
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: zstPath, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const outside = join(e.dir, "outside.jsonl.zst");
+  writeFileSync(outside, zstdCompressSync(Buffer.from(lines, "utf8")));
+  rmSync(zstPath);
+  symlinkSync(outside, zstPath);
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 0);
+    assert.equal(chat.calls.length, 0, "符号链接指向的内容不能送进模型");
+    const row = intake.sessions(e.store.workDb)[0];
+    assert.equal(row.error_code, "source_unavailable");
+    assert.equal(row.processed_anchor, null, "进度不动");
+  } finally {
+    process.env.HOME = old;
+  }
+});
+
+test("§7.6 压缩会话：恢复成 .jsonl 后不丢进度、不重复抽", async () => {
+  const { e, home, id, zstPath, lines } = zstHome("01a332dc-4d5f-7d62-840d-69f94d09f7ca");
+  // 第一步：压缩文件抽取一个窗口，处理完
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: id, transcript: zstPath, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  const old = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    const chat = fakeChat(() => json({ candidates: [RULE] }));
+    const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    assert.equal(props(e.store).length, 1);
+    // 恢复：Codex resume 解压回 .jsonl 并删掉 .zst
+    const plain = zstPath.replace(/\.zst$/, "");
+    writeFileSync(plain, lines);
+    rmSync(zstPath);
+    const chat2 = fakeChat(() => json({ candidates: [RULE] }));
+    const r2 = await runWork(e.deps(chat2), { sweep: false, dryRun: false });
+    assert.equal(r2.windows.done, 0, "窗口已处理过，不重抽");
+    assert.equal(chat2.calls.length, 0);
     assert.equal(props(e.store).length, 1);
   } finally {
     process.env.HOME = old;

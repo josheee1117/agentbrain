@@ -246,6 +246,25 @@ import('$ROOT/src/store.ts').then(({ Store }) => {
     step cli-opencode-capture drive_opencode_capture
     step cli-opencode-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session opencode:ses_verify1 --dry-run
 
+    # 5b. Codex .jsonl.zst 读时解析（§7.6）：隔离 home 里放一个压缩会话，登记与 dry-run 都走读时解压
+    ZSID="01a332dc-4d5f-7d62-840d-69f94d09f7d7"
+    mkdir -p "$FAKE_HOME/.codex/sessions/2026/10/12"
+    node -e "
+const { zstdCompressSync } = require('node:zlib');
+const { writeFileSync } = require('node:fs');
+const lines = [
+  JSON.stringify({ type: 'session_meta', payload: { cwd: '$REPO', source: 'vscode' } }),
+  JSON.stringify({ ordinal: 1, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '以后做任何改动都要先通过 verify.sh 验证' }] } }),
+].join('\n') + '\n';
+writeFileSync('$FAKE_HOME/.codex/sessions/2026/10/12/rollout-2026-10-12T10-00-00-$ZSID.jsonl.zst', zstdCompressSync(Buffer.from(lines, 'utf8')));
+"
+    drive_codex_zst_capture(){
+      printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionEnd"}\n' "$ZSID" "$REPO" | env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" capture --hook --host codex
+    }
+    step cli-codex-zst-capture drive_codex_zst_capture
+    step cli-codex-zst-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session codex:$ZSID --dry-run
+    step cli-codex-zst-work-text bash -c "grep -qF 'codex:$ZSID: 待处理窗口' '$EV/cli-codex-zst-work.log'"
+
     # 6. curate / review / audit drive
     step cli-review env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" review
     step cli-audit env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" audit worker-quotes

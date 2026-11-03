@@ -3,10 +3,10 @@
  * 丢掉宿主注入与 ab 自己的输出（防自回声），工具调用压成一行，工具输出只在像报错时留首尾。
  * 只读文件，不脱敏（脱敏在调用方，送模型前与写 L1 前各一次）。
  */
-import { closeSync, openSync, readSync } from "node:fs";
 import { CODEX_INJECTED, linesOf } from "./source.ts";
 import type { Host } from "./l2.ts";
 import { opencodeParts, opencodeSession } from "./opencode.ts";
+import { readTranscript } from "./transcript-file.ts";
 
 export type TurnRole = "user" | "assistant" | "tool";
 
@@ -330,15 +330,7 @@ export function isWorkerTranscript(file: string | null | undefined, maxBytes = 1
   let head: any[];
   let raw = "";
   try {
-    const fd = openSync(file, "r");
-    const buf = Buffer.alloc(maxBytes);
-    let n = 0;
-    try {
-      n = readSync(fd, buf, 0, maxBytes, 0);
-    } finally {
-      closeSync(fd);
-    }
-    raw = buf.subarray(0, n).toString("utf8");
+    raw = readTranscript(file, maxBytes);
     head = raw.split("\n").slice(0, 20).flatMap((l) => {
       try {
         return [JSON.parse(l)];
@@ -367,13 +359,7 @@ function isPiWorkerFile(file: string, raw: string, head: any[]): boolean {
   if (head.some((e) => e?.type === "message" && e.message?.role === "user")) return false;
   let more = raw;
   try {
-    const fd = openSync(file, "r");
-    const buf = Buffer.alloc(PI_HEAD_MAX_BYTES);
-    try {
-      more = buf.subarray(0, readSync(fd, buf, 0, PI_HEAD_MAX_BYTES, 0)).toString("utf8");
-    } finally {
-      closeSync(fd);
-    }
+    more = readTranscript(file, PI_HEAD_MAX_BYTES);
   } catch {
     return false;
   }

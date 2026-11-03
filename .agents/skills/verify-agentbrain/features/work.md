@@ -2,6 +2,7 @@
 
 ## Sub-features
 - 会话捕获与坐标登记 (`ab capture --hook`)，登记会话坐标与定位点，SessionEnd 异步拉起后台抽取
+- Codex 压缩会话读时解析（§7.6）：`.jsonl.zst` 读取时解压、不迁移数据，解压前先查完整性（Node 对截断帧不报错），每次读都过准入
 - 会话静置与结束抽取：基于 LLM（DashScope `qwen-plus`）提取候选命题，引文逐字核对，两次脱敏
 - 代码只读核验与转正 (`ab work --sweep`)：只读检查代码仓库，验证未确认的坑与事实是否属实，对得上则自动转正
 - 话题模式与断点续抽 (`ab work --session ... [--redo]`, `ab work --runs`, `ab work --undo`)
@@ -16,6 +17,7 @@
 ## Driving it with verify.sh
 - `env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node src/cli.ts work --dry-run`
 - `env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node src/cli.ts work --session opencode:ses_verify1 --dry-run`（verify.sh 里 `cli-opencode-work`）
+- 压缩会话：隔离 HOME 放 `~/.codex/sessions/…/rollout-…-<id>.jsonl.zst`，`capture --hook --host codex` 不带 transcript 也能登记，`work --session codex:<id> --dry-run` 报出待处理窗口（verify.sh 里 `cli-codex-zst-capture`、`cli-codex-zst-work`，读时解压、不开盘缓存）
 - Proof: 退出码 0，打印当前待处理会话与窗口积压量，不调用远程 LLM API，不产生模型费用
 
 ## Gotchas
@@ -23,6 +25,7 @@
 - 真实的抽取沉淀和代码核验依赖远程大模型 API key（`~/.agentbrain/extract.json`）
 - 本地无真实 key 时真实模型调用受限，通过 `--dry-run` 验证调度与积压扫描逻辑；429 延后与续做只能用单元测试覆盖，真实额度恢复未在本技能里跑
 - 自动抽取和 agent 自记都直接写成有效的未确认条目（不再进候选区），代码核验转正或用户 confirm 才变已确认
+- `.jsonl.zst` 只在 Codex 会话目录里被放行（§7.6）；Claude、Pi 的压缩文件照旧拒绝。解压上限 256 MB，超过或截断的帧按读取失败处理、报 source_unavailable、进度不动
 - 模型产出段与版本口径只用单测覆盖（`src/prompt-version.test.ts` 用假 chat 跑真实的 `runWork` / `importPensieve` / `applyActions`，再调真实 `ab get`）。`ab work --dry-run` 不调模型，驱动不出这段，要看真实输出用 `ab get`
 - `ab curate --apply` 改写的条目本次不带 `model` / `prompt_version`，`ab get` 显示「未记录」，属已知范围例外（§8.10）
 - `extract.json` 可加 `extraBody`（对象，如 `{"reasoning_effort":"medium"}`）原样带进 chat 请求；写了非对象时 `ab status` / `ab doctor` 的「抽取模型」行显示「不可用（…/extract.json 的 extraBody 必须是对象）」
