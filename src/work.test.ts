@@ -1042,3 +1042,47 @@ test("round4 条目 3：同标题、否掉的方案不同的两条候选都入�
   assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [2, 0, 2], "方案不同是两份内容");
   assert.deepEqual([...e.store.project().props.values()].map((p) => p.alternatives![0].option).sort(), ["side", "靠 PATH 找 ab"].sort().map((x) => (x === "side" ? "绝对路径写死" : x)));
 });
+
+// ---------- 升级兼容：main 留下的旧候选键（sha256(windowId|kind|norm(text))） ----------
+
+/** 旧版本（main 分支）的候选键：没有最终项目、正文和方案。 */
+const legacyKey = (window: string, c: { kind: string; text: string }) => sha256(`${window}|${c.kind}|${c.text.replace(/\s+/g, " ").trim()}`);
+
+/** 按本次重跑会切出的窗口 id 写一条旧键，模拟升级前 main 存下的候选。 */
+function recordLegacyCandidate(e: Env, sid: string, to: string, cand: { kind: string; text: string }): void {
+  const window = sha256(`claude|${sid}||${to}`);
+  e.store.workDb.prepare("INSERT INTO capture_candidates(candidate_key,event_id,window_id) VALUES(?,?,?)").run(legacyKey(window, cand), "legacy-event", window);
+}
+
+const proposalCount = (e: Env) => e.store.project().props.size;
+const evidenceCount = (e: Env) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='evidence'").get()!.n;
+
+test("升级兼容：旧键已在库、旧条目还有效 → 重跑不再追加证据、不新建条目", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1, "窗口照常完成");
+  assert.deepEqual([proposalCount(e), evidenceCount(e)], [0, 0], "旧键命中就当已处理");
+});
+
+test("升级兼容：旧键已在库、旧条目已被归档 → 重跑不再用新 id 让它重新生效", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "rule", text: RULE.text, why: RULE.why, basis: "user_directive", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "x" } });
+  e.store.lifecycle("archive", old, null, { reason: "user" });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  const same = [...e.store.project().props.values()].filter((p) => p.text === RULE.text);
+  assert.deepEqual(same.map((p) => [p.id, p.state]), [[old, "archived"]], "归档的条目不能被新 id 重新写活");
+});
+
+test("升级兼容反例：候选带正文时不按旧键跳过，照常写入", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  const withBody = { ...RULE, kind: "decision", body: "PATH 里没有 ab，写 node 绝对路径" };
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [withBody] }))), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.deepEqual([...e.store.project().props.values()].map((p) => [p.text, p.body]), [[withBody.text, withBody.body]], "main 的条目没有正文，带正文算新内容");
+});

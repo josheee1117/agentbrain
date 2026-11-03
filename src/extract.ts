@@ -73,6 +73,8 @@ export interface Candidate {
   valid_days?: number;
   /** 引文与正文的规范化指纹，幂等键的一部分。 */
   key: string;
+  /** 旧版本（main）的候选键：没有正文和方案的候选才带，去重时旧键已在库就当已处理（§21 2026-11-03）。 */
+  legacyKey?: string;
   /** 指导 agent 怎么干活的偏好（汇报、语气、工作流、审查习惯）。 */
   guidance?: boolean;
   /** 价值字段与标记（只记录，审稿人用）。 */
@@ -673,6 +675,9 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
     const key = sha256(`${windowId}|${finalProject}|${c.kind}|${norm(cleanText)}|${bodyHash}${altHash}`);
     if (seen.has(key)) continue;
     seen.add(key);
+    // main 的候选键没有最终项目、正文和方案（`sha256(windowId|kind|norm(text))`）。升级后窗口重跑，
+    // 旧条目还带着旧键：候选本身没有正文和方案时同一条内容，不该再写一遍；带详情的是新内容，照常写入（§21 2026-11-03）。
+    const legacyKey = sha256(`${windowId}|${c.kind}|${norm(cleanText)}`);
     out.push({
       kind: c.kind,
       project: finalProject,
@@ -695,6 +700,7 @@ export function validate(raw: unknown, win: ExtractWindow, neighbors: Propositio
       ...(saidAt ? { said_at: saidAt } : {}),
       ...(Number.isInteger(c.valid_days) && c.valid_days >= MIN_VALID_DAYS && c.valid_days <= MAX_VALID_DAYS ? { valid_days: c.valid_days } : {}),
       key,
+      ...(candidateDetail ? {} : { legacyKey }),
     });
   }
   return { candidates: out, dropped, evidenceDropped };

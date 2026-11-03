@@ -470,6 +470,8 @@ export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { can
 interface Admission {
   appends: PendingAppend[];
   keys: string[];
+  /** 与 keys 配对：候选带到旧版候选键时去重也认它（main 留下的条目带旧键，升级后重跑不该再写一遍）。 */
+  legacyKeys: (string | undefined)[];
   receipt: Pick<intake.Receipt, "proposals" | "attached" | "corrections" | "unreconciled" | "corroborated" | "dropped">;
 }
 
@@ -518,7 +520,7 @@ export function admit(
   model: string,
   projectIdOf?: (name: string) => string,
 ): Admission {
-  const out: Admission = { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
+  const out: Admission = { appends: [], keys: [], legacyKeys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
   for (const c of candidates) {
     const source: SourcePointer = {
       host: s.host,
@@ -546,11 +548,13 @@ export function admit(
       const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0), window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
       out.appends.push({ kind: "evidence", project_id: relTarget.project_id, session_id: s.session_id, target_id: relTarget.id, body });
       out.keys.push(c.key);
+      out.legacyKeys.push(c.legacyKey);
       out.receipt.attached++;
       const cb = corroborationConfirm(relTarget, body);
       if (cb) {
         out.appends.push({ kind: "confirm", project_id: relTarget.project_id, session_id: null, target_id: relTarget.id, body: cb });
         out.keys.push(`${c.key}:confirm`);
+        out.legacyKeys.push(undefined);
         out.receipt.corroborated++;
       }
       continue;
@@ -616,6 +620,7 @@ export function admit(
     out.receipt[bucket]++;
     out.appends.push({ kind: "remember", project_id: pid, session_id: s.session_id, target_id: null, body });
     out.keys.push(c.key);
+    out.legacyKeys.push(c.legacyKey);
   }
   return out;
 }
@@ -644,7 +649,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
   if ("error" in deps.chat) throw new WorkFailure(deps.chat.error, deps.chat.message);
   if (!hasExtractableSignal(c.turns)) {
     receipt.no_signal += 1;
-    return { appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
+    return { appends: [], keys: [], legacyKeys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } };
   }
   const ctx = projectContext(deps, s.project, projectId);
   // §8.11.3：生成前给模型的已有记忆 = 会话项目 + 全局 + 窗口里出现名字或路径的已登记项目
@@ -832,9 +837,9 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       report.windows.deferred++;
       break;
     }
-    const known = intake.knownCandidates(db, adm.keys);
-    const appends = adm.appends.filter((_, i) => !known.has(adm.keys[i]));
-    const keys = adm.keys.filter((k) => !known.has(k));
+    const fresh = intake.freshAdmissions(db, adm.keys, adm.legacyKeys);
+    const appends = adm.appends.filter((_, i) => fresh[i]);
+    const keys = adm.keys.filter((_, i) => fresh[i]);
     // receipt.dropped 已在前面累加了抽取自己的丢弃原因，这里只并入准入阶段的，不能整体覆盖
     const { dropped: admDropped, ...admReceipt } = adm.receipt;
     Object.assign(receipt, admReceipt);
@@ -853,7 +858,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
 
 // ---------- 话题结束时一步式沉淀（§8.6） ----------
 
-const emptyAdmission = (): Admission => ({ appends: [], keys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } });
+const emptyAdmission = (): Admission => ({ appends: [], keys: [], legacyKeys: [], receipt: { proposals: 0, attached: 0, corrections: 0, unreconciled: 0, corroborated: 0, dropped: {} } });
 
 /**
  * 写库事务里确认租约还在自己手里（顺便续期）。租约过期被别人接管（如 ab work --undo、另一个 ab work）后，
@@ -986,9 +991,9 @@ async function processTopicSession(
       report.windows.deferred++;
       break;
     }
-    const known = intake.knownCandidates(db, adm.keys);
-    const appends = adm.appends.filter((_, i) => !known.has(adm.keys[i]));
-    const keys = adm.keys.filter((k) => !known.has(k));
+    const fresh = intake.freshAdmissions(db, adm.keys, adm.legacyKeys);
+    const appends = adm.appends.filter((_, i) => fresh[i]);
+    const keys = adm.keys.filter((_, i) => fresh[i]);
     wr.skipped_known = adm.keys.length - keys.length;
     // receipt.dropped 已在前面累加了抽取自己的丢弃原因，这里只并入准入阶段的，不能整体覆盖
     const { dropped: admDropped, ...admReceipt } = adm.receipt;
@@ -1109,6 +1114,7 @@ async function onePassWindow(
     const key = sha256(`${c.id}|${it.kind}|${it.text.replace(/\s+/g, " ").trim()}`);
     out.appends.push({ kind: "remember", project_id: projectId, session_id: s.session_id, target_id: null, body });
     out.keys.push(key);
+    out.legacyKeys.push(undefined);
     meta.set(key, { id: "", kind: it.kind, text: it.text, scenario: it.scenario, reason: it.reason, unreconciled });
     if (unreconciled) out.receipt.unreconciled++;
     else out.receipt.proposals++;
