@@ -507,6 +507,63 @@ opencode 没有和 Pi session_shutdown 完全相同的公开事件。插件在 s
 
 插件安装为 `~/.config/opencode/plugins/agentbrain-v2.js` 的符号链接。安装前保存插件目录清单和已有配置备份，不修改其他插件或 opencode 配置。默认命令是本机绝对 Node 与 ab 路径，缺失才使用 PATH。插件在 `ctx.shell.hook("create.before")` 有 sessionID 时传入当前 opencode 会话 id，使手动 `ab remember` 的来源指向 opencode，而非嵌套启动它的宿主。
 
+### 7.6 Codex 压缩会话（已授权，2026-11-03 用户授权实现）
+
+**问题。** Codex 0.162.1 会把 7 天没动的会话文件 `rollout-…-<id>.jsonl` 压成同目录的 `rollout-…-<id>.jsonl.zst`，原文件消失；恢复（resume）时解压回 `.jsonl` 并删掉 `.zst`（`rust-v0.162.1` 的 `compression.rs`、`compression/path_metadata.rs`）。agentbrain 只认 `.jsonl`，已记录的路径随之失效。截至 2026-11-03 11:00 本机只读实测：
+
+| 项目 | 数字 |
+|---|---|
+| `~/.codex` 文件 | `sessions` 872 个 `.jsonl.zst`、72 个 `.jsonl`；`archived_sessions` 69 个全是 `.jsonl.zst`；同名并存 0 |
+| 压缩文件解压 | 941 个全部成功，首行都是 `session_meta`；解压后最大 66 MB，单个最慢约 40 ms |
+| 已登记 Codex 会话（321 个） | 153 个只剩 `.zst`，48 个仍是 `.jsonl`，26 个两种都没有，94 个没记路径 |
+| 只剩 `.zst` 的 153 个 | 46 个已处理过；48 个 ephemeral；59 个未处理且不是 ephemeral |
+| 这 59 个未处理的 | 37 个没有项目，不会抽取；**可抽取 22 个、约 20 个窗口、33.6 万字，全是 hook 登记** |
+| 已处理的 46 个 | 只剩约 2.6 万字新内容；1 个定位点对不上，继续报 `source_unavailable` |
+| L1 里 Codex 的 Source Pointer | 306 条，227 条指向只剩 `.zst` 的文件，`ab get --expand` 展开不了；解压后 227 条全部成功，定位点不受压缩影响 |
+
+Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，但本机 941 个里有 581 个 mtime 和最后写入时间差一天以上，所以方案不依赖 mtime 是否变化。
+
+**决定。**
+
+1. **不迁移数据。** L1 只追加，Source Pointer 写的是当时的路径，继续保持原样；`capture_sessions.transcript` 也不改写，否则下一次压缩或恢复又会失效。所有读取在读时解析，不增加字段、配置键和数据修复脚本。
+2. **文件层只有一个入口。** 新增 `src/transcript-file.ts`，只做文件层的事，不解析内容：
+   - `resolveTranscript(path)`：先试 `x.jsonl`，再试 `x.jsonl.zst`，和 Codex 自己的顺序一致（`path_metadata.rs`）；都没有返回 null。
+   - `readTranscript(path, maxBytes?)`：不给 `maxBytes` 就读全文；给了就只读开头。
+     - 全文：`.zst` 用 `node:zlib` 的 `zstdDecompressSync` 解压，不加依赖。解压上限写死 256 MB（实测最大的约 4 倍），超过抛错。
+     - **完整性必须单独查。** Node v25.9 的 `zstdDecompressSync` 对截断帧不报错，只返回已解出的部分：实测去掉最后 1 字节，9362088 字节只解出 9306112 字节且无异常。解压前按 zstd 格式走一遍帧头和块头（约 15 行），确认最后一块存在且文件正好结束，否则抛错，由调用方记 `source_unavailable`。不用帧头里的原始长度，因为本机 941 个里有 17 个没有这个字段。实测 941 个全部通过，每个文件切掉 1、3、100 字节和一半共 3764 次全部查出。
+     - 开头：只读压缩文件前 256 KB，用同一个函数解压，再按 `maxBytes` 截取。这里故意利用“截断返回部分数据”，且不查完整性；开头只用来取元数据。保持同步，调用方不用改成异步。实测 941 个的前 16 KB 和全文解压完全一致，平均 0.86 ms。这个行为由单测盯住，Node 改了会失败。
+   - `allowedTranscript(host, path, sessionId?)`：从 `work.ts` 移到这里，语义见第 4 条。
+3. **调用点全部改走这个入口**，别处不再判断扩展名：
+
+   | 位置 | 现在 | 改成 |
+   |---|---|---|
+   | `source.ts` 的 `linesOf` | `readFileSync` | `readTranscript`（`cleanTranscript`、`modelOf`、来源展开都经过它） |
+   | `source.ts` 的 `expandSource`、`latestAnchor` | `existsSync` | `allowedTranscript`，见第 4 条 |
+   | `work.ts` 的 `headLines`、`transcript.ts` 的 `isWorkerTranscript`、`isPiWorkerFile` | `openSync` 读开头 | `readTranscript(path, n)` |
+   | `work.ts` 的 `sessionStart`、`transcriptMtime`、`scan` 的 mtime | `statSync` | `statSync(resolveTranscript(path))`；`sourceClock` 的缓存键用解析后的路径 |
+   | `host.ts` 的 `locateTranscript` | Codex 只找 `sessions` 下的 `.jsonl` | 先 `sessions` 后 `archived_sessions`；每个目录先精确找 `.jsonl`，再找 `.jsonl.zst`，不靠目录遍历顺序 |
+   | `work.ts` 的 `walk`、`scan` 的 id 解析、`cli.ts` 的 `codexOrClaudeId` | 只认 `.jsonl` | Codex 也认 `.jsonl.zst` |
+
+   已逐个查过 `curate`、`audit`、`view`、`telemetry`、`topic`、`status`、`intake.reclassifyScanned`，都经过上面这些函数。`citecheck`、`pensieve` 读的是代码和文档，不碰 transcript。
+4. **准入每次读都查，不只查登记时。** 现在 `processSession` 读库里的路径时只对 opencode 重查（`work.ts`），实测：登记后把文件换成指向 HOME 外的 `.jsonl.zst` 符号链接，文件正文会被送进抽取模型，进度还会推进。改成：
+   - `allowedTranscript` 先解析实际文件，再做 `realpath` 和根目录检查，返回实际路径。只有 Codex 放行 `.jsonl.zst`，其他宿主照旧拒绝。两种都不存在时维持现状（Claude 的 transcript 可能晚于第一次 hook 才落盘）。
+   - `processSession` 读之前对所有宿主调一次，替换现在的 opencode 特判；不过关记 `source_unavailable`。
+   - `expandSource`、`latestAnchor` 同样先过一次，L1 里的路径也不算可信。
+5. **sweep 的范围不变。** `scan` 不扫 `archived_sessions`，也仍只看 mtime 近 7 天的文件。已登记的会话直接跳过；未登记的走既有的 backfill 路径和每次 sweep 10 个窗口的限制。
+6. **历史积压自然消化，不写一次性任务。** 不带 `--session` 的 `ab work`（launchd 每 30 分钟的 sweep）会遍历全部会话，包括带 `source_unavailable` 的，成功后错误码自动清掉。所以修好后下一次 sweep 就会补抽上面那 22 个会话。它们是 hook 登记的，不受 10 个窗口的限制，一次跑完。
+
+**明确不做。** 不解压到磁盘缓存（多一份对话正文，还要管一致性和删除，理由同 §7.5）；不改 L1 里的路径；不处理 26 个两种都没有的会话（文件确实没了）；不改 Codex 的压缩行为。不把 `statusLine` 改成不读文件：那会改变“到期”的算法，开头只读 256 KB 后也没必要。
+
+**补抽。** 这批补抽会花约 20 个窗口的抽取额度，用户 2026-11-03 接受。
+
+**验收。**
+
+- 单测先红后绿，全部用 `zstdCompressSync` 生成的真压缩文件和临时 HOME：`locateTranscript` 找到 `sessions` 和 `archived_sessions` 下的压缩文件，并存时取未压缩那份；`allowedTranscript` 放行 Codex 压缩文件、拒绝 Claude 和 Pi 的压缩文件、拒绝指向根目录外的符号链接；超过解压上限、坏帧、截断帧都按读取失败处理且进度不推进；开头读取在大文件上和全文开头一致；hook 遇到坏文件不抛错。
+- 真实路径：隔离库里 `ab capture codex:<id>` 不带 `--transcript` 成功；假模型跑 `ab work --session` 能产出条目；`ab get --expand` 展开压缩文件里的讨论；登记时是 `.jsonl`、之后被压缩、再恢复成 `.jsonl` 的会话不丢进度、不重复抽；登记后换成目录外符号链接的会话不会把内容送给模型。
+- 不带 `--session` 的 `ab work` 能恢复带 `source_unavailable` 的压缩会话，错误码清掉。
+- 正式库副本：`ab work --dry-run` 的窗口数和上面的数字同一量级；`ab get --expand` 抽 5 条真实 Codex 记忆能展开；正式库不变。
+- `node --test`、类型检查、`verify.sh run` 通过，功能地图加上这条。
+
 ---
 
 ## 8. 写路径：Sediment 与 Proposal
@@ -2546,6 +2603,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-03 新增 §7.6（用户同日授权实现）：Codex 会把会话文件压成 `.jsonl.zst`，已登记的 321 个 Codex 会话里 153 个路径失效，L1 里 227 条来源展开不了。方案是读时解析，不迁移数据；文件层只留 `src/transcript-file.ts` 一个入口。按只读 review 修订：准入改成每次读都查；解压前单独查完整性，因为 Node 对截断帧不报错；读开头只读文件前 256 KB。
 - 2026-11-03 候选键升级兼容（`feat/knowledge-decisions`）：main 的键是 `sha256(windowId|kind|norm(text))`，本分支改成带最终项目、正文和方案哈希的新键，旧库里已记录的旧键新代码不认识。旧窗口用 `ab work --session <id> --redo` 重跑时，模型给出同样候选会被当成新的：旧条目还有效就重复追加证据，旧条目已被用户归档就以新 id 重新处于 active。修法：候选额外带一个旧键（算法与 main 一致）；没有正文也没有否掉方案的候选，旧键已在 `capture_candidates` 里就当已处理、不写入；带详情的照常写入（main 的条目没有详情，算新内容）。判断收在 `intake.freshAdmissions` 一处，抽取窗口与一步式两条路径共用。不删旧键、不迁移数据、不改新键算法、不加配置。同一修法还要盖住 duplicate 分支里的跨会话印证：confirm 事件与它跟的那条证据同生共死，证据按旧键算已处理时 confirm 也跳过；否则重跑会把会话 A 的条目转正，而会话 B 的证据并没写进去。
 - 2026-11-02 §8.11 修掉会悄悄丢内容的路径（round4，用户先定方案再实现）：① 每条候选证据上限 3 → 6，超过只取前 6 条并记 `evidence_truncated`，引用被截掉证据的方案整项丢掉，不再整条丢候选；提示词写明上限。② 关系判定输入保留正文内部的换行和缩进（只去首尾空白，仍 2000 字截断）。③ 第 2 层判 duplicate 时，被归档那条带详情且两边详情不一致就改记 `refines`，两条都留。④ 同窗口候选键加上方案哈希，没有方案的候选键不变。⑤ 第 1 层显式 duplicate 因详情不同降级成新条目时首次写入就标 `unreconciled`。⑥ 抽取侧方案长度改按存储侧的口径（先查密钥、再脱敏、按脱敏后 200 个码点），删掉抽取自己的 100 字检查和常量。⑦ 抽取正文先查密钥脱敏，再按脱敏后 5000 字判。⑧ 方案条数上限改用存储侧的 5 项，超出只取前 5 项并记 `alternatives_dropped`。⑨ `ab curate` 带详情的条目连自动合并也跳过。
 - 2026-10-30 新增 §8.11（CANDIDATE）：决定记成决策卡（具体定了什么、背景、否掉的方案、长正文），抽取新增知识（note）并带长正文，原话片段存原文（§13.3 加例外），候选可按已登记的目标项目归属，项目目录里搜索带上其他项目的相近条目。起因是用户要求完全替代 Pensieve。
