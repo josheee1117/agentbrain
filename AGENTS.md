@@ -20,9 +20,9 @@ agentbrain：以 abrain 为架构母体的本地 Agent 记忆系统。Pi、Claud
 
 ## 写测试和验证
 
-- 离线 CLI 测试同时用临时 `AB_HOME`、`AB_REGISTRY`、`HOME`，临时目录先 `realpath`：抄 `src/capture.test.ts:15-18`。只设 `AB_HOME` 不够，会话定位和 sweep 读 HOME（`src/host.ts:107-110`、`src/work.ts:223`）。
-- 真实宿主测试要分别隔离 hook、shell 命令和会话目录，包括只想探参数的预检命令，不能只靠外层环境变量：抄 `.agents/skills/verify-agentbrain/hosts.ts:75-103`。`hostEnv` 本身不隔离 HOME。
-- 测试走真实生产函数，假模型只放在边界：抄 `src/prompt-version.test.ts:49`（假 chat 跑真实 `runWork`）。接线样例要真跑：抄 `src/cli.test.ts:532`。
+- 离线 CLI 测试同时用临时 `AB_HOME`、`AB_REGISTRY`、`HOME`，临时目录先 `realpath`：抄 `src/capture.test.ts` 开头的 `fakeHome` 写法。只设 `AB_HOME` 不够，会话定位和 sweep 读 HOME（`src/host.ts` 的 `locateTranscript`、`src/work.ts` 的 `scan`）。
+- 真实宿主测试要分别隔离 hook、shell 命令和会话目录，包括只想探参数的预检命令，不能只靠外层环境变量：抄 `.agents/skills/verify-agentbrain/hosts.ts` 的 `sweepEnv`、`prefix`、`shellSetup`。`hostEnv` 本身不隔离 HOME。
+- 测试走真实生产函数，假模型只放在边界：抄 `src/prompt-version.test.ts` 的 `fixture-model`（假 chat 跑真实 `runWork`）。接线样例要真跑：抄 `src/cli.test.ts` 的“integrations 里 Claude Code 与 Codex 的样例命令”用例。
 - 断言真实输出或数据库变化，不能只看退出码：hook 内的异常会被静默吞掉。
 - worktree 里用该目录的 `node <worktree>/src/cli.ts`，`~/.local/bin/ab` 不跟 worktree 走。
 - 派活单和隔离约束冲突时先停下核对，不要绕过。

@@ -203,7 +203,7 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 | Claude Code | `PreCompact`：`ab capture --hook --host claude`（超时 5 秒） | 压缩前记一个话题边界，拉起分离的 `ab work --session`，立即返回，不挡压缩 |
 | Codex | `PreCompact`：`ab capture --hook --host codex`（超时 5 秒；改完要在 `/hooks` 里重新信任） | 同上 |
 | Pi | 扩展的 `session_before_compact`（`integrations/pi/agentbrain-recall.ts` 已带） | 同上；不取消、不改压缩 |
-| opencode | 插件的 `ctx.session.hook("compaction")`（`integrations/opencode/agentbrain-v2.js` 已带） | 登记 PreCompact 并拉起 `ab work --session`；但 opencode 不走话题模式（`src/work.ts:715` 把 opencode 排除在外），仍用原来的两步式抽取 |
+| opencode | 插件的 `ctx.session.hook("compaction")`（`integrations/opencode/agentbrain-v2.js` 已带） | 登记 PreCompact 并拉起 `ab work --session`；但 opencode 不走话题模式（`src/work.ts` 把 opencode 排除在外），仍用原来的两步式抽取 |
 
 已有的 `UserPromptSubmit` / `SessionEnd`（Pi：`before_agent_start` / `session_shutdown`）不用改：开关打开后，`UserPromptSubmit` 时如果距这个会话上次登记已超过 20 分钟，就顺便拉起 `ab work --session`（候选 B，不加闹钟进程）。
 
