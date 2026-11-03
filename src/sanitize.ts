@@ -11,7 +11,7 @@ export interface Sanitized {
 
 const SECRET_KINDS: SanitizeKind[] = ["api_key", "bearer", "jwt", "pem", "credential"];
 
-const RULES: { kind: SanitizeKind; re: RegExp; keep?: (m: RegExpExecArray) => string }[] = [
+const RULES: { kind: SanitizeKind; re: RegExp; keep?: (m: RegExpExecArray) => string; allow?: (value: string) => boolean }[] = [
   { kind: "pem", re: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g },
   { kind: "jwt", re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   { kind: "bearer", re: /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi },
@@ -24,6 +24,8 @@ const RULES: { kind: SanitizeKind; re: RegExp; keep?: (m: RegExpExecArray) => st
     kind: "credential",
     re: /((?<!\[)(?:api[_-]?key|secret|token|password|passwd|auth[_-]?token|access[_-]?key)["']?\s*[:=]\s*["']?)([^\s"',;\[\]]{8,})/gi,
     keep: (m) => m[1],
+    // 值本身不是秘密：${VAR} 环境变量占位符、文档里的算法公式（SHA256(...)、MD5(...)）
+    allow: (v) => /^\$\{[A-Za-z_][A-Za-z0-9_.-]*\}$/.test(v) || /^(?:SHA\d+|MD5|HMAC[A-Z0-9-]*|BASE64[A-Z0-9]*-?)\([^)]*\)?$/i.test(v),
   },
   { kind: "email", re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g },
   { kind: "id_card", re: /(?<![0-9])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![0-9])/g },
@@ -43,6 +45,7 @@ export function sanitize(input: string): Sanitized {
     text = text.replace(rule.re, (...args) => {
       const m = args.slice(0, -2) as unknown as RegExpExecArray;
       if (rule.kind === "email" && /\[(?:SECRET|PII):/.test(m[0])) return m[0];
+      if (rule.allow?.(m[2])) return m[0];
       hits[rule.kind] = (hits[rule.kind] ?? 0) + 1;
       return (rule.keep ? rule.keep(m) : "") + placeholder(rule.kind);
     });
