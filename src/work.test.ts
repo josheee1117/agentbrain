@@ -1086,3 +1086,18 @@ test("升级兼容反例：候选带正文时不按旧键跳过，照常写入",
   assert.equal(r.windows.done, 1);
   assert.deepEqual([...e.store.project().props.values()].map((p) => [p.text, p.body]), [[withBody.text, withBody.body]], "main 的条目没有正文，带正文算新内容");
 });
+
+test("升级兼容：证据按旧键跳过时，confirm 也跳过，目标条目不被转正", async () => {
+  const e = env();
+  const target = auto(e, "s1", RULE.text, "以后 hook 命令都写 node 绝对路径");
+  const quote = "hook 里一律用 node 的绝对路径";
+  e.register("s2", e.transcript("s2", [user("u1", quote)]));
+  // main 处理这条会话的窗口时已写下候选键：升级后重跑会再次产出同一条候选，判成 s1 条目的 duplicate
+  recordLegacyCandidate(e, "s2", "u1", RULE);
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, evidence: [{ anchor: "#1", role: "user", quote }], relation: { type: "duplicate", target: "m1" } }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1, "窗口照常完成");
+  const stat = (kind: string) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind=? AND target_id=?").get(kind, target)!.n;
+  assert.deepEqual([stat("evidence"), stat("confirm")], [0, 0], "证据被旧键判成已处理时，confirm 不能单独写进去");
+  assert.equal(e.store.project().props.get(target)!.confirmed, false, "目标条目不能靠没写进去的证据转正");
+});

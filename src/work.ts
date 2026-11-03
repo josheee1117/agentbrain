@@ -470,7 +470,7 @@ export function mergeSameWindow(cands: Candidate[], vecs: Float32Array[]): { can
 interface Admission {
   appends: PendingAppend[];
   keys: string[];
-  /** 与 keys 配对：候选带到旧版候选键时去重也认它（main 留下的条目带旧键，升级后重跑不该再写一遍）。 */
+  /** 与 keys 配对：候选的旧版（main）候选键；旧键已在库时这条事件算已处理，不写入（§21 2026-11-03）。 */
   legacyKeys: (string | undefined)[];
   receipt: Pick<intake.Receipt, "proposals" | "attached" | "corrections" | "unreconciled" | "corroborated" | "dropped">;
 }
@@ -554,7 +554,8 @@ export function admit(
       if (cb) {
         out.appends.push({ kind: "confirm", project_id: relTarget.project_id, session_id: null, target_id: relTarget.id, body: cb });
         out.keys.push(`${c.key}:confirm`);
-        out.legacyKeys.push(undefined);
+        // confirm 与这条证据同生共死：证据按旧键算已处理时，confirm 也不能单独写进去（§21 2026-11-03）
+        out.legacyKeys.push(c.legacyKey);
         out.receipt.corroborated++;
       }
       continue;
