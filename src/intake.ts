@@ -174,6 +174,18 @@ export function knownCandidates(db: DatabaseSync, keys: string[]): Set<string> {
   return got;
 }
 
+/**
+ * 这一批里还能写入的下标：新键已记录，或没正文/方案的候选带着 main 的旧键且旧键已记录，都算已处理。
+ * 抽取与一步式两条路径共用这一处判断，结果按批返回。
+ */
+export function freshAdmissions(db: DatabaseSync, keys: string[], legacyKeys: (string | undefined)[]): boolean[] {
+  const known = knownCandidates(db, [...keys, ...legacyKeys.filter((k): k is string => !!k)]);
+  return keys.map((k, i) => {
+    const legacy = legacyKeys[i];
+    return !known.has(k) && !(legacy !== undefined && known.has(legacy));
+  });
+}
+
 export function recordCandidates(db: DatabaseSync, rows: { key: string; event_id: string; window_id: string }[]): void {
   const ins = db.prepare("INSERT INTO capture_candidates(candidate_key,event_id,window_id) VALUES(?,?,?)");
   for (const r of rows) ins.run(r.key, r.event_id, r.window_id);

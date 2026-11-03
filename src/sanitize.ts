@@ -59,6 +59,15 @@ export function hasSecret(s: Sanitized | string): boolean {
   return /\[SECRET:/.test(text) || (typeof s !== "string" && SECRET_KINDS.some((k) => (s.hits[k] ?? 0) > 0));
 }
 
+/**
+ * 未脱敏的原文里有没有密钥（§8.11.2 的写入口：正文、否掉的方案这类没走 sanitize 的字段）。
+ * 代码块里的也算：正则跑在全文上，不先删代码块。返回命中的类型，空数组表示干净。
+ */
+export function secretKinds(input: string): SanitizeKind[] {
+  const hits = sanitize(input).hits;
+  return SECRET_KINDS.filter((k) => (hits[k] ?? 0) > 0);
+}
+
 export function addHits(into: Partial<Record<SanitizeKind, number>>, from: Partial<Record<SanitizeKind, number>>): void {
   for (const [k, n] of Object.entries(from) as [SanitizeKind, number][]) into[k] = (into[k] ?? 0) + n;
 }

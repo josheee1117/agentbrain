@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { ImportRef, PropKind, Proposition, RememberBody } from "./l2.ts";
+import { checkBodyField } from "./l2.ts";
 import type { Store, Embedder } from "./store.ts";
 import { parseJsonLoose, type Chat } from "./llm.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem } from "./relate.ts";
@@ -32,6 +33,8 @@ export interface PensieveDoc {
   sha256: string;
   conclusion: string;
   sections: Map<string, string>;
+  /** 去掉 frontmatter 的 md 原文，就是导入条的 body（§8.11.5）。 */
+  body: string;
 }
 
 export interface ImportPlanItem {
@@ -39,8 +42,17 @@ export interface ImportPlanItem {
   kind: PropKind;
   text: string;
   why: string | undefined;
+  /** md 正文（去掉 frontmatter）；→ RememberBody.body，不截断（≤ BODY_MAX_CHARS，§8.11.5）。 */
+  body: string | undefined;
   /** 同一 id、同一内容出现在多个仓库时其余的路径。 */
   also: string[];
+}
+
+/** 因为密钥或超长没写进 body 的文档（§8.11.5：报告列出，这些仓库的 .pensieve 不能删）。 */
+export interface DetailSkipped {
+  id: string;
+  path: string;
+  reason: string;
 }
 
 export interface Skipped {
@@ -123,17 +135,21 @@ export function parseDoc(path: string, src: string, dirType: PensieveDoc["type"]
     sha256: createHash("sha256").update(src).digest("hex"),
     conclusion,
     sections,
+    body,
   };
 }
 
-export function mapDoc(doc: PensieveDoc): { kind: PropKind; text: string; why: string | undefined } {
+export function mapDoc(doc: PensieveDoc): { kind: PropKind; text: string; why: string | undefined; body: string | undefined } {
   const kind: PropKind = doc.type === "maxim" ? "rule" : doc.type === "decision" ? "decision" : (TRAP_TITLE.test(doc.title) || TRAP_BODY.test(doc.conclusion)) ? "pitfall" : "note";
   const head = doc.title && !doc.conclusion.includes(doc.title) ? `${doc.title}：` : "";
   const text = cap(sanitize(`${head}${doc.conclusion || doc.title}`).text, IMPORT_TEXT_MAX);
   const whyKeys = doc.type === "decision" ? WHY_DECISION : doc.type === "maxim" ? WHY_MAXIM : WHY_KNOWLEDGE;
   const whyRaw = pick(doc.sections, whyKeys).map(condense).filter(Boolean).join("；");
   const why = whyRaw ? cap(sanitize(whyRaw).text, IMPORT_WHY_MAX) : undefined;
-  return { kind, text, why };
+  // 正文是 md 原文（不截断，§8.11.5）。密钥、超长在写 L1 的入口判，这里只负责映射。
+  // maxim 映射成规则，规则必须一行说清，不带正文。
+  const body = kind === "rule" ? undefined : doc.body.trim() || undefined;
+  return { kind, text, why, body };
 }
 
 /** 列出一个仓库（或家目录）下 .pensieve 的可导入文件；pipelines、short-term、.state 不导。 */
@@ -187,8 +203,7 @@ export function planImport(inputs: PlanInput[], skip: Map<string, string>): { it
       if (hasSecret(mapped.text) || (mapped.why && hasSecret(mapped.why))) {
         skipped.push({ path: f.path, id: doc.id, reason: "含密钥" });
         continue;
-      }
-      // 同一 id 同一内容出现在多个仓库（Pensieve 默认模板）：只导一次，作用域提成全局
+      }      // 同一 id 同一内容出现在多个仓库（Pensieve 默认模板）：只导一次，作用域提成全局
       const dupKey = `${doc.id}\u0000${doc.sha256}`;
       const prev = seen.get(dupKey);
       if (prev) {
@@ -225,6 +240,10 @@ export interface ImportReport {
   corrected: string[];
   unchanged: number;
   archivedSkip: number;
+  /** 重导时给旧条目补上了正文的条目 id。 */
+  detailed: string[];
+  /** 因密钥或超长没写进 body 的文档（正文没进库，报告要列出）。 */
+  detailSkipped: DetailSkipped[];
   skipped: Skipped[];
   relate: { mergedExisting: number; mergedIntoExisting: number; refines: number; conflicts: string[]; unrelated: number; unsure: number; errors: number; errorDetails: string[] };
 }
@@ -240,7 +259,7 @@ export interface ImportDeps {
 }
 
 export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof planImport>): Promise<ImportReport> {
-  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0, errorDetails: [] } };
+  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, detailed: [], detailSkipped: [], skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0, errorDetails: [] } };
   const pending: string[] = []; // 未变但还没做过关系判定的（上次判定出错或中断），本次补判
   for (const it of plan.items) {
     const pid = it.project === null ? null : deps.projectId(it.project);
@@ -252,13 +271,33 @@ export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof p
     }
     if (old && old.import_ref?.sha256 === it.doc.sha256) {
       report.unchanged++;
+      // 源文件没变，但旧版本导入时没存正文：追加 detail 补上，不换 id（§8.11.5）
+      if (it.body !== undefined && old.body === null) {
+        try {
+          deps.store.detailIfMissing(old.id, null, { body: it.body });
+          report.detailed.push(old.id);
+        } catch (e) {
+          report.detailSkipped.push({ id: it.doc.id, path: it.doc.path, reason: (e as Error).message });
+        }
+      }
       if (!old.related) pending.push(old.id);
       continue;
+    }
+    let bodyText = it.body;
+    if (bodyText !== undefined) {
+      try {
+        // 写 L1 前的统一检查在这里跑（种类、长度、密钥、脱敏）；不过就不写这个字段，其他字段照常导入
+        bodyText = checkBodyField(it.kind, bodyText);
+      } catch (e) {
+        report.detailSkipped.push({ id: it.doc.id, path: it.doc.path, reason: (e as Error).message });
+        bodyText = undefined;
+      }
     }
     const body: RememberBody = {
       kind: it.kind,
       text: it.text,
       why: it.why,
+      body: bodyText,
       source: { host: null, session_id: null, transcript: null, anchor: null, summary: `Pensieve 导入：${it.doc.path}` },
       confirmed: true,
       origin: "import",
@@ -312,11 +351,11 @@ async function relateImports(deps: ImportDeps, ids: string[], report: ImportRepo
       const p = props.get(b.prop.id);
       const t = v.target ? props.get(v.target.id) : null;
       if (!p || p.state !== "active" || (v.target && t?.state !== "active")) return;
-      const { appends, merge } = applyVerdict(p, t ?? null, v, deps.chat!.model, { mode: "user-confirmed-wins" });
+      const { appends, merge, outcome } = applyVerdict(p, t ?? null, v, deps.chat!.model, { mode: "user-confirmed-wins" });
       if (merge === "new-into-target") report.relate.mergedIntoExisting++;
       else if (merge === "target-into-new") report.relate.mergedExisting++;
-      else if (v.outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
-      else if (v.outcome !== "duplicate") report.relate[v.outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
+      else if (outcome === "conflicts") report.relate.conflicts.push(`${p.id.slice(0, 8)}↔${t?.id.slice(0, 8)}`);
+      else if (outcome !== "duplicate") report.relate[outcome]++; // duplicate 必有目标（parseRelate 保证），走不到这里
       deps.store.commit(appends, () => {});
     });
   }

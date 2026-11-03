@@ -48,6 +48,7 @@ const json = (o: object): ChatMessage => ({ role: "assistant", content: JSON.str
 interface Env {
   store: Store;
   repo: string;
+  registryDir: string;
   deps: (chat: Chat | null, extra?: Partial<WorkDeps>) => WorkDeps;
   transcript: (sid: string, lines: object[], idle?: boolean) => string;
   register: (sid: string, file: string, ended?: boolean) => void;
@@ -71,6 +72,7 @@ function env(): Env {
   return {
     store,
     repo,
+    registryDir: regDir,
     pid,
     deps: (chat, extra = {}) => ({
       store,
@@ -96,6 +98,7 @@ function env(): Env {
 }
 
 const user = (uuid: string, text: string) => ({ type: "user", uuid, message: { role: "user", content: text } });
+const userTs = (uuid: string, text: string, timestamp: string) => ({ type: "user", uuid, timestamp, message: { role: "user", content: text } });
 const asst = (uuid: string, text: string) => ({ type: "assistant", uuid, message: { content: [{ type: "text", text }] } });
 const toolErr = (uuid: string, text: string) => ({ type: "user", uuid, message: { content: [{ type: "tool_result", tool_use_id: "x", content: text, is_error: true }] } });
 
@@ -129,7 +132,7 @@ test("会话静置后抽出一条未确认提议；编造引文的候选被丢�
   assert.equal(p.origin, "extract");
   assert.equal(p.basis, "user_directive");
   assert.equal(p.project_id, e.pid);
-  assert.deepEqual(p.evidence, [{ anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都写 node 绝对路径") }]);
+  assert.deepEqual(p.evidence, [{ anchor: "u1", role: "user", quote_sha256: sha256("以后 hook 命令都写 node 绝对路径"), quote: "以后 hook 命令都写 node 绝对路径" }]);
   assert.equal(p.source.session_id, "s1");
   assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "a1");
   const ctx = chat.calls[0][1].content!;
@@ -250,7 +253,8 @@ test("同一窗口近重复：只留一条，优先 kind 与 basis 对得上的�
   const chat = fakeChat(() => json({ candidates: [
     { ...RULE, kind: "decision", text: "hook 命令都写 node 绝对路径，不依赖 PATH", evidence: [{ anchor: "#3", role: "user", quote: "hook 一律写 node 绝对路径" }] },
     { ...RULE, text: "hook 命令写 node 绝对路径，不依赖 PATH" },
-    { ...RULE, text: "提交信息用中文写", evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令" }] },
+    // 正文向量含 why（§8.11.3）：不相干的候选要用自己的背景，不能共用一条 why
+    { ...RULE, text: "提交信息用中文写", why: "仓库历史讨论都是中文，读 git log 的人不熟悉英文缩写", evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令" }] },
   ] }));
   const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
   assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [3, 1, 2]);
@@ -283,6 +287,70 @@ test("agent 推断的重复不算印证", async () => {
   e.register("s2", e.transcript("s2", [asst("a1", "我觉得 hook 命令最好写 node 绝对路径")]));
   await runWork(e.deps(fakeChat(() => json({ candidates: [{ ...RULE, kind: "decision", basis: "agent_inference", evidence: [{ anchor: "#1", role: "assistant", quote: "hook 命令最好写 node 绝对路径" }], relation: { type: "duplicate", target: "m1" } }] }))), { sweep: false, dryRun: false });
   assert.equal(props(e.store)[0].confirmed, false);
+});
+
+test("§8.11.3 关系链：候选归属别的项目时，近邻去重与关系判定都在最终项目 + 全局里做，跨项目重复按新条目处理", async () => {
+  const e = env();
+  const otherRepo = join(base, `other${n}`, "piops");
+  mkdirSync(otherRepo, { recursive: true });
+  writeFileSync(join(otherRepo, "AGENTS.md"), "pi-ops 仓库。\n");
+  execFileSync("git", ["-C", otherRepo, "init", "-q"]);
+  execFileSync("git", ["-C", otherRepo, "-c", "user.name=t", "-c", "user.email=t@t", "add", "."]);
+  execFileSync("git", ["-C", otherRepo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]);
+  writeFileSync(join(e.registryDir, "pi-ops.md"), "- 路径：`x`\n");
+  const piopsId = e.store.ensureProject("pi-ops");
+  const reg = [{ name: "alpha", path: e.repo }, { name: "pi-ops", path: otherRepo }];
+  // alpha 已有一条同标题条目：候选被归到 pi-ops，就不能当成 alpha 条目的重复
+  const old = e.store.remember(e.pid, null, false, { kind: "rule", text: "final 阶段只显示不拦合并", confirmed: true, source: src0(null) });
+  const ts = "2026-10-30T10:00:00Z";
+  const f = e.transcript("s1", [
+    userTs("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH", ts),
+    asst("a1", "pi-ops 的 final 阶段建议只显示不拦合并"),
+    userTs("u2", "可以，pi-ops 的 final 就只显示不拦截", ts),
+  ]);
+  e.register("s1", f);
+  const DEC = {
+    kind: "decision",
+    project: "pi-ops",
+    project_anchor: "#2",
+    text: "final 阶段只显示不拦合并",
+    why: "final 拦下过的真实问题太少",
+    basis: "user_confirmed",
+    evidence: [
+      { anchor: "#2", role: "assistant", quote: "final 阶段建议只显示不拦合并" },
+      { anchor: "#3", role: "user", quote: "final 就只显示不拦截" },
+    ],
+    relation: { type: "new", target: null },
+  };
+  const chat = fakeChat(() => json({ candidates: [DEC] }));
+  const r = await runWork(e.deps(chat, { registry: reg, resolveProject: (cwd) => (cwd.startsWith(e.repo) ? { name: "alpha", path: e.repo } : null), projectId: (name) => e.store.ensureProject(name) }), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.equal(r.receipt.proposals, 1, "没被当成 alpha 的重复");
+  const prop = props(e.store).find((p) => p.text === DEC.text && p.kind === "decision");
+  assert.equal(prop?.project_id, piopsId);
+  assert.equal(prop?.value?.session_project, "alpha", "成功跨项目归属记下会话项目，ab get 才能说清");
+  // alpha 的同标题条目仍归 alpha：跨项目不并
+  const alphaProp = props(e.store).find((p) => p.id === old)!;
+  assert.equal(alphaProp.project_id, e.pid);
+  assert.equal(alphaProp.state, "active");
+});
+
+test("§8.11.3 关系链：duplicate 追加的证据带 quote 与 said_at，跨会话印证只在同项目内发生", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令写 node 绝对路径，不依赖 PATH", confirmed: true, source: src0(null) });
+  // s2 里的用户话与 alpha 同项目，先走一次 admit 的 duplicate
+  e.register("s2", e.transcript("s2", [
+    userTs("u1", "以后 hook 命令都写 node 绝对路径", "2026-10-30T09:00:00Z"),
+  ]));
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, relation: { type: "duplicate", target: "m1" } }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.attached, 1);
+  const after = props(e.store).find((p) => p.id === old)!;
+  assert.equal(after.extra_sources.length, 1);
+  const ev = after.extra_sources[0].evidence[0];
+  assert.equal(ev.quote, "以后 hook 命令都写 node 绝对路径");
+  assert.equal(ev.quote_sha256, sha256("以后 hook 命令都写 node 绝对路径"));
+  assert.equal(ev.said_at, "2026-10-30T09:00:00.000Z");
 });
 
 test("未静置、未结束的会话不处理；SessionEnd 后立即处理；结束后又有新 prompt 就按静置判断", async () => {
@@ -516,7 +584,7 @@ test("印证转正：admit 与关系判定对同一目标状态生成相同的 c
     e.register("s2", e.transcript("s2", [user("u1", quote)]));
     const checked = validate({ candidates: [{ ...RULE, text, evidence: [{ anchor: "#1", role: "user", quote }], relation: { type: "duplicate", target: "m1" } }] }, {
       turns: [{ anchor: "u1", role: "user", text: quote }], context: [],
-    }, [e.store.project().props.get(target)!], "window");
+    }, [e.store.project().props.get(target)!], "window", { name: "alpha", docs: "", registry: "", confirmed: "", projects: "- alpha" });
     assert.equal(checked.candidates.length, 1);
     const admission = admit(checked.candidates.map((c) => ({ ...c, unreconciled: false })), intake.sessions(e.store.workDb)[0], e.pid, "window", e.store.project().props, "fake-llm");
     // 同一份新证据改走关系判定入口，admit 的结果不提交。
@@ -930,4 +998,106 @@ test("ab-used 行不送去抽取", async () => {
   assert.doesNotMatch(JSON.stringify(chat.calls[0]), /ab-used|deadbeef/);
   assert.match(JSON.stringify(chat.calls[0]), /好的/);
   assert.equal(sessionRow(e).processed_anchor, "a1");
+});
+
+// ---------- review 条目 11：note 正文矛盾 → 最终投影标 stale ----------
+
+test("review 条目 11：note 标题对得上、正文里一处断言与代码矛盾 → 最终投影标 stale，不转正", async () => {
+  const e = env();
+  // 正文写错值 0.35，仓库代码里是 0.45：矛盾来自正文，不来自标题
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 存在", { kind: "note", body: "VEC_MIN_SIM 定义在 store.ts，值是 0.35。" });
+  const chat = fakeChat((msgs, opts) => {
+    if (!opts?.tools) return json({ candidates: [] });
+    assert.match(JSON.stringify(msgs), /值是 0\.35/, "核验请求里带上了正文");
+    if (msgs.length === 2) return { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "search_code", arguments: JSON.stringify({ pattern: "VEC_MIN_SIM" }) } }] };
+    // 返回矛盾结论之前确认：请求里既有正文的 0.35，也有工具查回来的代码 0.45
+    const sent = JSON.stringify(msgs);
+    assert.match(sent, /值是 0\.35/, "正文的 0.35 在请求里");
+    assert.match(sent, /VEC_MIN_SIM = 0\.45/, "工具返回的代码 0.45 在请求里");
+    return json({ verdict: "contradicted", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "const VEC_MIN_SIM = 0.45;" }] });
+  });
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(r.verify.contradicted, 1);
+  const p = e.store.project().props.get(id)!;
+  assert.equal(p.confirmed, false, "矛盾不转正");
+  assert.ok(p.stale, "最终投影标 stale，读路径才能显示与代码不符");
+  assert.equal(p.stale!.refs.length, 1);
+});
+
+// ---------- round4 条目 3：候选键算上否掉的方案 ----------
+
+test("round4 条目 3：同标题、否掉的方案不同的两条候选都入库，两份方案都留下", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const cand = (option: string) => ({
+    kind: "decision",
+    text: "hook 执行方式",
+    why: "宿主 hook 子进程的 PATH 很少，上次写 ab 直接报找不到命令",
+    alternatives: [{ option, rejected_because: "宿主 PATH 很少", evidence: 0 }],
+    basis: "user_directive",
+    evidence: [{ anchor: "#1", role: "user", quote: "以后 hook 命令都写 node 绝对路径" }],
+    relation: { type: "new", target: null },
+  });
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [cand("靠 PATH 找 ab"), cand("绝对路径写死")] }))), { sweep: false, dryRun: false });
+  assert.deepEqual([r.receipt.candidates, r.receipt.merged, r.receipt.proposals], [2, 0, 2], "方案不同是两份内容");
+  assert.deepEqual([...e.store.project().props.values()].map((p) => p.alternatives![0].option).sort(), ["side", "靠 PATH 找 ab"].sort().map((x) => (x === "side" ? "绝对路径写死" : x)));
+});
+
+// ---------- 升级兼容：main 留下的旧候选键（sha256(windowId|kind|norm(text))） ----------
+
+/** 旧版本（main 分支）的候选键：没有最终项目、正文和方案。 */
+const legacyKey = (window: string, c: { kind: string; text: string }) => sha256(`${window}|${c.kind}|${c.text.replace(/\s+/g, " ").trim()}`);
+
+/** 按本次重跑会切出的窗口 id 写一条旧键，模拟升级前 main 存下的候选。 */
+function recordLegacyCandidate(e: Env, sid: string, to: string, cand: { kind: string; text: string }): void {
+  const window = sha256(`claude|${sid}||${to}`);
+  e.store.workDb.prepare("INSERT INTO capture_candidates(candidate_key,event_id,window_id) VALUES(?,?,?)").run(legacyKey(window, cand), "legacy-event", window);
+}
+
+const proposalCount = (e: Env) => e.store.project().props.size;
+const evidenceCount = (e: Env) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='evidence'").get()!.n;
+
+test("升级兼容：旧键已在库、旧条目还有效 → 重跑不再追加证据、不新建条目", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1, "窗口照常完成");
+  assert.deepEqual([proposalCount(e), evidenceCount(e)], [0, 0], "旧键命中就当已处理");
+});
+
+test("升级兼容：旧键已在库、旧条目已被归档 → 重跑不再用新 id 让它重新生效", async () => {
+  const e = env();
+  const old = e.store.remember(e.pid, null, false, { kind: "rule", text: RULE.text, why: RULE.why, basis: "user_directive", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "x" } });
+  e.store.lifecycle("archive", old, null, { reason: "user" });
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  const same = [...e.store.project().props.values()].filter((p) => p.text === RULE.text);
+  assert.deepEqual(same.map((p) => [p.id, p.state]), [[old, "archived"]], "归档的条目不能被新 id 重新写活");
+});
+
+test("升级兼容反例：候选带正文时不按旧键跳过，照常写入", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  recordLegacyCandidate(e, "s1", "u1", RULE);
+  const withBody = { ...RULE, kind: "decision", body: "PATH 里没有 ab，写 node 绝对路径" };
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [withBody] }))), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.deepEqual([...e.store.project().props.values()].map((p) => [p.text, p.body]), [[withBody.text, withBody.body]], "main 的条目没有正文，带正文算新内容");
+});
+
+test("升级兼容：证据按旧键跳过时，confirm 也跳过，目标条目不被转正", async () => {
+  const e = env();
+  const target = auto(e, "s1", RULE.text, "以后 hook 命令都写 node 绝对路径");
+  const quote = "hook 里一律用 node 的绝对路径";
+  e.register("s2", e.transcript("s2", [user("u1", quote)]));
+  // main 处理这条会话的窗口时已写下候选键：升级后重跑会再次产出同一条候选，判成 s1 条目的 duplicate
+  recordLegacyCandidate(e, "s2", "u1", RULE);
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, evidence: [{ anchor: "#1", role: "user", quote }], relation: { type: "duplicate", target: "m1" } }] }));
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1, "窗口照常完成");
+  const stat = (kind: string) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind=? AND target_id=?").get(kind, target)!.n;
+  assert.deepEqual([stat("evidence"), stat("confirm")], [0, 0], "证据被旧键判成已处理时，confirm 不能单独写进去");
+  assert.equal(e.store.project().props.get(target)!.confirmed, false, "目标条目不能靠没写进去的证据转正");
 });

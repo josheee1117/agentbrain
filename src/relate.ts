@@ -4,13 +4,22 @@
  * 这里管 prompt、确定性校验，以及判定落成哪些 L1 追加（applyVerdict）；真正 commit 在调用方。
  */
 import { promptVersion, type ChatMessage } from "./llm.ts";
-import type { ArchiveBody, Basis, ConfirmBody, EvidenceBody, Proposition, RelateBody } from "./l2.ts";
+import { sameAlternatives, sameBody, type ArchiveBody, type Basis, type ConfirmBody, type EvidenceBody, type Proposition, type RelateBody } from "./l2.ts";
 import type { PendingAppend } from "./store.ts";
 import { sanitize } from "./sanitize.ts";
 
 export type RelateOutcome = "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
 const OUTCOMES: RelateOutcome[] = ["duplicate", "refines", "conflicts", "unrelated", "unsure"];
 const MAX_REASON_CHARS = 200;
+/** 每条正文进关系判定的上限（§8.11.3）：太短判不出实质差异，太长占满窗口。 */
+export const RELATE_BODY_MAX_CHARS = 2000;
+
+/** 正文进输入时的写法：只去掉首尾空白，内部的换行和缩进照旧（比较时算内容）；超过上限截断并注明。 */
+function clipBody(body: string): string {
+  const chars = [...body.trim()];
+  if (chars.length <= RELATE_BODY_MAX_CHARS) return chars.join("");
+  return `${chars.slice(0, RELATE_BODY_MAX_CHARS).join("")}…（正文已截断）`;
+}
 
 export interface RelateItem {
   prop: Proposition;
@@ -24,7 +33,7 @@ export interface RelateVerdict {
 }
 
 const SYSTEM = `你是 agentbrain 的记忆关系判定器。每道题给你一条新记忆 N 和几条已有记忆（m1、m2…），判断 N 和它们的关系：
-- duplicate：N 说的和某条已有记忆是同一件事（措辞不同也算），记一条就够。
+- duplicate：N 说的和某条已有记忆是同一件事（措辞不同也算），记一条就够。有详情正文（body）时，正文有实质差异就不能判 duplicate。
 - refines：N 是某条已有记忆更具体的补充，两条都值得留。
 - conflicts：N 和某条已有记忆说法矛盾，不能同时成立。
 - unrelated：主题相近但说的是不同的事，各自独立。
@@ -39,7 +48,9 @@ export const RELATE_PROMPT_VERSION = promptVersion(SYSTEM);
 
 function line(p: Proposition): string {
   const why = p.why ? `（理由：${p.why}）` : "";
-  return sanitize(`[${p.kind}${p.confirmed ? "，已确认" : "，未确认"}] ${p.text}${why}`).text;
+  const body = p.body ? `（正文：${clipBody(p.body)}）` : "";
+  const alts = p.alternatives?.length ? `（否掉的方案：${p.alternatives.map((a) => `${a.option}（${a.rejected_because}）`).join("；")}）` : "";
+  return sanitize(`[${p.kind}${p.confirmed ? "，已确认" : "，未确认"}] ${p.text}${why}${body}${alts}`).text;
 }
 
 export function buildRelateMessages(items: RelateItem[]): ChatMessage[] {
@@ -88,16 +99,30 @@ export interface AppliedVerdict {
   appends: PendingAppend[];
   merge: MergeEffect;
   corroborated: boolean;
+  /** 实际记下的关系：duplicate 但详情不同时会改成 refines。 */
+  outcome: RelateOutcome;
+}
+
+/** duplicate 时会被归档的那条：absorb-new 归档新条；user-confirmed-wins 在目标未用户确认时归档目标。 */
+function archivedBy(p: Proposition, target: Proposition, policy: MergePolicy): Proposition {
+  if (policy.mode === "absorb-new") return p;
+  return target.confirmed && target.confirmed_by === "user" ? p : target;
 }
 
 /**
  * 把一条判定变成要写进 L1 的追加（纯函数，不读不写库）。
  * 前置条件由调用方检查：p 和 target 都还在、都 active，以及各自的跳过规则。
  */
-export function applyVerdict(p: Proposition, target: Proposition | null, v: RelateVerdict, model: string, policy: MergePolicy): AppliedVerdict {
+export function applyVerdict(p: Proposition, target: Proposition | null, verdict: RelateVerdict, model: string, policy: MergePolicy): AppliedVerdict {
+  // duplicate 但会被归档的那条带详情、且两边详情不一样：并进去会丢掉一份正文或否掉的方案（§8.11.3），
+  // 改记成补充，两条都留。被归档那条没详情时不会丢东西，照旧按 duplicate 并。
+  const doomed = target && verdict.outcome === "duplicate" ? archivedBy(p, target, policy) : null;
+  const lossy = !!doomed && (!!doomed.body || !!doomed.alternatives?.length) && (!sameBody(p.body, target!.body) || !sameAlternatives(p.alternatives, target!.alternatives));
+  const v = lossy ? { ...verdict, outcome: "refines" as const } : verdict;
   const rel: RelateBody = { outcome: v.outcome, target: target?.id ?? null, reason: v.reason, model, prompt_version: RELATE_PROMPT_VERSION };
   const appends: PendingAppend[] = [{ kind: "relate", project_id: p.project_id, session_id: null, target_id: p.id, body: rel }];
-  if (v.outcome !== "duplicate" || !target) return { appends, merge: null, corroborated: false };
+  // 补充不并：links.ts 从本条这一条 relate 就能算出双向关联（refines / refined_by）
+  if (v.outcome !== "duplicate" || !target) return { appends, merge: null, corroborated: false, outcome: v.outcome };
 
   if (policy.mode === "absorb-new") {
     const basis = p.basis ?? "agent_inference";
@@ -107,13 +132,13 @@ export function applyVerdict(p: Proposition, target: Proposition | null, v: Rela
     if (cb) appends.push({ kind: "confirm", project_id: target.project_id, session_id: null, target_id: target.id, body: cb });
     const ar: ArchiveBody = { reason: "duplicate", into: target.id };
     appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
-    return { appends, merge: "new-into-target", corroborated: cb !== null };
+    return { appends, merge: "new-into-target", corroborated: cb !== null, outcome: v.outcome };
   }
 
   if (target.confirmed && target.confirmed_by === "user") {
     const ar: ArchiveBody = { reason: "duplicate", into: target.id };
     appends.push({ kind: "archive", project_id: p.project_id, session_id: null, target_id: p.id, body: ar });
-    return { appends, merge: "new-into-target", corroborated: false };
+    return { appends, merge: "new-into-target", corroborated: false, outcome: v.outcome };
   }
   const back: RelateBody = { outcome: "duplicate", target: p.id, reason: v.reason, model, prompt_version: RELATE_PROMPT_VERSION };
   const ev: EvidenceBody = { source: target.source, basis: target.basis ?? "agent_inference", evidence: target.evidence, window_id: `import:${target.id}`, model, prompt_version: RELATE_PROMPT_VERSION };
@@ -121,5 +146,5 @@ export function applyVerdict(p: Proposition, target: Proposition | null, v: Rela
   appends.push({ kind: "evidence", project_id: p.project_id, session_id: target.source.session_id, target_id: p.id, body: ev });
   appends.push({ kind: "relate", project_id: target.project_id, session_id: null, target_id: target.id, body: back });
   appends.push({ kind: "archive", project_id: target.project_id, session_id: null, target_id: target.id, body: ar });
-  return { appends, merge: "target-into-new", corroborated: false };
+  return { appends, merge: "target-into-new", corroborated: false, outcome: v.outcome };
 }

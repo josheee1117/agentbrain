@@ -859,14 +859,14 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 #### 8.11.2 数据
 
-- **证据**：`EvidenceRef` 加 `quote?: string`、`said_at?: string`。`quote` 是抽取逐字核对、过滤密钥之后实际算哈希的那段（`src/extract.ts:471-491` 的 `kept`），长度沿用现有校验（`src/extract.ts:14-15`，不提高下限，"按你的方案来"这类短认可照样能存）；`said_at` 是这段原话所在轮的时间，没有就缺省，显示为"时间未知"，不拿条目的 `said_at` 代替。不变量：`sha256(quote) === quote_sha256`。
+- **证据**：`EvidenceRef` 加 `quote?: string`、`said_at?: string`。`quote` 是抽取逐字核对、过滤密钥之后实际算哈希的那段（`src/extract.ts:471-491` 的 `kept`），长度沿用现有校验（`src/extract.ts:14-15`，不提高下限，"按你的方案来"这类短认可照样能存）；`said_at` 是这段原话所在轮的时间，没有就缺省，显示为"时间未知"，不拿条目的 `said_at` 代替。不变量：`sha256(quote) === quote_sha256`。每条候选最多 6 条证据：超过只取前 6 条并记 `evidence_truncated`，引用被截掉证据的方案在下面按整项丢掉，不整条丢（2026-11-02）。
 - **追加证据也完整保存**：`ExtraSource` 的 `quote_sha256: string[]` 换成 `evidence: EvidenceRef[]`（`src/l2.ts:179-185,362-370`）。旧事件只有哈希，投影出不带 `quote` 的引用。这是同一份证据只留一个来源，不另存一份。
-- **`RememberBody.body?: string`**：详情正文，decision、note、pitfall 能带（Pensieve knowledge 有一部分映射成 pitfall，`src/pensieve.ts:253`），rule 不能带（规则必须一行说清）。上限 `BODY_MAX_CHARS = 40000`（data-asset 的 137 篇 Pensieve 文档中位 3957 字、p90 8010、最长 35179，全部放得下，不截断）。`text` 仍是一行标题。显示和向量输入另行截短，不影响存储。
-- **`RememberBody.alternatives?: { option: string; rejected_because: string; evidence: number }[]`**：只有 decision 能带，≤5 项，文字各 ≤200 字。`evidence` 是本条 `evidence[]` 的下标，指向支撑"为什么否掉"的那段原话；下标不存在的项丢掉。
+- **`RememberBody.body?: string`**：详情正文，decision、note、pitfall 能带（Pensieve knowledge 有一部分映射成 pitfall，`src/pensieve.ts:253`），rule 不能带（规则必须一行说清）。上限 `BODY_MAX_CHARS = 40000`（data-asset 的 137 篇 Pensieve 文档中位 3957 字、p90 8010、最长 35179，全部放得下，不截断）。抽取侧另有 5000 字上限（`src/extract.ts` 的 `MAX_BODY_CHARS`），超出只丢正文并记 `body_dropped`，存储上限仍是 40000。`text` 仍是一行标题。显示和向量输入另行截短，不影响存储。
+- **`RememberBody.alternatives?: { option: string; rejected_because: string; evidence: number }[]`**：只有 decision 能带，≤5 项，文字各 ≤200 字。`evidence` 是本条 `evidence[]` 的下标，指向支撑"为什么否掉"的那段原话；`null` 或非整数当作没有引用，保留方案；负数、越界或指向被删证据的整项丢掉并记 `alternatives_dropped`，不悄悄丢。
 - 背景仍放 `why`，不另加 context 字段；归属仍是事件的 `project_id`。
 - **补详情事件 `detail`**：`{ body?, alternatives? }`，只给已有条目补上原来没有的详情，不换 id、不改确认状态和关联。现在只有 Pensieve 重导用它（见 8.11.5）。投影时若条目已有 body，`detail` 不覆盖（fail-closed，计 orphans 同类诊断）。
 - **投影**：`Proposition.body: string | null`、`alternatives: …[]`，旧数据为 `null` / `[]`。
-- **向量文本**：从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超过向量模型输入上限时截 body。body 改变要重算向量。
+- **向量文本**：从 `text + why`（`src/store.ts:144`）改为 `text + why + body`，超过向量模型输入上限时截 body。body 改变要重算向量。全文索引和字面召回用 `text + why + 完整 body`，只有向量输入截短；`text_hash` 只按向量那份算，正文超出上限的部分变化不触发重算（`src/store.ts` 的 `indexText` / `vectorText` / `vectorTextOf`）。
 - **同一个脱敏边界**：`text`、`why`、`body`、`alternatives`、`quote` 在写入 L1 之前统一过 `hasSecret`（含代码块；Pensieve 旧映射先删代码块再检查 text、why，看不到代码块里的密钥，`src/pensieve.ts:73-80,186-190`）。命中时：CLI 报错退出 1；抽取丢掉该字段并记 flag，不丢整条；导入不写这个字段，并在报告里列出。手写、导入、抽取三条入口都过这一处。body 发往 DashScope 算向量，接收方和数据类别（记忆正文）与 §13.3 v2.6 条一致；实际出境的内容会变多（细节和代码片段），这一点在 §13.3 注明。
 
 #### 8.11.3 抽取
@@ -895,9 +895,11 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
    - 候选解析出最终项目后，近邻去重和关系判定都在最终项目 + 全局里做；
    - `admit` 拒绝把候选当成别的项目条目的重复（`src/work.ts:490-527`），这种情况按新条目处理；跨会话印证只在同一项目内发生。
 6. **去重看完整内容**：
-   - 同窗口候选键从 窗口 + kind + text（`src/extract.ts:519-526`）改为 窗口 + 最终项目 + kind + text + body 哈希；
+   - 同窗口候选键从 窗口 + kind + text（`src/extract.ts:519-526`）改为 窗口 + 最终项目 + kind + text + body 哈希 + 方案哈希；没有方案的候选不拼方案段，键与旧口径完全一样，窗口重跑不会多写入库（2026-11-02）；
    - 向量去重用 text + why + body；
-   - 关系判定（`src/relate.ts:38-40`）的输入加上 body 和 alternatives，正文有实质差异就不能判 duplicate。
+   - 关系判定（`src/relate.ts:38-40`）的输入加上 body 和 alternatives，正文有实质差异就不能判 duplicate。输入里的正文只去掉首尾空白，内部换行和缩进保留（比较时算内容），仍按 2000 字截断（2026-11-02）；
+   - 第 2 层判 duplicate 时会归档一条：被归档那条带正文或方案、且两边详情不完全一致（完整正文和方案逐项比）时，不归档，改记 `refines`，两条都留着（`ab get` 双向显示关联）；详情完全一致才按 duplicate 归档（2026-11-02）；
+   - 第 1 层显式判 duplicate、但详情不同被降级成新条目时，首次写入就标 `unreconciled`；第 2 层给出确定结论才解除，`unsure` 和判定出错都保持未决（2026-11-02）。
 7. 每窗口条数上限不变；`body` 不占 `text` 的 200 字。改提示词按 §8.10 自动换版本号。
 
 #### 8.11.4 读
@@ -906,7 +908,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 - **`ab search`**：前 8 条全文里，decision / note / 带 body 的 pitfall 显示 body 前 300 字和"`ab get <id>` 看全文"。
 - **跨项目段**：
   - 什么时候出：在已登记项目目录里搜索，没给 `--project` / `--all`，结果末尾多一段「其他项目里相近的：」。pm 目录本来就搜全库，不加这一段。
-  - 怎么取：候选先限定为其他项目的 searchable 条目，再按与查询的向量相似度排序，取 ≥0.6 的前 3 条，一行一条带项目名，照常记交付。不从全库 top-N 里事后筛。
+  - 怎么取：候选先限定为其他项目的 searchable 条目，再按与查询的向量相似度排序，取 ≥0.65 的前 3 条，一行一条带项目名，照常记交付。不从全库 top-N 里事后筛。阈值是 `src/store.ts` 的 `CROSS_PROJECT_MIN_SIM = 0.65`，由 `docs/eval/21-cross-project-threshold.md` 的评测定下。
   - 向量不可用：查询向量算不出（degraded）时不出这一段，并在降级提示里说明。候选里有向量还没补齐的条目（`pending>0`，`src/store.ts:491-513`）时，段尾注明"另有 N 条其他项目的记忆还没算向量，可能漏"。
   - 主会话和子代理都能看到这一段（用户 2026-10-30 选 A，见 8.11.8），`ab search` 不加 `--worker` 之类的参数。
 - brief 不变。
@@ -915,7 +917,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 - **`ab remember`** 加 `--body-file <文件>` 和可重复的 `--alternative "<方案>::<否掉的原因>"`。手写没有原话可指，`alternatives[].evidence` 缺省。
 - **`ab correct`** 也接受这两个参数，**不继承** body 和 alternatives（它们是结论内容，标题改了，详情照搬会自相矛盾）。要沿用旧详情就显式重给。新条目通过已有的纠正关联指向旧条目，旧详情在 `ab get` 里能看到。这样也不会把会话 A 的正文复制进会话 B 的版本，purge A 时不留副本。
-- **`ab curate`** 改写只针对没有 body、没有 alternatives 的条目。带详情的条目跳过改写并写进报告（`src/curate.ts:132-150` 现在只复制已有字段，会丢详情）。
+- **`ab curate`** 改写和自动合并都只针对没有 body、没有 alternatives 的条目。带详情的条目跳过并写进报告（改写会丢详情；合并会把正文或否掉的方案并丢）。审稿输入仍不带详情（2026-11-02）。
 - **Pensieve 重导**：
   - 不靠源文件哈希触发（原文件没变时现在直接算 unchanged，`src/pensieve.ts:253-256`），也不改 `import_ref.sha256` 的含义；
   - 重导时，已导入条目缺 body、源文档有正文的，追加一条 `detail` 事件补上全文（≤40000 字，过脱敏边界），不换 id，确认状态、场景、关联、`inject_log` 历史都留在原条目上，避免"新版本被并入后旧版本复活"（`src/l2.ts:406-418`）；
@@ -941,7 +943,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
    - 至少产出一条 note，并且通过代码核验或被正确判为不可核验；
    - pm 会话里讲 pi-ops 的决定落到 pi-ops，或标「归属未定」，不落成 pm。
 3. **还原测试**：在隔离库挑 3 条新抽出的决定，删掉对应的原对话文件。只凭 `ab get` 要能答出：当时什么问题、定了什么、否掉了什么、谁说的原话。
-4. **跨项目阈值评测**：用于定 0.6 这个阈值，另起一组独立的测试题，不和开发时用的查询重复：
+4. **跨项目阈值评测**：用于定 0.65 这个阈值，另起一组独立的测试题，不和开发时用的查询重复：
    - 正例：在 data-asset 目录搜"比率指标怎么建模"，跨项目段要出现 ai-data 的 `2018b871`，另外再找 4 个类似的正例；
    - 负例：至少 5 个"术语相同、业务含义不同"的查询，再加 5 个和其他项目完全无关的查询；
    - 报告每个查询出了哪些条目、相似度多少，再据此调阈值。
@@ -2544,6 +2546,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-03 候选键升级兼容（`feat/knowledge-decisions`）：main 的键是 `sha256(windowId|kind|norm(text))`，本分支改成带最终项目、正文和方案哈希的新键，旧库里已记录的旧键新代码不认识。旧窗口用 `ab work --session <id> --redo` 重跑时，模型给出同样候选会被当成新的：旧条目还有效就重复追加证据，旧条目已被用户归档就以新 id 重新处于 active。修法：候选额外带一个旧键（算法与 main 一致）；没有正文也没有否掉方案的候选，旧键已在 `capture_candidates` 里就当已处理、不写入；带详情的照常写入（main 的条目没有详情，算新内容）。判断收在 `intake.freshAdmissions` 一处，抽取窗口与一步式两条路径共用。不删旧键、不迁移数据、不改新键算法、不加配置。同一修法还要盖住 duplicate 分支里的跨会话印证：confirm 事件与它跟的那条证据同生共死，证据按旧键算已处理时 confirm 也跳过；否则重跑会把会话 A 的条目转正，而会话 B 的证据并没写进去。
+- 2026-11-02 §8.11 修掉会悄悄丢内容的路径（round4，用户先定方案再实现）：① 每条候选证据上限 3 → 6，超过只取前 6 条并记 `evidence_truncated`，引用被截掉证据的方案整项丢掉，不再整条丢候选；提示词写明上限。② 关系判定输入保留正文内部的换行和缩进（只去首尾空白，仍 2000 字截断）。③ 第 2 层判 duplicate 时，被归档那条带详情且两边详情不一致就改记 `refines`，两条都留。④ 同窗口候选键加上方案哈希，没有方案的候选键不变。⑤ 第 1 层显式 duplicate 因详情不同降级成新条目时首次写入就标 `unreconciled`。⑥ 抽取侧方案长度改按存储侧的口径（先查密钥、再脱敏、按脱敏后 200 个码点），删掉抽取自己的 100 字检查和常量。⑦ 抽取正文先查密钥脱敏，再按脱敏后 5000 字判。⑧ 方案条数上限改用存储侧的 5 项，超出只取前 5 项并记 `alternatives_dropped`。⑨ `ab curate` 带详情的条目连自动合并也跳过。
 - 2026-10-30 新增 §8.11（CANDIDATE）：决定记成决策卡（具体定了什么、背景、否掉的方案、长正文），抽取新增知识（note）并带长正文，原话片段存原文（§13.3 加例外），候选可按已登记的目标项目归属，项目目录里搜索带上其他项目的相近条目。起因是用户要求完全替代 Pensieve。
 - 2026-10-30 §8.11 按 astra 方案 review（pm `docs/agentbrain/2026-10-30-knowledge-decisions/tasks/01-design-review.md`）修订：追加证据也存原话、引文带各自时间；note 证据用助手原话并且核验送 body；Pensieve 用补详情事件、不截断；归属失败标「归属未定」、关系链按最终项目重算；去重含 body；correct 不继承详情、curate 跳过带详情条目；统一脱敏边界；跨项目段先限定再排序并提示向量未补齐；一步式抽取在补证据前不得打开；子代理是否可见跨项目段待用户定。
 - 2026-10-30 §8.11.8 用户选 A：主会话和子代理都能看到跨项目搜索段。

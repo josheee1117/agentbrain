@@ -216,12 +216,13 @@ test("一步式召回修法 §8.7：去掉偏少倾向、含按类清单（含�
   assert.deepEqual(m.invalid, { bad_kind: 1, too_many: 1, no_scenario: 1 });
 });
 
-test("一步式提示词钉死为评测 12 的 V1（eea066fc04d0）：§8.7 批准的是逐字相同，任何漂移都要先过用户", async () => {
+test("一步式提示词钉死为评测 12 的 V1：§8.7 批准的是逐字相同，任何漂移都要先过用户", async () => {
   const { ONE_PASS_SYSTEM } = await import("./onepass.ts");
   const { createHash } = await import("node:crypto");
   // 版本号口径与评测 12 的 probe.ts 一致：sha256(ONE_PASS_SYSTEM) 前 12 位。
   // 注意 topic.ts 的 PROMPT_VERSION 另把子代理说明一起算进去，数值不同、不要拿来对比。
-  assert.equal(createHash("sha256").update(ONE_PASS_SYSTEM).digest("hex").slice(0, 12), "eea066fc04d0");
+  // 5f4e4becc159 = 2026-10-30 按 §8.11.3 改《好记忆的标准》（decision 例外）后重新钉死
+  assert.equal(createHash("sha256").update(ONE_PASS_SYSTEM).digest("hex").slice(0, 12), "5f4e4becc159");
 });
 
 test("一步式：A 类结论一律 guidance=true（与审稿链路同口径），B/C 类看模型标注", async () => {

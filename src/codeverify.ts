@@ -163,13 +163,13 @@ const TOOLS: ToolSpec[] = [
   { type: "function", function: { name: "git_blame", description: "某个文件若干行的 blame", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path", "start_line"] } } },
 ];
 
-const SYSTEM = `你是 agentbrain 的代码核验员。给你一条项目记忆（坑或事实），你用只读工具查这个仓库的真实代码，判断代码是否支持它。
+const SYSTEM = `你是 agentbrain 的代码核验员。给你一条项目记忆（坑或事实），你用只读工具查这个仓库的真实代码，判断代码是否支持它。记忆可能带详情正文（body），body 里每个可核对的断言也要一并核实：给结论时对能对上的断言给证据；只要有一处 contradicted，整条就标 contradicted；全部可核对断言都 verified 才算 verified。
 
 只有代码才算证据，你的印象和记忆里的说法都不算。工具调用最多 ${MAX_TOOL_CALLS} 次。
 
 结论四选一：
-- verified：代码里有具体内容直接支持这条记忆（例如记忆说"hook 命令要用 node 绝对路径"，而 integrations 里的样例和说明确实这样写并给了原因）。
-- contradicted：代码里有具体内容与它矛盾（例如记忆说"阈值是 0.35"，代码里常量是 0.45）。
+- verified：代码里有具体内容直接支持这条记忆（例如记忆说"hook 命令要用 node 绝对路径"，而 integrations 里的样例和说明确实这样写并给了原因）。带 body 的记忆要 body 里每个可核对的断言都成立。
+- contradicted：代码里有具体内容与它矛盾（例如记忆说"阈值是 0.35"，代码里常量是 0.45）。body 里只要有一处矛盾就标 contradicted。
 - not_verifiable：这条说的是代码之外的事（外部工具的行为、用户偏好、为什么这样决定），代码既不能支持也不能否定。
 - inconclusive：查了但没找到足够的证据。
 
@@ -193,7 +193,7 @@ export interface VerifyResult {
 
 /** 一条记忆的一次核验。模型调用失败抛 WorkFailure；证据对不上降为 inconclusive。 */
 export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Proposition): Promise<VerifyResult> {
-  const subject = sanitize([`种类：${prop.kind === "pitfall" ? "坑" : "事实"}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : ""].filter(Boolean).join("\n")).text;
+  const subject = sanitize([`种类：${prop.kind === "pitfall" ? "坑" : "事实"}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : "", prop.body ? `详情正文：${prop.body}` : ""].filter(Boolean).join("\n")).text;
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM },
     { role: "user", content: `<memory>\n${subject}\n</memory>` },

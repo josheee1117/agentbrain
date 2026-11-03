@@ -40,7 +40,16 @@ globalThis.fetch = async (url, init) => {
   if (String(url) !== 'https://embedding.invalid/v1/embeddings') blocked();
   const body = JSON.parse(init.body);
   if (body.model === 'fail') return new Response(JSON.stringify({ error: { message: '假接口故障' } }), { status: 503 });
-  return new Response(JSON.stringify({ data: body.input.map((text, index) => ({ index, embedding: [1, 0, 0] })) }));
+  // 同步整批是脏的（含 SYNCFAIL）就失败，但查询向量仍算得出：用来造 pending>0
+  if (body.input.some((t) => t.includes('SYNCFAIL'))) return new Response(JSON.stringify({ error: { message: '假同步故障' } }), { status: 503 });
+  // model=cross：文本里写 SIM0.7 就得到与查询（[1,0]）相似度 0.7 的向量，没写就是 1.0
+  const vec = (text) => {
+    if (body.model !== 'cross') return [1, 0, 0];
+    const m = /SIM([0-9.]+)/.exec(text);
+    const s = m ? Number(m[1]) : 1;
+    return [s, Math.sqrt(Math.max(0, 1 - s * s))];
+  };
+  return new Response(JSON.stringify({ data: body.input.map((text, index) => ({ index, embedding: vec(text) })) }));
 };
 `);
 const transcriptDir = join(fakeHome, ".pi/agent/sessions/x");
@@ -758,6 +767,68 @@ test("search 前 8 条全文，第 9–16 名每条一行，再往后不出", as
   assert.deepEqual(shown.slice(0, 8), top8);
 });
 
+test("§8.11.4 跨项目段：已登记项目里搜索带出其他项目的相近条目，照常记交付", () => {
+  const own = join(dir, "cross-project");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const run = (args: string[], cwd = alpha) => ab(args, cwd, own);
+  const betaIds: string[] = [];
+  for (const sim of [0.9, 0.8, 0.7, 0.62]) {
+    const r = run(["remember", "--confirmed", "--project", "beta", "--kind", "decision", "--text", `beta 的缓存决定 SIM${sim}`, "--summary", "缓存选型"]);
+    assert.equal(r.code, 0, r.err);
+    betaIds.push(r.out.match(/\[([0-9a-f]{8})\]/)![1]);
+  }
+  assert.equal(run(["remember", "--confirmed", "--kind", "decision", "--text", "alpha 的缓存决定", "--summary", "缓存选型"]).code, 0);
+
+  const s = run(["search", "缓存策略"]);
+  assert.equal(s.code, 0, s.err);
+  const lines = s.out.split("\n");
+  const head = lines.indexOf("其他项目里相近的：");
+  assert.ok(head >= 0, s.out);
+  const cross = lines.slice(head + 1).filter(Boolean);
+  assert.equal(cross.length, 3, `门槛 0.65 挡掉 0.62，最多 3 条：\n${s.out}`);
+  assert.deepEqual(cross.map((l) => /（([0-9.]+)）$/.exec(l)?.[1]), ["0.90", "0.80", "0.70"]);
+  assert.match(cross[0], new RegExp(`^\\[${betaIds[0]}\\] beta 决定: beta 的缓存决定 SIM0\\.9（0\\.90）$`), s.out);
+  assert.ok(!s.out.includes(betaIds[3]), "过不了门槛的不出");
+  assert.ok(!s.out.includes("alpha 的缓存决定（"), "本项目的条目不在跨项目段里");
+  assert.doesNotMatch(run(["search", "缓存策略", "--kind", "note"]).out, /beta 的缓存决定/, "--kind 同样限定跨项目段");
+
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    const delivered = db.prepare("SELECT distinct prop_id FROM inject_log WHERE path='search'").all().map((r) => String(r.prop_id).slice(0, 8));
+    assert.deepEqual(betaIds.slice(0, 3).sort(), delivered.filter((x) => betaIds.includes(x)).sort(), "跨项目段的条目照常记交付");
+  } finally { db.close(); }
+
+  for (const args of [["--project", "alpha"], ["--all"]])
+    assert.doesNotMatch(run(["search", "缓存策略", ...args]).out, /其他项目里相近的/, args.join(" "));
+  execFileSync("git", ["init", "-q", join(dir, "pm")]);
+  assert.doesNotMatch(run(["search", "缓存策略"], join(dir, "pm")).out, /其他项目里相近的/, "pm 目录本来就搜全库");
+  run(["remember", "--confirmed", "--global", "--kind", "rule", "--text", "跨项目段的场景规则", "--summary", "场景", "--scene", "code"]);
+  assert.doesNotMatch(run(["search", "--scene", "code"]).out, /其他项目里相近的/, "--scene 列举不出");
+});
+
+test("§8.11.4 跨项目段：向量不可用不出段并有降级说明；其他项目 pending 在段尾注明", () => {
+  const plain = join(dir, "cross-degraded");
+  ab(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 的缓存笔记", "--summary", "缓存选型"], alpha, plain);
+  const s = ab(["search", "缓存策略"], alpha, plain);
+  assert.equal(s.code, 0, s.err);
+  assert.doesNotMatch(s.out, /其他项目里相近的/);
+  assert.match(s.out, /仅全文检索：.*跨项目段/, `降级提示里要说明跨项目段没出：\n${s.out}`);
+
+  const own = join(dir, "cross-pending");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const run = (args: string[]) => ab(args, alpha, own);
+  assert.equal(run(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 有向量的笔记", "--summary", "缓存选型"]).code, 0);
+  const stuck = run(["remember", "--confirmed", "--project", "beta", "--kind", "note", "--text", "beta 还没算向量的笔记 SYNCFAIL", "--summary", "缓存选型"]);
+  assert.equal(stuck.code, 0, stuck.err);
+  const p = run(["search", "缓存策略"]);
+  assert.equal(p.code, 0, p.err);
+  assert.match(p.out, /其他项目里相近的：/, p.out);
+  assert.match(p.out, /beta 有向量的笔记（1\.00）/);
+  assert.match(p.out, /另有 1 条其他项目的记忆还没算向量，可能漏/);
+});
+
 test("ab get --expand：Pensieve 导入条打开原 md（脱敏、改过要说明）；文件没了或路径不在 .pensieve 下给出原因", async () => {
   const { own, store } = await linkFixtureStore("pensieve-expand");
   const pdir = join(dir, "pens-repo/.pensieve/decisions");
@@ -1108,6 +1179,235 @@ test("brief --scene 的交付记录（prop_usage / inject_log）与场景段实�
   for (const id of ids) assert.ok(printed.includes(id), `交付记录里有 ${id}`);
 });
 
+// ---------- §8.11 详情正文与原话（2026-10-30） ----------
+
+test("§8.11 remember --body-file / --alternative 写入；ab get 按 text、why、alternatives（带原话）、body、原话顺序显示", async () => {
+  const own = join(dir, "kd-remember");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-body.md");
+  writeFileSync(bodyFile, "过期 300 秒\n\n回滚：切回单机缓存。\n");
+  const r = ab(["remember", "--confirmed", "--kind", "decision", "--text", "缓存层用 Redis", "--why", "单机内存扛不住峰值", "--summary", "缓存选型",
+    "--body-file", bodyFile, "--alternative", "继续单机内存::多实例下不一致", "--alternative", "上嵌入式 KV::运维要多装一套"], alpha, own);
+  assert.equal(r.code, 0, `out=${r.out} err=${r.err}`);
+  const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const p = [...s.project().props.values()].find((x) => x.id.startsWith(id))!;
+  assert.equal(p.body, "过期 300 秒\n\n回滚：切回单机缓存。", "--body-file 原样存进 body");
+  assert.deepEqual(p.alternatives, [{ option: "继续单机内存", rejected_because: "多实例下不一致" }, { option: "上嵌入式 KV", rejected_because: "运维要多装一套" }]);
+  // 原话只有抽取会写：直接补一条带原话的决定，检查 ab get 的顺序和"时间未知"
+  const pid = s.ensureProject("alpha");
+  const withQuote = s.remember(pid, "s", false, { kind: "decision", text: "缓存层用 Redis（含引文）", why: "单机内存扛不住峰值", confirmed: true,
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "缓存选型" },
+    body: "过期 300 秒",
+    alternatives: [{ option: "继续单机内存", rejected_because: "多实例下不一致", evidence: 0 }, { option: "上嵌入式 KV", rejected_because: "运维要多装一套" }],
+    evidence: [
+      { anchor: "u1", role: "user", quote_sha256: "h1", quote: "单机内存扛不住峰值", said_at: "2026-10-30T10:00:00Z" },
+      { anchor: "u2", role: "user", quote_sha256: "h2", quote: "那就上 Redis 吧" },
+    ] });
+  s.close();
+  const g = ab(["get", withQuote.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  const out = g.out;
+  const order = ["为什么: 单机内存扛不住峰值", "继续单机内存", "过期 300 秒", "原话"];
+  const at = order.map((x) => out.indexOf(x));
+  assert.ok(at.every((i) => i >= 0), `缺内容：${out}`);
+  assert.deepEqual([...at].sort((a, b) => a - b), at, `顺序不对：${out}`);
+  assert.match(out, /继续单机内存：多实例下不一致（「单机内存扛不住峰值」）/);
+  assert.match(out, /上嵌入式 KV：运维要多装一套$/m);
+  assert.match(out, /\[user 2026-10-30T10:00:00Z\] 单机内存扛不住峰值/);
+  assert.match(out, /\[user 时间未知\] 那就上 Redis 吧/);
+});
+
+test("§8.11 写入口：规则不能带正文、超长和密钥报错退出 1；correct 拿到同样的参数但不继承旧详情", async () => {
+  const own = join(dir, "kd-reject");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-b2.md");
+  writeFileSync(bodyFile, "正文");
+  const rule = ab(["remember", "--confirmed", "--kind", "rule", "--text", "一行规则", "--summary", "x", "--body-file", bodyFile], alpha, own);
+  assert.equal(rule.code, 1);
+  assert.match(rule.err, /正文/);
+  const huge = join(dir, "kd-b3.md");
+  writeFileSync(huge, "长".repeat(40001));
+  const tooLong = ab(["remember", "--confirmed", "--kind", "note", "--text", "事实", "--summary", "x", "--body-file", huge], alpha, own);
+  assert.equal(tooLong.code, 1);
+  assert.match(tooLong.err, /40000/);
+  const secret = ab(["remember", "--confirmed", "--kind", "note", "--text", "事实", "--summary", "x", "--why", "key 是 sk-abcdefghijklmnopqrstuvwxyz0123"], alpha, own);
+  assert.equal(secret.code, 1);
+  assert.match(secret.err, /密钥/);
+  const badAlt = ab(["remember", "--confirmed", "--kind", "rule", "--text", "r", "--summary", "x", "--alternative", "甲::乙"], alpha, own);
+  assert.equal(badAlt.code, 1);
+
+  const first = ab(["remember", "--confirmed", "--kind", "decision", "--text", "旧决定", "--summary", "x", "--body-file", bodyFile, "--alternative", "旧方案::旧原因"], alpha, own);
+  assert.equal(first.code, 0, first.err);
+  const oldId = first.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const corr = ab(["correct", oldId, "--text", "新决定", "--summary", "纠正"], alpha, own);
+  assert.equal(corr.code, 0, corr.err);
+  const newId = corr.out.match(/\[([0-9a-f]{8})\] 替代/)![1];
+  const g = ab(["get", newId], alpha, own).out;
+  assert.doesNotMatch(g, /正文\n|旧方案|旧原因/, `纠正不继承旧详情：${g}`);
+  const withBody = ab(["correct", oldId, "--text", "再改", "--summary", "纠正", "--body-file", bodyFile, "--alternative", "新方案::新原因"], alpha, own);
+  assert.equal(withBody.code, 0, withBody.err);
+  const g2 = ab(["get", withBody.out.match(/\[([0-9a-f]{8})\] 替代/)![1]], alpha, own).out;
+  assert.match(g2, /正文/);
+  assert.match(g2, /新方案：新原因/);
+});
+
+test("§8.11 search 前 8 条显示 body 前 300 字和 ab get 提示", async () => {
+  const own = join(dir, "kd-search-body");
+  mkdirSync(own, { recursive: true });
+  const bodyFile = join(dir, "kd-b4.md");
+  writeFileSync(bodyFile, "甲".repeat(400) + "\n尾巴不应出现");
+  const r = ab(["remember", "--confirmed", "--kind", "decision", "--text", "详情检索样例", "--summary", "x", "--body-file", bodyFile], alpha, own);
+  assert.equal(r.code, 0, r.err);
+  const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const s = ab(["search", "详情检索样例"], alpha, own);
+  assert.equal(s.code, 0, s.err);
+  assert.match(s.out, new RegExp(`正文: ${"甲".repeat(300)}…`));
+  assert.match(s.out, new RegExp(`ab get ${id} 看全文`));
+  assert.doesNotMatch(s.out, /尾巴不应出现/);
+  assert.doesNotMatch(ab(["search", "详情检索样例"], alpha, own).out, /为什么: 甲/, "body 不走 why 那行");
+});
+
+test("§8.11 ab get --expand：原对话不在时先列库里存的原话，再说原对话不可用", async () => {
+  const own = join(dir, "kd-expand");
+  mkdirSync(own, { recursive: true });
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const pid = s.ensureProject("alpha");
+  const base = { confirmed: true, origin: "extract" as const, basis: "user_confirmed" as const };
+  const gone = s.remember(pid, "s-gone", false, { ...base, kind: "decision", text: "缓存过期时间定 300 秒",
+    why: "线上出现缓存雪崩", body: "超过 300 秒，回源就会打穿数据库",
+    source: { host: "pi", session_id: "s-gone", transcript: join(dir, "kd-not-there.jsonl"), anchor: "u1", summary: "缓存讨论" },
+    evidence: [{ anchor: "u1", role: "user", quote_sha256: "h1", quote: "300 秒就够了", said_at: "2026-10-30T09:00:00Z" }] });
+  // 追加来源也带原话
+  s.commit([{ kind: "evidence", project_id: pid, session_id: "s2", target_id: gone,
+    body: { source: { host: "codex", session_id: "s2", transcript: null, anchor: "u9", summary: "再确认" },
+      basis: "user_directive", evidence: [{ anchor: "u9", role: "user", quote_sha256: "h2", quote: "对，就这样" }], window_id: "w" } }], () => {});
+  s.close();
+  const g = ab(["get", gone.slice(0, 8), "--expand"], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  const out = g.out;
+  const i = out.indexOf("--- 原对话已不可用");
+  assert.ok(i > 0, out);
+  const tail = out.slice(i);
+  assert.match(tail, /--- 原对话已不可用：.*下面是库里存的原话 ---/);
+  assert.match(tail, /\[user 2026-10-30T09:00:00Z\] 300 秒就够了/);
+  assert.match(tail, /\[user 时间未知\] 对，就这样（来源 codex:s2）/);
+});
+
+test("§8.11 抽取入口：写 L1 的同一处拒绝含密钥的条，界面报错说人话", async () => {
+  const { Store } = await import("./store.ts");
+  const s = new Store(":memory:", ":memory:");
+  const src = { host: "pi" as const, session_id: "s", transcript: null, anchor: null, summary: "x" };
+  assert.throws(() => s.commit([{ kind: "remember", project_id: null, session_id: "s", target_id: null,
+    body: { kind: "note", text: "外网调用用这个 key", confirmed: false, origin: "extract", source: src,
+      body: "配置里写 api_key = sk-abcdefghijklmnopqrstuvwxyz0123" } }], () => {}), /密钥/);
+  assert.equal(s.project().props.size, 0, "被拒绝的条一条都没写");
+  s.close();
+});
+
+test("§8.11.3 归属显示：project_unresolved 的条目在 search、跨项目段、ab get 三处都标「[归属未定]」", async () => {
+  const own = join(dir, "attr-unresolved");
+  mkdirSync(own, { recursive: true });
+  writeFileSync(join(own, "embedding.json"), JSON.stringify({ baseUrl: "https://embedding.invalid/v1", model: "cross" }));
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const alphaId = s.ensureProject("alpha");
+  const betaId = s.ensureProject("beta");
+  const srcOf = (summary: string) => ({ host: "pi" as const, session_id: "s", transcript: null, anchor: "a", summary });
+  // 本项目：归属没定的条目
+  const here = s.remember(alphaId, "s", false, {
+    kind: "decision", text: "缓存层写法待定 SIM0.9", why: "当时没确认记到哪个项目", confirmed: false, origin: "extract",
+    source: srcOf("缓存选型"), value: { flags: ["project_unresolved"] },
+  });
+  // 别的项目：归属未定的条目（跨项目段要标）
+  const there = s.remember(betaId, "s", false, {
+    kind: "note", text: "beta 的缓存笔记 SIM0.95", confirmed: false, origin: "extract",
+    source: srcOf("缓存选型"), value: { flags: ["project_unresolved"] },
+  });
+  s.close();
+
+  const search = ab(["search", "缓存层写法"], alpha, own);
+  assert.equal(search.code, 0, search.err);
+  assert.match(search.out, new RegExp(`^\\[${here.slice(0, 8)}\\].*\\[归属未定\\]`, "m"), search.out);
+  const head = search.out.split("\n").indexOf("其他项目里相近的：");
+  assert.ok(head >= 0, search.out);
+  const crossLine = search.out.split("\n").slice(head + 1).find((l) => l.startsWith(`[${there.slice(0, 8)}]`));
+  assert.ok(crossLine, search.out);
+  assert.match(crossLine!, /\[归属未定\]/, `跨项目段也要标：${crossLine}`);
+
+  const g = ab(["get", here.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  assert.match(g.out, /\[归属未定\]/, g.out);
+  assert.match(g.out, /会话在 alpha，抽取没能确认归属/, "ab get 要说清为什么标归属未定");
+});
+
+test("§8.11.3 归属显示：成功跨项目归属的条目，ab get 多一行「归属：会话在 X，抽取判定归属 Y」", async () => {
+  const own = join(dir, "attr-cross");
+  mkdirSync(own, { recursive: true });
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const alphaId = s.ensureProject("alpha");
+  const betaId = s.ensureProject("beta");
+  const cross = s.remember(betaId, "s", false, {
+    kind: "decision", text: "缓存层用 Redis", why: "单机内存扛不住峰值", confirmed: true, origin: "extract",
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "缓存选型" },
+    value: { session_project: "alpha", flags: [] },
+  });
+  // 会话项目 = 最终项目的条目不显示归属行
+  const same = s.remember(alphaId, "s", false, {
+    kind: "decision", text: "日志采样率 10%", why: "全量太贵", confirmed: true, origin: "extract",
+    source: { host: "pi", session_id: "s", transcript: null, anchor: "a", summary: "采样" },
+    value: { session_project: "alpha", flags: [] },
+  });
+  s.close();
+  const g = ab(["get", cross.slice(0, 8)], alpha, own);
+  assert.equal(g.code, 0, g.err);
+  assert.match(g.out, /^归属: 会话在 alpha，抽取判定归属 beta$/m, g.out);
+  const g2 = ab(["get", same.slice(0, 8)], alpha, own);
+  assert.doesNotMatch(g2.out, /^归属: /, `同项目不显示归属行：${g2.out}`);
+});
+// ---------- round3：导入正文长度按脱敏后判、ab get 提示正文未入库 ----------
+
+test("§8.11 导入：正文脱敏后超长只跳过正文并进报告，不让整个导入退出", () => {
+  const own = join(dir, "pensieve-long-home");
+  const r = repo("pensieve-long");
+  mkdirSync(join(r, ".pensieve/knowledge/long"), { recursive: true });
+  const head = "# 长正文边界\n\n## Summary\n正文边界。\n\n## Content\n";
+  const tail = "a@b.co\n";
+  const filler = "甲".repeat(39998 - head.length - tail.length);
+  writeFileSync(
+    join(r, ".pensieve/knowledge/long/content.md"),
+    `---\nid: long-body\ntype: knowledge\ntitle: 长正文边界\nstatus: active\n---\n${head}${filler}${tail}`,
+  );
+  const s = ab(["import", "pensieve", r], alpha, own);
+  assert.equal(s.code, 0, s.err);
+  assert.match(s.out, /正文没写进库的文档 1 篇/, s.out);
+  assert.match(s.out, /正文太长：40002 字/, "报告写脱敏后的长度");
+  const found = ab(["search", "长正文边界"], r, own);
+  const id = found.out.match(/\[([0-9a-f]{8})\]/)![1];
+  const got = ab(["get", id], r, own);
+  assert.match(got.out, /长正文边界/, "条目照常导入");
+  assert.doesNotMatch(got.out, /正文:\n/, "只是不带正文");
+});
+
+test("§8.11 ab get：抽取时正文被拦下的条目提示「正文未入库」", async () => {
+  const own = join(dir, "body-dropped-home");
+  const { Store } = await import("./store.ts");
+  const s = new Store(join(own, "store.db"), join(own, "index.db"));
+  const id = s.remember(s.ensureProject("alpha"), null, false, {
+    kind: "decision",
+    text: "告警只发测试环境",
+    confirmed: false,
+    origin: "extract",
+    source: { host: "claude", session_id: "x", transcript: null, anchor: null, summary: "x" },
+    value: { flags: ["body_dropped"] },
+  });
+  s.close();
+  assert.match(ab(["get", id.slice(0, 8)], alpha, own).out, /正文未入库/);
+});
+
 test("brief 放不下的整条跳过，不硬截断结尾", () => {
   const own = join(dir, "brief-budget");
   const line = (i: number) => `第${i}条长规则专门用来占满字数预算不要硬截断结尾提示还要更长一点`;
@@ -1161,4 +1461,3 @@ test("brief 放不下的整条跳过，不硬截断结尾", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
-

@@ -10,8 +10,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { fromBlob } from "./embed.ts";
-import { Store, MAX_EMBED_PER_SYNC, type Embedder } from "./store.ts";
-import { fold, type Projection, type RememberBody } from "./l2.ts";
+import { Store, MAX_EMBED_PER_SYNC, VEC_TEXT_MAX_CHARS, vectorText, type Embedder } from "./store.ts";
+import { BODY_MAX_CHARS, fold, type EventRow, type Projection, type RememberBody } from "./l2.ts";
 
 function mem() {
   return new Store(":memory:", ":memory:");
@@ -620,6 +620,90 @@ test("混合检索：两路各取 20 条，融合 limit 可超过 20", async () 
   } finally { s.close(); }
 });
 
+test("§8.11.4 跨项目段：候选先限定为其他项目，再按相似度排序，门槛 0.65、最多 3 条", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "decision", text, confirmed: true, source: src() });
+    // 本项目 + 全局的条目相似度最高，但跨项目段只取其他项目
+    s.remember(here, "s", false, body("本项目的缓存决定"));
+    s.remember(null, "s", false, body("全局的缓存决定"));
+    // 其他项目：6 条按相似度递减，其中 3 条不过 0.65 门槛
+    const sims = [0.9, 0.8, 0.7, 0.64, 0.5, 0.4];
+    const ids = sims.map((sim, i) => ({ sim, id: s.remember(other, "s", false, body(`别的项目第${i}条`)) }));
+    const embedder: Embedder = async (texts) => texts.map((text) => {
+      if (text === "查询") return Float32Array.from([1, 0]);
+      const sim = sims[Number(/别的项目第(\d)条/.exec(text)?.[1] ?? 0)] ?? 0;
+      return Float32Array.from([sim, Math.sqrt(1 - sim * sim)]);
+    });
+    await s.syncVectors(embedder, "fake");
+    const r = await s.searchHybrid("查询", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, embedder);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [ids[0].id, ids[1].id, ids[2].id], "门槛 0.65、最多 3 条，按相似度排序");
+    assert.deepEqual(r.cross!.hits.map((h) => h.similarity).map((x) => x.toFixed(2)), ["0.90", "0.80", "0.70"]);
+    assert.equal(r.cross!.pending, 0);
+    assert.equal(r.degraded, null);
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：全库 top-N 都是本项目条目时，其他项目的高相似条目照样出现", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "decision", text, confirmed: true, source: src() });
+    // 本项目 25 条与查询完全相似（全库 top-20 全被它们占满），其他项目只有 1 条 0.7
+    for (let i = 0; i < 25; i++) s.remember(here, "s", false, body(`本项目第${i}条`));
+    const far = s.remember(other, "s", false, body("别的项目里的决定"));
+    const embedder: Embedder = async (texts) => texts.map((text) =>
+      text === "别的项目里的决定" ? Float32Array.from([0.7, Math.sqrt(1 - 0.49)]) : Float32Array.from([1, 0]));
+    await s.syncVectors(embedder, "fake");
+    const r = await s.searchHybrid("查询", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, embedder);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [far], "先限定其他项目再排序，不做全库 top-N 后筛");
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：本项目和全局都不进候选，归档条目也不进", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "note", text, confirmed: true, source: src() });
+    s.remember(here, "s", false, body("本项目的猫"));
+    s.remember(null, "s", false, body("全局的猫"));
+    const gone = s.remember(other, "s", false, body("已归档的猫"));
+    s.lifecycle("archive", gone, "s");
+    const keep = s.remember(other, "s", false, body("留着的猫"));
+    await s.syncVectors(fakeEmbed, "fake");
+    const r = await s.searchHybrid("猫", { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } }, fakeEmbed);
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [keep]);
+  } finally { s.close(); }
+});
+
+test("§8.11.4 跨项目段：查询向量算不出时不出候选；其他项目 pending 条数另报", async () => {
+  const s = mem();
+  try {
+    const here = s.ensureProject("here");
+    const other = s.ensureProject("other");
+    const body = (text: string): RememberBody => ({ kind: "note", text, confirmed: true, source: src() });
+    s.remember(here, "s", false, body("本项目"));
+    const away = s.remember(other, "s", false, body("别的项目"));
+    const opts = { projects: [here], includeGlobal: true, crossProject: { excludeProjectId: here } };
+    const none = await s.searchHybrid("查询", opts, null);
+    assert.equal(none.cross, undefined, "没配置 embedding 时不出跨项目段");
+    assert.equal(none.degraded, "未配置 embedding");
+    const failed = await s.searchHybrid("查询", opts, async () => { throw new Error("假接口超时"); });
+    assert.equal(failed.cross, undefined, "查询向量算不出时不出跨项目段");
+    assert.match(failed.degraded!, /假接口超时/);
+    // 查询向量算得出，但其他项目那条还没算向量：段能出，pending 报 1
+    await s.syncVectors(async (texts) => texts.map(() => Float32Array.from([1, 0])), "fake");
+    s.remember(other, "s", false, body("刚记还没算向量"));
+    const r = await s.searchHybrid("查询", { ...opts, skipSync: true }, async (texts) => texts.map(() => Float32Array.from([1, 0])));
+    assert.equal(r.cross!.pending, 1, "其他项目里没算向量的条目数");
+    assert.deepEqual(r.cross!.hits.map((h) => h.id), [away], "算过向量的那条照常出现");
+  } finally { s.close(); }
+});
+
 test("子代理召回的未确认门槛：只放有用户原话的未确认规则/决定，冲突、纠正、关系未判定、与代码不符、推断的坑都不放", async () => {
   const { recallable } = await import("./visibility.ts");
   const recallableUnconfirmed = (p: any) => !p.confirmed && recallable(p, true);
@@ -630,3 +714,118 @@ test("子代理召回的未确认门槛：只放有用户原话的未确认规�
     assert.equal(recallableUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
 });
 
+
+// ---------- §8.11 详情正文、否掉的方案、原话入库（2026-10-30） ----------
+
+test("§8.11 投影：证据带原话和时间；追加来源的证据完整保存；旧数据缺省为空", () => {
+  const rows: EventRow[] = [
+    { seq: 1, id: "e1", ts: "2026-10-01T00:00:00Z", kind: "remember", project_id: "p", session_id: "s1", ephemeral: 0, target_id: null,
+      body: JSON.stringify({ kind: "decision", text: "缓存用 Redis", confirmed: true, source: src("选型"),
+        evidence: [
+          { anchor: "u1", role: "user", quote_sha256: "h1", quote: "单机内存撑不住", said_at: "2026-10-01T00:01:00Z" },
+          { anchor: "a1", role: "assistant", quote_sha256: "h2", quote: "可以先上 Redis 试一周" },
+        ] }) },
+    { seq: 2, id: "e2", ts: "2026-10-02T00:00:00Z", kind: "evidence", project_id: "p", session_id: "s2", ephemeral: 0, target_id: "e1",
+      body: JSON.stringify({ source: { host: "codex", session_id: "s2", transcript: null, anchor: "u9", summary: "再确认" },
+        basis: "user_directive", evidence: [{ anchor: "u9", role: "user", quote_sha256: "h3", quote: "Redis 就行" }], window_id: "w" }) },
+    // 旧版本写的事件：证据只有哈希，没有原话和时间
+    { seq: 3, id: "e3", ts: "2026-10-03T00:00:00Z", kind: "remember", project_id: "p", session_id: "s3", ephemeral: 0, target_id: null,
+      body: JSON.stringify({ kind: "pitfall", text: "老坑", confirmed: true, source: src("旧"),
+        evidence: [{ anchor: "u5", role: "user", quote_sha256: "h5" }] }) },
+  ];
+  const proj = fold(rows);
+  const p = proj.props.get("e1")!;
+  assert.deepEqual(p.evidence.map((e) => [e.quote, e.said_at]), [["单机内存撑不住", "2026-10-01T00:01:00Z"], ["可以先上 Redis 试一周", undefined]]);
+  assert.deepEqual(p.extra_sources, [{
+    host: "codex", session_id: "s2", basis: "user_directive",
+    evidence: [{ anchor: "u9", role: "user", quote_sha256: "h3", quote: "Redis 就行" }],
+  }], "追加来源也带原话");
+  assert.equal(p.body, null);
+  assert.deepEqual(p.alternatives, []);
+  const old = proj.props.get("e3")!;
+  assert.deepEqual(old.evidence, [{ anchor: "u5", role: "user", quote_sha256: "h5" }]);
+  assert.equal(old.body, null);
+});
+
+test("§8.11 detail 事件：补正文和否掉的方案，不换 id、不改确认状态；已有 body 不覆盖并计数", () => {
+  const s = mem();
+  try {
+    const pid = s.ensureProject("p");
+    const id = s.remember(pid, "s1", false, { kind: "decision", text: "缓存用 Redis", confirmed: true, source: src() });
+    const alt = { option: "继续用单机内存", rejected_because: "多实例下不一致" };
+    s.detail(id, null, { body: "过期 300 秒", alternatives: [alt] });
+    let p = s.project().props.get(id)!;
+    assert.equal(p.body, "过期 300 秒");
+    assert.deepEqual(p.alternatives, [alt]);
+    assert.equal(p.confirmed, true);
+    assert.equal(p.state, "active");
+    assert.equal(p.seq, 1, "不换 id、不新增条目");
+    assert.equal(s.project().detail_ignored, 0);
+
+    s.detail(id, null, { body: "另一段正文" });
+    p = s.project().props.get(id)!;
+    assert.equal(p.body, "过期 300 秒", "已有 body 不覆盖");
+    assert.equal(s.project().detail_ignored, 1, "被忽略的详情计诊断");
+
+    const rule = s.remember(pid, "s1", false, { kind: "rule", text: "一行说清", confirmed: true, source: src() });
+    assert.throws(() => s.detail(rule, null, { body: "规则不能带正文" }), /正文/);
+    assert.throws(() => s.detail("missing", null, { body: "x" }), /unknown or purged/);
+  } finally { s.close(); }
+});
+
+test("§8.11 写入口校验：body 只给决定/事实/坑，上限 40000 字；alternatives 只给决定、最多 5 项、各字段 200 字", () => {
+  const s = mem();
+  try {
+    const pid = s.ensureProject("p");
+    const mk = (extra: Partial<RememberBody>) => s.remember(pid, null, false, { kind: "note", text: "x", confirmed: true, source: src(), ...extra });
+    assert.throws(() => s.remember(pid, null, false, { kind: "rule", text: "r", confirmed: true, source: src(), body: "详情" }), /正文/);
+    assert.ok(mk({ body: "长".repeat(BODY_MAX_CHARS) }), "正好 40000 字通过");
+    assert.throws(() => mk({ body: "长".repeat(BODY_MAX_CHARS + 1) }), /40000/);
+    assert.throws(() => mk({ body: "配置里 token: sk-abcdefghijklmnopqrstuvwxyz0123" }), /密钥/);
+    assert.throws(() => mk({ alternatives: [{ option: "甲", rejected_because: "乙" }] }), /决定/);
+    const alts = Array.from({ length: 6 }, (_, i) => ({ option: `方案${i}`, rejected_because: "原因" }));
+    assert.throws(() => s.remember(pid, null, false, { kind: "decision", text: "d", confirmed: true, source: src(), alternatives: alts }), /5/);
+    assert.throws(() => s.remember(pid, null, false, { kind: "decision", text: "d", confirmed: true, source: src(),
+      alternatives: [{ option: "长".repeat(201), rejected_because: "原因" }] }), /200/);
+    assert.throws(() => s.remember(pid, null, false, { kind: "decision", text: "d", confirmed: true, source: src(),
+      alternatives: [{ option: "甲", rejected_because: "key = sk-abcdefghijklmnopqrstuvwxyz0123" }] }), /密钥/);
+    // evidence 下标越界的方案被丢掉，手写（缺 evidence）的保留
+    const id = s.remember(pid, null, false, { kind: "decision", text: "决定", confirmed: true, source: src(),
+      evidence: [{ anchor: "u1", role: "user", quote_sha256: "h" }],
+      alternatives: [
+        { option: "甲", rejected_because: "有原话支撑", evidence: 0 },
+        { option: "乙", rejected_because: "下标越界", evidence: 3 },
+        { option: "丙", rejected_because: "手写没有原话" },
+      ] });
+    assert.deepEqual(s.project().props.get(id)!.alternatives.map((a) => a.option), ["甲", "丙"]);
+  } finally { s.close(); }
+});
+
+test("§8.11 正文和否掉方案的长度按脱敏后的结果判一次：脱敏变长就拒，不按原文放行", () => {
+  const s = mem();
+  try {
+    const pid = s.ensureProject("p");
+    const mk = (body: string) => s.remember(pid, null, false, { kind: "note", text: "x", confirmed: true, source: src(), body });
+    assert.ok(mk("甲".repeat(39988) + "a@b.co"), "脱敏后 39999 字通过");
+    assert.throws(() => mk("甲".repeat(39992) + "a@b.co"), /40003/, "原文不到 40000，脱敏后超过就要拒");
+    const alt = (option: string) => s.remember(pid, null, false, { kind: "decision", text: "d", confirmed: true, source: src(), alternatives: [{ option, rejected_because: "原因" }] });
+    assert.ok(alt("甲".repeat(188) + "a@b.co"), "脱敏后 199 字通过");
+    assert.throws(() => alt("甲".repeat(190) + "a@b.co"), /200/, "方案文字也按脱敏后的长度判");
+  } finally { s.close(); }
+});
+
+test("§8.11 向量文本含 body：补上正文后重算，超长截到输入上限", async () => {
+  const s = mem();
+  try {
+    const noBody = s.remember(null, "s", false, { kind: "note", text: "猫", why: "狗", confirmed: true, source: src() });
+    const texts: string[][] = [];
+    const embedder: Embedder = async (t) => { texts.push(t); return fakeEmbed(t); };
+    await s.syncVectors(embedder, "fake");
+    assert.deepEqual(texts[0], ["猫\n狗"]);
+    s.detail(noBody, null, { body: "雨" });
+    assert.deepEqual(await s.syncVectors(embedder, "fake"), { embedded: 1, pending: 0 }, "body 变了要重算向量");
+    assert.deepEqual(texts[1], ["猫\n狗\n雨"]);
+    const huge = s.remember(null, "s", false, { kind: "note", text: "长", confirmed: true, source: src(), body: "长".repeat(BODY_MAX_CHARS) });
+    assert.equal([...vectorText(s.project().props.get(huge)!)].length, VEC_TEXT_MAX_CHARS, "超出向量输入上限时截断");
+  } finally { s.close(); }
+});

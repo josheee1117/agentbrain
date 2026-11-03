@@ -13,7 +13,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { cosine, fromBlob, toBlob } from "./embed.ts";
-import { fold, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
+import { fold, checkDetailBody, checkRememberBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
 
 const BUSY_TIMEOUT_MS = 5000;
 export const MAX_EMBED_PER_SYNC = 200;
@@ -21,6 +21,10 @@ const HYBRID_FTS_K = 20;
 const HYBRID_VEC_K = 20;
 // 2026-10-10 测试集（53 条 / 121 查询）校准：0.45 召回 93%、负例误报 33%；每轮召回另用更严的 minSim。
 export const VEC_MIN_SIM = 0.45;
+/** §8.11.4 跨项目段：只取与查询向量的余弦 ≥ 这个值的其他项目条目。 */
+export const CROSS_PROJECT_MIN_SIM = 0.65;
+/** §8.11.4 跨项目段最多列几条。 */
+export const CROSS_PROJECT_MAX = 3;
 
 export type Embedder = ((texts: string[]) => Promise<Float32Array[]>) & { model?: string };
 
@@ -46,6 +50,20 @@ export interface SearchOpts {
   skipSync?: boolean;
   /** 向量命中的最低余弦，默认 VEC_MIN_SIM。 */
   minSim?: number;
+  /** 跨项目段（§8.11.4）：给了就在返回里多带 cross，排除给出的项目。 */
+  crossProject?: { excludeProjectId: string };
+}
+
+/** 跨项目段的一条：项目一定有值（全局不进候选）。 */
+export interface CrossProjectHit extends SearchHit {
+  project_id: string;
+  similarity: number;
+}
+
+export interface CrossProjectResult {
+  hits: CrossProjectHit[];
+  /** 其他项目里还没有当前向量的条目数：这些条目可能漏。 */
+  pending: number;
 }
 
 const SCHEMA = `
@@ -121,7 +139,8 @@ export interface PendingAppend {
   body: unknown;
 }
 
-const INDEX_VERSION = "2";
+/** 索引文本的口径改了（正文不再被向量上限截断），旧索引整表重建。 */
+const INDEX_VERSION = "3";
 
 const FTS_SCHEMA = `
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -139,9 +158,30 @@ function openDb(path: string): DatabaseSync {
   return db;
 }
 
-/** 检索（全文和向量）用的文本：正文加为什么。召回的字面通道也用它。 */
+/** 向量输入上限：超出时只截 body（§8.11.2），text 和 why 全进。 */
+export const VEC_TEXT_MAX_CHARS = 6000;
+
+/**
+ * 全文索引与字面召回的文本：text + why + 完整 body。
+ * 6000 字上限是向量模型的限制，不能套到字面检索上（§8.11.2 最长存 40000 字正文）。
+ */
 export function indexText(p: Proposition): string {
-  return p.why ? `${p.text}\n${p.why}` : p.text;
+  return p.body ? `${p.text}\n${p.why ?? ""}\n${p.body}` : p.why ? `${p.text}\n${p.why}` : p.text;
+}
+
+/** 向量输入：text + why + body，body 超出上限时截短。向量是否过期（text_hash）也按这个口径算。 */
+export function vectorText(p: Proposition): string {
+  return vectorTextOf(p.text, p.why, p.body);
+}
+
+/** text + why + body 的向量文本，body 超出上限时截短；抽取算候选向量也走这一份（§8.11.2）。 */
+export function vectorTextOf(text: string, why?: string | null, body?: string | null): string {
+  const head = why ? `${text}\n${why}` : text;
+  if (!body) return head;
+  const room = VEC_TEXT_MAX_CHARS - [...head].length - 1;
+  if (room <= 0) return head;
+  const chars = [...body];
+  return `${head}\n${chars.length > room ? chars.slice(0, room).join("") : body}`;
 }
 
 function textHash(text: string): string {
@@ -194,7 +234,32 @@ export class Store {
   // ---------- L1 追加 ----------
 
   remember(projectId: string | null, sessionId: string | null, ephemeral: boolean, body: RememberBody): string {
+    checkRememberBody(body); // 种类、长度、密钥在入口一次查完（§8.11.2），内部不再重复判断
     return this.append("remember", projectId, sessionId, ephemeral, null, body);
+  }
+
+  /** detail 事件：给已有条目补上原来没有的正文和否掉的方案（§8.11.2）。不换 id、不改确认状态和关联。 */
+  detail(targetId: string, sessionId: string | null, body: DetailBody): string {
+    const p = this.project().props.get(targetId);
+    if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
+    checkDetailBody(p.kind, body, p.evidence.length);
+    return this.append("detail", p.project_id, sessionId, false, targetId, body);
+  }
+
+  /**
+   * 补详情（onlyIfNeeded）：条目已经有的字段不补，全都有就不写事件。
+   * 导入重导用：只在正文、否掉的方案、原话都齐了说“不用补”。返回写入的事件 id 或 null。
+   */
+  detailIfMissing(targetId: string, sessionId: string | null, body: DetailBody): string | null {
+    const p = this.project().props.get(targetId);
+    if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
+    const wantBody = body.body !== undefined && p.body === null;
+    const wantAlt = !!body.alternatives?.length && !p.alternatives.length;
+    if (!wantBody && !wantAlt) return null;
+    return this.detail(targetId, sessionId, {
+      ...(wantBody ? { body: body.body } : {}),
+      ...(wantAlt ? { alternatives: body.alternatives } : {}),
+    });
   }
 
   /** archive/reactivate/confirm/unconfirm/tag/stage/curate：目标必须是当前投影里存在的 proposition，否则 fail-closed 拒绝。 */
@@ -278,7 +343,7 @@ export class Store {
       const p = props.get(r.id);
       if (!p || !searchable(p)) return [];
       if (p.project_id !== null && p.project_id !== projectId) return [];
-      if (r.text_hash !== textHash(indexText(p))) return [];
+      if (r.text_hash !== textHash(vectorText(p))) return [];
       const v = fromBlob(r.vec);
       if (v.length !== query.length) return [];
       const similarity = cosine(query, v);
@@ -317,6 +382,16 @@ export class Store {
    */
   commit(appends: PendingAppend[], work: (db: DatabaseSync, ids: string[]) => void): string[] {
     const ids = appends.map(() => randomUUID());
+    // 抽取和导入也走这个入口：remember/detail 的种类、长度、密钥检查在这里一并跑
+    const props = this.project().props;
+    for (const a of appends) {
+      if (a.kind === "remember") checkRememberBody(a.body as RememberBody);
+      else if (a.kind === "detail") {
+        const target = a.target_id ? props.get(a.target_id) : undefined;
+        if (!target) throw new Error(`unknown or purged proposition: ${a.target_id}`);
+        checkDetailBody(target.kind, a.body as DetailBody, target.evidence.length);
+      }
+    }
     const ins = this.db.prepare(
       "INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)",
     );
@@ -470,7 +545,7 @@ export class Store {
         .map((r) => [r.id, r.text_hash]),
     );
     return [...this.project().props.values()].map((p) => {
-      const text = indexText(p);
+      const text = vectorText(p);
       return { id: p.id, text, text_hash: textHash(text) };
     }).filter((p) => hashes.get(p.id) !== p.text_hash);
   }
@@ -499,7 +574,7 @@ export class Store {
       const ins = this.fts.prepare("INSERT OR REPLACE INTO vecs(id,text_hash,vec) VALUES(?,?,?)");
       for (let i = 0; i < batch.length; i++) {
         const p = current.get(batch[i].id);
-        if (!p || textHash(indexText(p)) !== batch[i].text_hash) continue;
+        if (!p || textHash(vectorText(p)) !== batch[i].text_hash) continue;
         ins.run(p.id, batch[i].text_hash, toBlob(vectors[i]));
         embedded++;
       }
@@ -517,7 +592,7 @@ export class Store {
     const out = new Map<string, Float32Array>();
     for (const r of this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[]) {
       const p = props.get(r.id);
-      if (p && r.text_hash === textHash(indexText(p))) out.set(r.id, fromBlob(r.vec));
+      if (p && r.text_hash === textHash(vectorText(p))) out.set(r.id, fromBlob(r.vec));
     }
     return out;
   }
@@ -529,13 +604,13 @@ export class Store {
     if (!p) return null;
     const rows = this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[];
     const own = rows.find((r) => r.id === id);
-    if (!own || own.text_hash !== textHash(indexText(p))) return null;
+    if (!own || own.text_hash !== textHash(vectorText(p))) return null;
     const query = fromBlob(own.vec);
     return rows.flatMap((r) => {
       const n = props.get(r.id);
       if (!n || n.id === id || !searchable(n)) return [];
       if (n.project_id !== null && n.project_id !== p.project_id) return [];
-      if (r.text_hash !== textHash(indexText(n))) return [];
+      if (r.text_hash !== textHash(vectorText(n))) return [];
       const similarity = cosine(query, fromBlob(r.vec));
       return similarity >= VEC_MIN_SIM ? [{ prop: n, similarity }] : [];
     }).sort((a, b) => b.similarity - a.similarity);
@@ -552,13 +627,13 @@ export class Store {
     for (const row of rows) {
       if (!ids.has(row.id)) continue;
       const p = props.get(row.id);
-      if (!p || textHash(indexText(p)) !== row.text_hash) continue;
+      if (!p || textHash(vectorText(p)) !== row.text_hash) continue;
       out.set(row.id, cosine(queryVec, fromBlob(row.vec)));
     }
     return out;
   }
 
-  async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; degraded: string | null }> {
+  async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; cross?: CrossProjectResult; degraded: string | null }> {
     const limit = opts.limit ?? 8;
     const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });
     if (!embedder) return { hits: ftsHits().slice(0, limit), degraded: "未配置 embedding" };
@@ -585,7 +660,7 @@ export class Store {
         if (p.project_id === null ? !opts.includeGlobal : opts.projects !== "all" && !opts.projects.includes(p.project_id)) continue;
         if (opts.kind && p.kind !== opts.kind) continue;
         if (!opts.includeArchived && !searchable(p)) continue;
-        if (textHash(indexText(p)) !== row.text_hash) continue;
+        if (textHash(vectorText(p)) !== row.text_hash) continue;
         const similarity = cosine(queryVec, fromBlob(row.vec));
         if (similarity >= (opts.minSim ?? VEC_MIN_SIM)) dense.push({ hit: { id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state }, similarity });
       }
@@ -601,11 +676,40 @@ export class Store {
       }
       const sim = new Map(dense.map((d) => [d.hit.id, d.similarity]));
       const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => (sim.has(p.hit.id) ? { ...p.hit, similarity: sim.get(p.hit.id) } : p.hit));
-      return { hits, degraded: reasons.length ? reasons.join("；") : null };
+      const cross = opts.crossProject ? this.crossProjectHits(queryVec, opts.crossProject.excludeProjectId, opts.kind) : undefined;
+      return { hits, ...(cross ? { cross } : {}), degraded: reasons.length ? reasons.join("；") : null };
     } catch (e) {
       reasons.push(`向量检索不可用：${e instanceof Error ? e.message : String(e)}`);
       return { hits: ftsHits().slice(0, limit), degraded: reasons.join("；") };
     }
+  }
+
+  /**
+   * §8.11.4 跨项目段：候选先限定为其他项目的 active 条目，再按与查询向量的余弦排序、过门槛、取前几条。
+   * 不从全库 top-N 里事后筛，否则本项目条目把位置占满时跨项目条目永远出不来。
+   */
+  private crossProjectHits(query: Float32Array, excludeProjectId: string, kind: PropKind | undefined): CrossProjectResult {
+    const props = this.project().props;
+    const stored = new Map(
+      (this.fts.prepare("SELECT id,text_hash,vec FROM vecs").all() as { id: string; text_hash: string; vec: Uint8Array }[])
+        .map((r) => [r.id, r]),
+    );
+    const hits: CrossProjectHit[] = [];
+    let pending = 0;
+    for (const p of props.values()) {
+      if (p.project_id === null || p.project_id === excludeProjectId || !searchable(p)) continue;
+      if (kind && p.kind !== kind) continue;
+      const row = stored.get(p.id);
+      const vec = row && row.text_hash === textHash(vectorText(p)) ? fromBlob(row.vec) : null;
+      if (!vec || vec.length !== query.length) {
+        pending++;
+        continue;
+      }
+      const similarity = cosine(query, vec);
+      if (similarity >= CROSS_PROJECT_MIN_SIM) hits.push({ id: p.id, project_id: p.project_id, kind: p.kind, text: indexText(p), state: p.state, similarity });
+    }
+    hits.sort((a, b) => b.similarity - a.similarity);
+    return { hits: hits.slice(0, CROSS_PROJECT_MAX), pending };
   }
 
   search(query: string, opts: SearchOpts): SearchHit[] {

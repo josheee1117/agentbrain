@@ -215,3 +215,120 @@ test("关系判定出错时记下原因；再跑同一命令，未变但没判�
   assert.equal(third.relate.errors, 0, "判过的不再判");
   store.close();
 });
+
+// ---------- §8.11 导入带正文（2026-10-30） ----------
+
+const LONG_KNOW = `---
+id: long-know
+type: knowledge
+title: 调用链事实
+status: active
+---
+# 调用链事实
+
+## Summary
+任务下发走 controller → dispatcher → worker 三段。
+
+## Content
+${"调用链细节说明。".repeat(600)}
+
+## 代码
+\`\`\`java
+String token = "sk-abcdefghijklmnopqrstuvwxyz0123";
+\`\`\`
+`;
+
+test("§8.11 导入：md 正文映射成 body，不截断；代码块里的密钥不写 body 并列出报告", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const r = repo({ "knowledge/long/content.md": LONG_KNOW, "decisions/a.md": DECISION });
+  const plan = planImport([{ root: r, project: "alpha" }], new Map());
+  const long = plan.items.find((i) => i.doc.id === "long-know")!;
+  assert.ok(long.body!.includes("调用链细节说明"), "md 正文进 body");
+  assert.ok([...long.body!].length > 4000, "不截断到旧的 400 字上限");
+  assert.match(long.body!, /String token/, "原文里的代码块保留在 body 里（写入时才判密钥）");
+  const rep = await importPensieve(deps(store, null), plan);
+  const props = store.project().props;
+  const longProp = [...props.values()].find((p) => p.import_ref?.id === "long-know")!;
+  assert.equal(longProp.body, null, "含密钥的 body 不写");
+  assert.match(rep.detailSkipped.map((s) => `${s.id}:${s.reason}`).join("；"), /long-know:.*密钥/, "报告列出没写 body 的文档");
+  const dec = [...props.values()].find((p) => p.import_ref?.id === "2025-12-11-selective-null")!;
+  assert.match(dec.body!, /## 一句话结论/, "正文是去掉 frontmatter 的 md 原文");
+  assert.match(dec.body!, /禁止 trimToNull/);
+  store.close();
+});
+
+test("§8.11 导入：正文超过 40000 字的文档不写 body，报告列出原因", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const huge = LONG_KNOW.replace("调用链细节说明。".repeat(600), "长".repeat(40001)).replace(/## 代码[\s\S]*$/, "");
+  const r = repo({ "knowledge/huge/content.md": huge });
+  const rep = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  const p = [...store.project().props.values()].find((x) => x.import_ref?.id === "long-know")!;
+  assert.equal(p.body, null);
+  assert.match(rep.detailSkipped[0].reason, /40000/);
+  assert.equal(rep.created.length, 1, "条目照常导入，只是不带正文");
+  store.close();
+});
+
+test("§8.11 重导：源文件没变、旧条目缺 body 时追加 detail 补正文，不换 id，确认状态/场景/关联不变", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const pid = store.ensureProject("alpha");
+  const r = repo({ "decisions/a.md": DECISION });
+  const doc = planImport([{ root: r, project: "alpha" }], new Map()).items[0];
+  // 旧版本的导入结果：只有正文和背景，没有 body
+  const srcPointer = { host: null, session_id: null, transcript: null, anchor: null, summary: "Pensieve 导入：x" };
+  const old = store.remember(pid, null, false, {
+    kind: "decision", text: doc.text, why: doc.why, confirmed: true, origin: "import", source: srcPointer,
+    import_ref: { system: "pensieve", id: doc.doc.id, path: doc.doc.path, sha256: doc.doc.sha256 },
+  });
+  store.lifecycle("tag", old, null, { scenes: ["code"] });
+  const neighbor = store.remember(pid, null, false, { kind: "note", text: "相邻条目", confirmed: true, source: srcPointer });
+  store.commit([{ kind: "relate", project_id: pid, session_id: null, target_id: old, body: { outcome: "refines", target: neighbor, reason: "fixture", model: "fixture" } }], () => {});
+  const rep = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  assert.deepEqual([rep.created.length, rep.corrected.length, rep.unchanged], [0, 0, 1]);
+  const p = store.project().props.get(old)!;
+  assert.match(p.body!, /selective 的 null 与空字符串语义必须保留/);
+  assert.equal(store.project().props.size, 2, "没有新建条目");
+  assert.equal(p.confirmed, true);
+  assert.equal(p.confirmed_by, "user");
+  assert.deepEqual(p.scenes, ["code"]);
+  assert.deepEqual(p.related, { outcome: "refines", target: neighbor });
+  assert.equal(p.import_ref!.sha256, doc.doc.sha256, "import_ref.sha256 的含义不变");
+  store.close();
+});
+
+test("§8.11 重导：源文件变了的新版本直接带 body", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const r = repo({ "decisions/a.md": DECISION });
+  const first = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  const old = first.created[0];
+  writeFileSync(join(r, ".pensieve/decisions/a.md"), DECISION.replace("禁止 trimToNull", "禁止 trimToNull（新增一句）"));
+  const again = await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  assert.equal(again.corrected.length, 1);
+  const neu = store.project().props.get(again.corrected[0])!;
+  assert.notEqual(neu.id, old);
+  assert.match(neu.body!, /新增一句/);
+  assert.equal(store.project().props.get(old)!.state, "superseded");
+  store.close();
+});
+
+test("review 条目 3：Pensieve 正文里的邮箱和家目录路径脱敏后才进 body", async () => {
+  const dir = join(base, `s${n++}`);
+  mkdirSync(dir);
+  const store = new Store(join(dir, "store.db"), join(dir, "index.db"));
+  const pii = KNOW.replace("现已调整为只在源库 label 非空时覆盖。", "联系 alice@example.com，脚本在 /Users/alice/private/company 下。");
+  const r = repo({ "knowledge/k/content.md": pii });
+  await importPensieve(deps(store, null), planImport([{ root: r, project: "alpha" }], new Map()));
+  const p = [...store.project().props.values()][0];
+  assert.equal(p.body!.includes("alice@example.com"), false, "新导入的正文不能原样进库");
+  assert.equal(p.body!.includes("/Users/alice"), false);
+  assert.match(p.body!, /\[PII:email\]/);
+  store.close();
+});
