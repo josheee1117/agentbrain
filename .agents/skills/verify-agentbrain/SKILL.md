@@ -15,9 +15,11 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 
 ## Drive
 `verify.sh run`: `npm test` (node --test src/*.test.ts), `npm run typecheck`, then drives the real CLI in isolated scratch environments:
-- `cli-status`: `status` and `status --line`
-- `cli-memory`: `remember` (confirmed and unconfirmed), `confirm`, `search`, `get`
+- `cli-status`: `status` and `status --line`, plus the 抽取模型 line from `status` under a scratch `extract.json` with and without a valid `extraBody`
+- `cli-memory`: `remember` (confirmed and unconfirmed), `confirm`, `search`, `get`, and `get` after seeding an `evidence` event that carries `model` / `prompt_version` (asserts the 模型产出记录 block, and that a hand-written entry has none)
+- `cli-lifecycle`: `correct` (old entry shows 已被替代), `archive` + `--reactivate`, `guidance` on/off with `recall --hook` showing and hiding the `<agentbrain-prefs>` block
 - `cli-brief`: `brief` before and after confirm, plus `brief --worker` (asserts unconfirmed text stays out until confirm)
+- `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)
 - `cli-recall-hook`: `recall --hook` via stdin JSON
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
 - `cli-curate`: `review` and `audit worker-quotes`
@@ -33,7 +35,8 @@ Run all: `.agents/skills/verify-agentbrain/verify.sh run` (`--dry-run` prints th
 Logs per step + JSON status lines land in `/Users/hejiayuan/.cache/verify-evidence/agentbrain/<timestamp>/`. Cite that path. Proof standards: drive the real user path (CLI/HTTP/UI), not internal setters; capture action + resulting state; check side effects; mock only at existing production boundaries (repo fakes). Never use real secrets or prod endpoints from this skill.
 
 ## Not locally verifiable (stays unverified until a real-target run)
-- Embedding / LLM paths (embed.ts, llm.ts, curate review, work extraction) need real model keys — not run.
+- Embedding / LLM paths (embed.ts, llm.ts, curate review, work extraction) need real model keys — not run. The model-metadata paths (`model` / `prompt_version` on remember / evidence / relate / verify, and `ab get` showing them) are covered by `src/prompt-version.test.ts`, which drives real `runWork` / `importPensieve` / `applyActions` with a fake chat and then the real `ab get`; `verify.sh run` only asserts the read side against a seeded event.
+- Extraction has no request timeout by design (user 2026-10-30), so a hung `ab work` never exits on its own and relies on lease takeover — only observable against a real model endpoint.
 - Host integrations beyond the `hosts` driver (installed launchd job, the user's real interactive sessions) — not run.
 
 ## Cleanup

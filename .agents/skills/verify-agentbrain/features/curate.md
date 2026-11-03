@@ -23,3 +23,5 @@
 - `ab curate` 真正评判要 `review.json` 里的主审/评审团模型（API 或宿主 CLI 额度）；没有配置时只验证参数和错误消息，本技能不驱动真实审稿
 - 2026-10-22 起没有候选区（§8.8）：`ab stage`、`ab audit agent-remember`、`ab remember --direct`、`AB_STAGING` 都已删除；审稿"留下"不再写状态事件，只在认定是干活偏好时打 guidance
 - 用户确认过的条目不被审稿改动；`ab review` 永远不列已确认条目
+- 审稿“改写”生成的新条目不带 `model` / `prompt_version`（范围例外，§8.10）：`ab get` 显示「未记录」，不是 bug
+- 审稿只动未确认条目；`--apply` 在主审或参考成员连不上、或评审团不满 3 家时被忽略，只在报告里注明，不悄悄退化

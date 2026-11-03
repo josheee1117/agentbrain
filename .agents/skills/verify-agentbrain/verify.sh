@@ -56,6 +56,30 @@ db.close();
     ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-remember.log" 2>/dev/null | head -1)
     step cli-get env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" get "$ID"
     step cli-get-text bash -c "grep -qF '验证先于声明完成' '$EV/cli-get.log'"
+    step cli-get-no-model bash -c "! grep -qF '模型产出记录' '$EV/cli-get.log'" # 手记条目没有模型产出
+
+    # 2c. 模型产出记录（§8.10）：L1 事件带 model / prompt_version 时 ab get 逐条列出
+    step cli-model-output-seed node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$AB_HOME/store.db');
+const target = db.prepare(\"SELECT id FROM events WHERE kind='remember' ORDER BY seq LIMIT 1\").get().id;
+const source = { host: 'pi', session_id: 's_verify', transcript: null, anchor: null, summary: '合成来源' };
+const body = { source, basis: 'observed_failure', evidence: [], window_id: 'w_verify', model: 'qwen-plus', prompt_version: 'abc123def456' };
+db.prepare('INSERT INTO events(id,ts,kind,target_id,session_id,body) VALUES(?,?,?,?,?,?)').run('modelev1', new Date().toISOString(), 'evidence', target, null, JSON.stringify(body));
+db.close();
+"
+    step cli-get-model-output env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" get "$ID"
+    step cli-get-model-output-text bash -c "grep -qF '模型产出记录' '$EV/cli-get-model-output.log' && grep -qF '追加证据: qwen-plus，提示词版本 abc123def456' '$EV/cli-get-model-output.log'"
+
+    # 2d. extract.json 的 extraBody（§8.10 抽取模型配置）：对象照用，非对象在 ab status 里报错
+    step cli-extract-extra-body-ok bash -c "
+      H='$S/extra_home_ok'; mkdir -p \"\$H\"; printf '%s\n' '{\"baseUrl\":\"https://x.example/v1\",\"model\":\"m1\",\"keyService\":\"k\",\"extraBody\":{\"reasoning_effort\":\"max\"}}' > \"\$H/extract.json\";
+      env AB_HOME=\"\$H\" AGENTBRAIN_HOME=\"\$H\" AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status > '$EV/cli-extract-extra-body-ok.log' 2>&1;
+      grep -qF '抽取模型: m1 @ x.example' '$EV/cli-extract-extra-body-ok.log'"
+    step cli-extract-extra-body-bad bash -c "
+      H='$S/extra_home_bad'; mkdir -p \"\$H\"; printf '%s\n' '{\"baseUrl\":\"https://x.example/v1\",\"model\":\"m1\",\"extraBody\":\"max\"}' > \"\$H/extract.json\";
+      env AB_HOME=\"\$H\" AGENTBRAIN_HOME=\"\$H\" AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status > '$EV/cli-extract-extra-body-bad.log' 2>&1;
+      grep -qF 'extraBody 必须是对象' '$EV/cli-extract-extra-body-bad.log'"
 
     # 2b. unconfirmed remember is active and searchable, but stays out of brief until confirm (§8.8 没有候选区)
     drive_remember_unconfirmed(){
@@ -102,6 +126,14 @@ db.close();
     step cli-scene-remember-unconfirmed env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --global --kind rule --text "未确认场景规则（verify）" --summary "场景标签" --scene code
     step cli-scene-search-unconfirmed env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" search --scene code
     step cli-scene-search-unconfirmed-mark bash -c "grep -qE '\[未确认.*\].*未确认场景规则（verify）' '$EV/cli-scene-search-unconfirmed.log'"
+    # 边界报错：非 rule 带 --scene、未知场景值、search --scene 配其他 --kind、场景与 guidance 互斥
+    step cli-scene-reject-non-rule bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' remember --global --confirmed --kind pitfall --text 坑 --summary 验证 --scene code 2>'$EV/cli-scene-reject-non-rule.log'"
+    step cli-scene-reject-non-rule-text bash -c "grep -qF '只能用于规则' '$EV/cli-scene-reject-non-rule.log'"
+    step cli-scene-reject-unknown bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene nope 2>'$EV/cli-scene-reject-unknown.log'"
+    step cli-scene-reject-unknown-text bash -c "grep -qF '必须是 design|code|review' '$EV/cli-scene-reject-unknown.log'"
+    step cli-scene-search-kind bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene code --kind pitfall 2>&1 | grep -qF '只列规则'"
+    step cli-scene-guidance-conflict bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' guidance '$SCENE_ID' 2>'$EV/cli-scene-guidance-conflict.log'"
+    step cli-scene-guidance-conflict-text bash -c "grep -qF '不能同时标成干活偏好' '$EV/cli-scene-guidance-conflict.log'"
 
     # 4. recall-hook drive
     drive_recall_hook(){
@@ -128,11 +160,25 @@ db.close();
     step cli-staging-seed node -e "
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync('$AB_HOME/store.db');
-db.prepare('INSERT INTO events(id,seq,ts,kind,target_id,session_id,body) VALUES(?,?,?,?,?,?,?)').run('legacycand', 999999, new Date().toISOString(), 'remember', null, null, JSON.stringify({kind:'pitfall',text:'旧候选条目：升级后是有效的未确认条目',summary:'旧候选区迁移',confirmed:false,candidate:true}));
+db.prepare('INSERT INTO events(id,ts,kind,target_id,session_id,body) VALUES(?,?,?,?,?,?)').run('legacycand', new Date().toISOString(), 'remember', null, null, JSON.stringify({kind:'pitfall',text:'旧候选条目：升级后是有效的未确认条目',summary:'旧候选区迁移',confirmed:false,candidate:true}));
 db.close();
 "
     step cli-staging-report env AB_HOME="$AB_HOME" node "$ROOT/scripts/staging-report.ts"
     step cli-staging-report-text bash -c "grep -qF '旧候选区条目 1 条' '$EV/cli-staging-report.log'"
+
+    # 9. 生命周期：correct / archive / guidance（memory.md）
+    step cli-correct env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" correct "$ID" --text "测试全局规范：验证先于声明完成（改后）" --summary "验证规范" --confirmed
+    step cli-correct-old-mark bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ID' | grep -qF '（已被替代）'"
+    step cli-archive env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" archive "$UNCONF_ID"
+    step cli-archive-mark bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$UNCONF_ID' | grep -qF '（已归档）'"
+    step cli-archive-reactivate env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" archive "$UNCONF_ID" --reactivate
+    step cli-archive-reactivated-mark bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$UNCONF_ID' | grep -qF '（已归档）'"
+    step cli-guidance env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --kind rule --text "偏好测试：改动后先跑测试" --summary "验证规范" --global --confirmed
+    GUIDE_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-guidance.log" 2>/dev/null | head -1)
+    step cli-guidance-mark env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID"
+    step cli-guidance-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\"}\n' '$REPO' | env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qF '偏好测试：改动后先跑测试'"
+    step cli-guidance-off env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID" --off
+    step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\"}\n' '$REPO' | env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
 
     ls -laR "$S" > "$EV/scratch-tree.txt" 2>&1
     emit evidence info "$EV"; exit $FAIL ;;
