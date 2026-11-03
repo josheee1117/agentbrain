@@ -7,7 +7,6 @@
 - 宿主：Pi、Claude Code、Codex、opencode 平等接入，任一都可作为主体会话（§7）。opencode 接线合同见 §7.5。
 - **产品前提：宿主无关的个人 Agent 记忆；先把记忆本身做好，首个替代对象是 Pensieve（§2.1）；动机首先是所有权，其次是复杂度（§2.2 定量）**
 - 决策地图：[绘制以 abrain 为母体的 agentbrain v2 路线](https://github.com/josheee1117/agentbrain/issues/1)
-- 领域词汇：`CONTEXT.md`
 - 主要证据：
   - `docs/reference/20260804-pi-astack-abrain-sediment-架构与实现参考.md`
   - `docs/research/20260820-tencentdb-agent-memory-调研.md`
@@ -279,6 +278,13 @@ Proposition 必须保留正交 facets：
 
 2026-10-15 用户决定不由 agentbrain 提炼可复用做法（Skill / SOP），因此删除 Procedure View，边界见 §20。冲突仍待裁决：§4 的 `workflows` 行仍是 LOCKED，写着保存程序性经验。本次不改该行。§4.1、§5.3、§5.4、§15.5 和 §18 还引用 Procedure 或 pipelines，对应内容须随该冲突一起裁决，不能把这些旧引用当成实现授权。记住用户的规则与决定，不等于生成可执行做法。
 
+### 5.6 容易混的词
+
+- `ab review` 是到期复审（未确认、过了预计有效期、期间没被注入过的条目）；`ab curate` 是模型审稿，`~/.agentbrain/review.json` 是它的配置；`--scene review` 是规则的评审场景标签，与这两件事无关。
+- "未确认"是可信程度（§8.8）；"待确认的纠正"是一条还没生效的纠正，`ab get` 列在目标条目下；Pi 状态栏的"待确认 N"是到期待复审的条数（`ab status --line`），不是未确认条目的总数。
+- `note` 在界面上显示为"事实"（`KIND_LABEL`）。
+- L1 / L2 / L3 是存储权威层（§5.1）；"关系判定第 1 层、第 2 层"是判断条目关系的两步（§9.4.5）：第 1 层是抽取模型顺带判的，第 2 层是之后单独调模型（`src/relate.ts`），两者不是一回事。
+
 ---
 
 ## 6. 身份、作用域、Loadout 与委派
@@ -292,7 +298,7 @@ v2 区分：
 - **Agent Execution**：某次具体运行；
 - **Project**：稳定工程/知识工作边界；
 - **Repository**：Project 关联的代码库身份，不必一一对应；
-- **Session**：一次宿主会话（Pi、Claude Code 或 Codex）；
+- **Session**：一次宿主会话（Pi、Claude Code、Codex 或 opencode）；
 - **Work Unit**：一次任务或委派边界，不实现通用 Task 平台。
 
 Project identity 只认稳定 project ID 与显式本机 binding/registry 关系；`cwd`、目录名或 Git remote 只能作为发现候选，不能自行授予项目身份或记忆资格。同一 Project 的多个 checkout 必须可区分本机执行根。
@@ -362,7 +368,7 @@ agentbrain 不拥有执行面（§6.4），因此血缘**在合同上是一等�
 
 这条把血缘建立的责任交给委派方；其可信传递是否可用仍须验证，不需要 agentbrain 拥有执行面。
 
-术语见 CONTEXT.md 的 Delegation Lineage。
+上述父 execution 与子 execution 的记录关系就是 **Delegation Lineage（委派血缘）**。
 
 ### 6.4 执行面边界：只留接缝（LOCKED）
 
@@ -438,6 +444,8 @@ hook 与 skill 降为后备：只有 dogfood 中发现模型漏跑 `ab brief` �
 **宿主判定不能只看环境变量。** 环境变量会被嵌套启动的下一层宿主继承：实测从 Claude Code 里启动 Pi，Pi 的 shell 里同时有 `CLAUDE_CODE_SESSION_ID` 与 `PI_SESSION_ID`。因此 `ab` 沿父进程链向上，找离自己最近的宿主进程，以它决定 host，再取该宿主的变量。会话身份只用于定位来源，不授予 capability（§13.1）。
 
 ### 7.2 只能留在 adapter 的内容
+
+**Host Adapter** 是 `ab` 内部按宿主分的那一层：判定调用者是哪个宿主（取最近的宿主父进程，因为嵌套宿主会互相继承环境变量）、读该宿主的 session id、按该宿主的格式读 transcript 和展开来源（§7.1）。宿主是四个：Pi、Claude Code、Codex、opencode，功能支持范围因功能而异，不按"四个宿主都支持"一刀切。各宿主怎么触发 `ab`：Claude Code 与 Codex 配 hook，Pi 装扩展（`integrations/pi/agentbrain-recall.ts`），opencode 装插件（§7.5），都只调用 `ab`，不直接读写记忆库；开工指令仍由全局规则文件那一句给出（§7.1），hook 与扩展只负责每轮召回、会话登记、话题边界和状态栏。宿主私有类型只留在这一层。
 
 - 各宿主的 event payload、hook 输入格式和环境变量名；
 - 各宿主 transcript 的路径、格式和定位点形态（Pi entry id、Claude Code 消息 id、Codex `ordinal`）；
@@ -1080,6 +1088,8 @@ Corroboration Count 的口径是：**在多少个不同 Session 里真正被用�
 
 `usage-telemetry.ts` 的定位说明：abrain 已经在数这个计数，但明确是"纯观测，零行为"（头注释：不做任何 demote/delete/归档）。agentbrain 将计数接到**使用成熟度**，不能把它解释为真实性或来源独立性。
 
+**它和 `confirmed_by: corroboration` 是两回事。** 后者是 §8.8 的一个可信程度：同一结论在至少两个不同会话里都有用户原话支持，就自动转正；它已经实现，不数使用次数。Corroboration Count 数的是"在多少个会话里真被用上且没被否定"，用来排使用成熟度，排期在切片 4 之后，`src/` 目前没有实现——`prop_usage` 只记"被注入"的次数，供到期复审用，不参与排序。
+
 #### 9.4.3 上行自动、下行显式（LOCKED）
 
 | 方向 | 触发 | 是否需要 Human |
@@ -1156,7 +1166,7 @@ v2 不建设通用去自回声平台，但晋升必须保留并检查来源血�
 
 但它只是代理信号，不是身份：**agentbrain 能观测到一个 Session 是 ephemeral，无法判断为什么**——被委派的子代理执行与用户刻意不留记录的主会话在它看来完全相同。因此不能据此推断"这是子代理"。
 
-处置的理由：丢弃违反"证据永不丢"（§5.1）；直接投影则会让一次性上下文里的临时结论进入长期记忆。默认不投影使二者都避免。术语见 CONTEXT.md 的 Ephemeral Session。
+处置的理由：丢弃违反"证据永不丢"（§5.1）；直接投影则会让一次性上下文里的临时结论进入长期记忆。默认不投影使二者都避免。这种不留持久 session 记录的会话就是 **Ephemeral Session（一次性会话）**。
 
 Doctor 必须能报告这类证据的量（§14.3），否则它是完全不可见的沉默积累。
 
@@ -1251,7 +1261,7 @@ Purge 只能由可信 Human/operator 的显式控制路径发起；普通 transc
 
 必须承认的代价：purge 事件体积变大，且枚举必须在**同一个 authority frame 内生成**，不能事后补写——事后补的枚举无法证明它与当时实际删除的集合一致。
 
-术语见 CONTEXT.md 的 Purge Range。具体 event identity/tombstone 物理模型仍未关闭，见 §19.1。
+声明加枚举这一对就是 **Purge Range（清除范围）**。具体 event identity/tombstone 物理模型仍未关闭，见 §19.1。
 
 #### 10.2.3 传递依赖整体失效（LOCKED 语义；**排期在切片 4 之后**）
 
@@ -2603,6 +2613,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-03 删除 `CONTEXT.md`（用户同日决定）：它来自 09-07 一次 grill，之后没人维护，`AGENTS.md`、代码和验证技能都不引用。逐条对照 47 个术语：44 个设计正文已有（含中文别名，如证据层 L1），1 个补进 §7.2（Host Adapter，按现状写明四宿主接法，并改掉"什么都不装进宿主"），2 个丢弃（Procedure View、Workflow Reference，用户 2026-10-15 决定不做 Procedure，§20 把 Workflow 引擎列为 out of scope）。同时按代码改掉两处过期说法（宿主是四个、Pi 装扩展）和一处混淆（`confirmed_by: corroboration` 与 Corroboration Count 不是一回事）。原指针改为正文定义（§6.3.2、§9.5、§10.2.2），新增 §5.6 收容易混的词。
 - 2026-11-03 新增 §7.6（用户同日授权实现）：Codex 会把会话文件压成 `.jsonl.zst`，已登记的 321 个 Codex 会话里 153 个路径失效，L1 里 227 条来源展开不了。方案是读时解析，不迁移数据；文件层只留 `src/transcript-file.ts` 一个入口。按只读 review 修订：准入改成每次读都查；解压前单独查完整性，因为 Node 对截断帧不报错；读开头只读文件前 256 KB。
 - 2026-11-03 候选键升级兼容（`feat/knowledge-decisions`）：main 的键是 `sha256(windowId|kind|norm(text))`，本分支改成带最终项目、正文和方案哈希的新键，旧库里已记录的旧键新代码不认识。旧窗口用 `ab work --session <id> --redo` 重跑时，模型给出同样候选会被当成新的：旧条目还有效就重复追加证据，旧条目已被用户归档就以新 id 重新处于 active。修法：候选额外带一个旧键（算法与 main 一致）；没有正文也没有否掉方案的候选，旧键已在 `capture_candidates` 里就当已处理、不写入；带详情的照常写入（main 的条目没有详情，算新内容）。判断收在 `intake.freshAdmissions` 一处，抽取窗口与一步式两条路径共用。不删旧键、不迁移数据、不改新键算法、不加配置。同一修法还要盖住 duplicate 分支里的跨会话印证：confirm 事件与它跟的那条证据同生共死，证据按旧键算已处理时 confirm 也跳过；否则重跑会把会话 A 的条目转正，而会话 B 的证据并没写进去。
 - 2026-11-02 §8.11 修掉会悄悄丢内容的路径（round4，用户先定方案再实现）：① 每条候选证据上限 3 → 6，超过只取前 6 条并记 `evidence_truncated`，引用被截掉证据的方案整项丢掉，不再整条丢候选；提示词写明上限。② 关系判定输入保留正文内部的换行和缩进（只去首尾空白，仍 2000 字截断）。③ 第 2 层判 duplicate 时，被归档那条带详情且两边详情不一致就改记 `refines`，两条都留。④ 同窗口候选键加上方案哈希，没有方案的候选键不变。⑤ 第 1 层显式 duplicate 因详情不同降级成新条目时首次写入就标 `unreconciled`。⑥ 抽取侧方案长度改按存储侧的口径（先查密钥、再脱敏、按脱敏后 200 个码点），删掉抽取自己的 100 字检查和常量。⑦ 抽取正文先查密钥脱敏，再按脱敏后 5000 字判。⑧ 方案条数上限改用存储侧的 5 项，超出只取前 5 项并记 `alternatives_dropped`。⑨ `ab curate` 带详情的条目连自动合并也跳过。
