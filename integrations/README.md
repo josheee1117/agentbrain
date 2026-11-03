@@ -1,25 +1,39 @@
-# 宿主接线（切片 2 每轮召回 + 切片 3 自动沉淀）
+# 宿主接线（每轮偏好注入 + 切片 3 自动沉淀）
 
-本目录只放样例，不改任何全局配置。装到用户机器上之前要先得到用户同意，改之前先备份。
+本目录只放样例，不改任何全局配置。装到用户机器上之前要先得到用户同意，改之前先备份。下文所有安装命令都在仓库根执行。
 
+四个宿主在用户每次发 prompt 时调用 `ab recall --hook`。它从 stdin 读宿主给的 JSON，用 `prompt`、`cwd`，以及 `transcript_path`（有就看首部，认出被派活的子代理会话；Pi 和 opencode 还会额外传 `worker`）。它不再按本轮提问检索，每次注入两块内容：
 
-四个宿主在用户每次发 prompt 时调用 `ab recall --hook`。它从 stdin 读宿主给的 JSON（只用 `prompt` 和 `cwd`），命中当前项目的坑、规则、决定或标了 for_workers 的全局记忆时，输出一行：
-
-```json
-{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"<agentbrain-recall>…</agentbrain-recall>"}}
+```
+<agentbrain-prefs>
+用户的干活偏好（每轮常驻）：
+- [2352b4ab] ……
+</agentbrain-prefs>
+<agentbrain-recall>
+要不要查历史记忆由你判断：涉及以前的决定、陌生模块或可能踩过的坑时，先 ab search；上下文已经够了就不用查。
+</agentbrain-recall>
 ```
 
-没有命中、prompt 太短、以 `/` 开头或出任何错时，什么都不输出，退出码为 0，宿主这一轮照常进行。最多 3 条、600 字符，embedding 超时 3 秒，都是代码常量。
+整块包在 hook JSON 里输出，宿主本轮照常进行：
 
-前提：Node ≥ 24（要用 `node:sqlite`）。
+```json
+{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"<agentbrain-prefs>…</agentbrain-prefs>\n<agentbrain-recall>…</agentbrain-recall>"}}
+```
 
-样例里写的是通用命令 `ab recall --hook`。宿主（尤其从 GUI 启动的）跑 hook 时的 PATH 可能找不到 `ab`，或者 `#!/usr/bin/env node` 解析到低于 24 的 node，这时 `ab` 直接报错退出、召回静默失效。所以实际安装时建议写成绝对路径，例如本机装的是：
+- 偏好块只放用户确认过、全局范围、标了 `ab guidance`、不带场景标签的条目，最多 800 字符；一条都没有时这个块不出现。子代理会话（`worker` 为真）只放标了 `--for-workers` 的全局偏好。
+- 提醒块每轮都有，内容就是上面那一句。`ab setup --cite on` 打开引用开关后，提醒块末尾再多一句报告要求。
+- 空库、很短的 prompt、空字符串都照样有输出。只有这几种情况什么都不输出，退出码仍是 0：`prompt` 以 `/` 开头、`prompt` 不是字符串、stdin 是空的或不是合法 JSON、设了 `AGENTBRAIN_REVIEWER=1`（审稿子进程）、库打不开。
+- 手动 `ab recall <文本>` 仍然检索：命中条目最多 3 条、600 字符，embedding 超时 3 秒，都是代码常量；文本以 `/` 开头时不检索也不输出。钩子这条路径不调 embedding，也不发网络请求。
+
+前提：Node ≥ 22.18（仓库 `package.json` 的 engines；原生跑 `.ts` 需要这个版本，`node:sqlite` 从 22.13 起不用加 `--experimental-sqlite`）。
+
+样例里写的是通用命令 `ab recall --hook`。宿主（尤其从 GUI 启动的）跑 hook 时的 PATH 可能找不到 `ab`，或者 `#!/usr/bin/env node` 解析到低于 22.18 的 node，这时 `ab` 直接报错退出、召回静默失效。所以实际安装时建议写成绝对路径，例如本机装的是：
 
 ```sh
 /opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab recall --hook
 ```
 
-超时 5 秒。本目录只放样例，不改任何全局配置。
+宿主侧把这条 hook 的超时设成 5 秒（样例都这么写）。
 
 ## 切片 3：会话登记与 `ab work`
 
@@ -32,9 +46,11 @@
 | Pi | 扩展的 `before_agent_start` | 扩展的 `session_shutdown` |
 | 定时 | launchd 每 30 分钟 `ab work --sweep` | |
 
-`ab capture --hook` 从 stdin 读宿主给的 `session_id`、`transcript_path`、`cwd`、`hook_event_name`，只把这几个坐标写进 `~/.agentbrain/store.db`，不输出、不报错，退出码总是 0。transcript 路径必须在该宿主自己的会话目录下（`~/.claude/projects`、`~/.codex/sessions`、`~/.pi/agent/sessions`），否则不登记，防止借它把任意文件送出本机。2026-10-12 在 Linux box 上测 30 次，单次耗时（含 Node 启动）p50 120 ms、最大 155 ms。
+`ab capture --hook` 从 stdin 读宿主给的 `session_id`、`transcript_path`、`cwd`、`hook_event_name`，只把这几个坐标写进 `~/.agentbrain/store.db`，不输出、不报错，退出码总是 0。transcript 路径必须在该宿主自己的会话目录下（`~/.claude/projects`、`~/.codex/sessions`、`~/.codex/archived_sessions`、`~/.pi/agent/sessions`；opencode 写 `opencode://session/<id>`），否则不登记，防止借它把任意文件送出本机。2026-10-12 在 Linux box 上测 30 次，单次耗时（含 Node 启动）p50 120 ms、最大 155 ms。
 
-`ab work --sweep` 做四件事：处理静置 30 分钟或已结束的会话；扫描三宿主近 7 天的会话目录，补登记 hook 没生效的会话（只补 cwd 在已登记项目里的）；按仓库代码核验未确认的坑和事实；归档 90 天未确认的自动沉淀。hook 拉起的分离进程即使被宿主杀掉，定时任务也会接上（租约 10 分钟过期后可被接管）。
+`ab work --sweep` 做三件事：处理静置 30 分钟或已结束的会话；扫描近 7 天的会话目录，补登记 hook 没生效的会话（Claude Code、Codex、Pi 扫文件，opencode 读它的 SQLite；只补 cwd 在已登记项目里的）；按仓库代码核验未确认的坑和事实（每次最多 3 条）。hook 拉起的分离进程即使被宿主杀掉，定时任务也会接上（租约 10 分钟过期后可被接管）。
+
+到期未确认的条目**不再**由 sweep 自动归档：pitfall 和 note 90 天，decision 和 rule 180 天，期间被注入过的从最近一次注入重新计时。到期的只进 `ab review` 清单，归档要显式跑 `ab review --archive <id…>` 或 `ab review --archive --all`，用 `ab archive --reactivate <id>` 可以撤回。`ab status` 里的"到期待复审"就是这个清单的条数。
 
 ### 前提
 
@@ -74,54 +90,54 @@
 
    - 依据：<https://developers.openai.com/codex/hooks>（2026-10-12 读）。`SessionEnd` 在正常关闭、归档或删除仍打开的会话、空闲 30 分钟且没有客户端打开时触发；不对子代理触发；总是同步执行，输出不影响 Codex；stdin 带 `session_id`、`transcript_path`、`cwd`、`reason`。
 
-3. Pi：`~/.pi/agent/extensions/agentbrain-recall.ts` 已经链接到本仓的 `pi/agentbrain-recall.ts`，`git pull` 后自动带上 `session_shutdown`。扩展优先用上面的绝对路径，找不到才退回 PATH 上的 `ab`。`getSessionFile()` 为空的会话（子代理）按 ephemeral 登记、不抽取（§9.5）。`getSessionId` 没有时 `ab` 从文件名 `<时间>_<id>.jsonl` 取 id。这两个 API 的形状按 pi.dev 文档写，本机未实测。
+3. Pi：`~/.pi/agent/extensions/agentbrain-recall.ts` 已经链接到本仓的 `integrations/pi/agentbrain-recall.ts`，`git pull` 后自动带上 `session_shutdown`、`session_before_compact` 和状态栏。扩展固定用本机绝对路径 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab`，两个都存在才用，任一不存在就退回 PATH 上的 `ab`。`getSessionFile()` 为空的会话（子代理）按 ephemeral 登记、不抽取（§9.5）。`getSessionId` 没有时 `ab` 从文件名 `<时间>_<id>.jsonl` 取 id。这两个 API 的形状按本机 pi 1.4.0 的类型声明（`ReadonlySessionManager`）写的，没在旧版 pi 上核对过。
 
 4. launchd：
 
    ```sh
-   cp launchd/com.agentbrain.work.plist ~/Library/LaunchAgents/
+   cp integrations/launchd/com.agentbrain.work.plist ~/Library/LaunchAgents/
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentbrain.work.plist
    ```
 
-   日志在 `~/.agentbrain/work.log`。每次 sweep 先处理 hook 登记的会话，扫描/补登记来的历史会话每次最多 10 个窗口；日预算 60 次调用里留 12 次给代码核验。要重跑某个会话：`ab work --session <host>:<id> --redo`（已入库的同一候选不会重复）。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选"始终允许"；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
+   日志在 `~/.agentbrain/work.log`。每次 sweep 先处理 hook 登记的会话（每会话最多 6 个窗口），扫描/补登记来的历史会话额外限 10 个窗口。调用次数只在 `ab status` 的“今日用量”里记录，不设日上限（2026-10-13 用户决定）。要重跑某个会话：`ab work --session <host>:<id> --redo`（已入库的同一候选不会重复）。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选“始终允许”；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
 
 ### 装完后的验收
 
 - 在已登记仓库里开一个新会话，发一句"以后……"之类面向以后的要求，正常结束会话。几秒后 `ab doctor` 里"窗口: 完成"加 1，`ab search` 能看到 `[未确认·自动沉淀]` 的条目。
 - 不正常结束的会话（直接关终端）30 分钟后由 launchd 处理。
-- `ab doctor` 里"近 7 天靠扫描补登记"大于 0，说明某个宿主的 hook 没生效（多半是 Codex 未信任）。
+- `ab doctor` 里"近 7 天疑似漏登记"大于 0，说明某个宿主的 hook 没生效（多半是 Codex 未信任）。这一行只数 hook 装好之后开始、却仍只能靠扫描登记的会话；装 hook 前的历史会话单独算"补登记历史会话"。
 
 ## Claude Code
 
-把 `claude-code/settings.example.json` 里的 `hooks.UserPromptSubmit` 合并进 `~/.claude/settings.json`。不要整文件覆盖，已有的 hooks 要保留。
+把 `integrations/claude-code/settings.example.json` 里的 `hooks.UserPromptSubmit` 合并进 `~/.claude/settings.json`。不要整文件覆盖，已有的 hooks 要保留。
 
 - 格式依据：<https://code.claude.com/docs/en/hooks>（2026-10-10 读）。`UserPromptSubmit` 不支持 matcher；JSON 输出里的 `hookSpecificOutput.additionalContext` 会作为 system reminder 放在 prompt 旁边。
 - 这个事件的命令默认超时 30 秒，样例设为 5 秒。超时时输出被丢弃，prompt 照常发出。
 - 用 shell 形式（`"command": "ab recall --hook"`），和 Codex 样例是同一条命令。
-- 2026-10-12 在用户机器上实测：hook 执行并输出了召回块；模型那一轮被网关返回 400 拒绝，模型是否收到召回尚待复验。
-- 验证：`claude --debug` 启动，在已登记仓库里发一句含已知坑关键词的话，debug 日志里能看到这个 hook 的输出。
+- 2026-10-12 在用户机器上实测：hook 执行并输出了注入块；模型那一轮被网关返回 400 拒绝，模型是否收到注入还没复验。后来 `.agents/skills/verify-agentbrain` 的宿主驱动用 `claude -p` 在隔离库里跑通了（2026-10-29 和 2026-11-02 两次 PASS，`~/.cache/verify-evidence/agentbrain/`），但那是无头会话，不等于日常 GUI 会话里也通。
+- 验证：用 `.agents/skills/verify-agentbrain/verify.sh hosts claude` 跑隔离库那五个场景（它会显式隔离测试库并确认正式库没被污染），不要拿日常会话手动试；`claude --debug` 只能看到 hook 被调用，不能证明模型收到了。
 
 ## Codex
 
-把 `codex/hooks.example.json` 的内容合并进 `~/.codex/hooks.json`（没有这个文件就直接复制）。然后在 Codex 里打开 `/hooks`，审阅并信任这条 hook。Codex 按 hook 定义的哈希记录信任，没信任的 hook 会被跳过；以后改了命令要重新信任。
+把 `integrations/codex/hooks.example.json` 的内容合并进 `~/.codex/hooks.json`（没有这个文件就直接复制）。然后在 Codex 里打开 `/hooks`，审阅并信任这条 hook。Codex 按 hook 定义的哈希记录信任，没信任的 hook 会被跳过；以后改了命令要重新信任。
 
 - 格式依据：<https://developers.openai.com/codex/hooks>（2026-10-10 读）。文档写明 `UserPromptSubmit` 接受 `hookSpecificOutput.additionalContext`，作为额外的 developer context 加入；纯文本 stdout 也会被加入。hooks 默认开启（`config.toml` 的 `[features].hooks`）。
-- 2026-10-12 在用户机器上实测：模型收到并引用了注入的召回（§15.3）。日常会话仍需先在 `/hooks` 里信任这条 hook。已知社区反馈：这段 context 以 developer 消息的形式出现在用户 prompt 之后，而且可能在 transcript 里可见（openai/codex#16933、#40680）。
+- 2026-10-12 在用户机器上实测：模型收到并引用了注入的召回（§15.3）。日常会话仍需先在 `/hooks` 里信任这条 hook。已知社区反馈：这段 context 以 developer 消息的形式出现在用户 prompt 之后，而且可能在 transcript 里可见（openai/codex#16933、#40680）。2026-10-29 宿主驱动在隔离库里跑过五个场景，全 PASS（`~/.cache/verify-evidence/agentbrain/20261029T041548-hosts/`）。
 - 超时单位是秒，样例设为 5 秒。
 
 ## Pi
 
-Pi 用 `pi/agentbrain-recall.ts`，在 `before_agent_start` 调 `ab recall --hook`，把 `additionalContext` 作为隐藏消息注入。把这个文件链接进 `~/.pi/agent/extensions/`：
+Pi 用 `integrations/pi/agentbrain-recall.ts`，在 `before_agent_start` 调 `ab recall --hook`，把 `additionalContext` 作为隐藏消息注入（`display: false`）。把这个文件链接进 `~/.pi/agent/extensions/`：
 
 ```sh
-ln -s "$PWD/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
+ln -s "$PWD/integrations/pi/agentbrain-recall.ts" ~/.pi/agent/extensions/agentbrain-recall.ts
 ```
 
-- 2026-10-12 在用户机器上实测：单文件扩展能被加载，模型收到并引用了注入的召回。扩展里调用的是 PATH 上的 `ab`，同样受上面 PATH/Node 版本的影响。
+- 2026-10-12 在用户机器上实测：单文件扩展能被加载，模型收到并引用了注入的召回。同日扩展里调用的是 PATH 上的 `ab`；现在改成优先绝对路径。宿主驱动测 Pi 时用的是一个覆盖 `CMD` 的扩展副本（`createExtension(makeExecRunner([node, cli]))`），所以“优先绝对路径”这个分支在真实 pi 里没单独验证过；常规召回和登记是通的（2026-10-29、2026-11-02 PASS）。
 
 ## opencode v2
 
-本机验证版本是 `opencode v2.0.30`。插件是 `opencode/agentbrain-v2.js`，默认导出带 `id` 和 `setup` 的对象。旧 `@opencode-ai/plugin` 的 `chat.message` 类型声明不适用于这个版本。
+本机验证版本是 `opencode v2.0.30`（后续又在 v2.1.4 上跑过宿主驱动，PASS）。插件是 `integrations/opencode/agentbrain-v2.js`，默认导出带 `id` 和 `setup` 的对象。旧 `@opencode-ai/plugin` 的 `chat.message` 类型声明不适用于这个版本。
 
 在仓库根安装。先备份现有配置，不覆盖其他插件：
 
@@ -134,7 +150,7 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 重新启动 opencode。若后台服务曾加载旧版同名插件，本机实测 `opencode reload` 未清除旧模块，需在新进程中加载。可用 `opencode --standalone` 验证，不停止其他会话的共享服务。
 
-- `ctx.session.hook("context")` 在模型请求前调用召回，追加本轮系统上下文。同一用户消息的工具循环不重复调用，新一轮重新召回。命令优先用 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab`，不存在才退回 PATH。调用超时 5 秒，任何失败静默放行。
+- `ctx.session.hook("context")` 在模型请求前调 `ab recall --hook`，把返回的 `additionalContext` 追加成一条系统上下文。同一用户消息的工具循环不重复调用，新一轮重新召回。现在钩子不再检索，追加的就是偏好和提醒两块。命令优先用 `/opt/homebrew/bin/node /Users/hejiayuan/.local/bin/ab`（两个都存在才用，否则退回 PATH）。调用超时 5 秒，任何失败静默放行。
 - capture 只接受 `opencode://session/<id>`。`ab` 从固定的 `~/.local/share/opencode/opencode.db` 只读查询 `session_v2`、`session_message`。不存在的 session、不同 session 的引用、任意文件路径都拒绝。项目以数据库中的 directory 为准。来源展开用 `ab get --expand`。
 - `parent_id` 非空的会话按 ephemeral 登记，不抽取。sweep 只补近 7 天、已登记项目的主会话。读取不包含 synthetic、reasoning 和压缩摘要。静置时钟取会话 time_updated，不取数据库文件 mtime。
 - 插件销毁或 session 归档时登记结束，拉起现有 `ab work --session`。直接杀进程时仍靠手动或已有定时 `ab work --sweep`。本次不启用 launchd，也不打开话题开关。opencode 使用现有 API 抽取器，不借其他宿主的 CLI 额度。
@@ -142,23 +158,25 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 2026-10-20 最终安装项的真实验收在 Herdr 新 tab 中运行 `opencode --standalone`。会话 `ses_ea7463e1dffetnDViut8I7eJLc` 的助手消息 `msg_158b9c245001EhW5HTgFbbQxKr` 输出了包含 `[873b78e2]` 的 `<agentbrain-recall>` 块。`capture_sessions` 登记 host=opencode、project=agentbrain、via=hook。退出后后台完成一个窗口，处理了 2 轮、84 字，6245 token，零候选、无错误，处理进度到该助手消息的 `:1` 文本。测试 tab 已关闭。
 
-## 每轮召回装完后的验收（设计 §15.3）
+## 每轮注入装完后的验收（设计 §15.3）
 
-在三个宿主里各做一次：在已登记仓库里 `ab remember --confirmed --kind pitfall …` 记一个坑，开新会话，发一句和这个坑相关的话，确认模型收到了 `<agentbrain-recall>` 块。某个宿主做不到时记为该宿主的显式降级，不算通过。
+在宿主里各做一次：在已登记仓库里 `ab remember --confirmed --global --kind rule --text … --summary …` 记一条全局规则，再 `ab guidance <id>` 标成干活偏好（或直接 `ab remember --confirmed --global --kind rule --text "汇报直接写回复正文" --summary …` 后打 guidance），开新会话，确认模型收到了 `<agentbrain-prefs>` 块里的这条偏好。钩子不再自动检索，所以“发一句和某个坑相关的话看它会不会被注入”这种验证已经不成立；要验检索，直接发 `ab search`。
+
+已跑过的宿主驱动：`.agents/skills/verify-agentbrain/verify.sh hosts [claude codex pi opencode]`，它用隔离库跑五个场景，自动断言模型有没有用到偏好、有没有主动查、有没有写报告行。2026-10-29 跑四个宿主，claude、codex、pi 全 PASS，opencode 因未登录记 BLOCKED（总体 PASS_WITH_BLOCKED）；2026-11-02 复跑 claude 和 pi，全 PASS。证据在 `~/.cache/verify-evidence/agentbrain/`。某个宿主做不到时记为该宿主的显式降级，不算通过。
 
 ## 审稿团 `ab curate`（可选的建议归档工具）与上手向导 `ab setup`
 
 > 2026-10-22 起没有候选区了（设计 §8.8）：自动抽取和 agent 自记的条目直接生效、标未确认。`ab curate` 只手动跑，审的是"未确认的有效条目"，给出要归档的建议；它不再是转正的路。
 
-- `ab setup` 一步步问快模型、按宿主的审稿人（默认 Claude Haiku 5.5 max、Codex gpt-6-astra max、Pi 默认模型，也可选经 cpa 的 astra）主审稿配置（默认 1 家主审；panel 模式建议 3 家不同厂商加仲裁）、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。`--only fast,reviewers,panel,keys,hosts,test` 只重做其中几步。
-- 配置 `~/.agentbrain/review.json`，样例见 `review.example.json`。
+- `ab setup` 一步步问快模型、按宿主的审稿人（默认 Claude Haiku 5.5 max、Codex review_model 或 gpt-6-astra max、Pi 的 reviewer 子代理模型，也可选经 cpa 的 astra）主审稿配置（默认 1 家主审；panel 模式建议 3 家不同厂商加仲裁）、每个模型的 key（经 `security -i` 的 stdin 写进钥匙串，配置只记条目名）、接哪些宿主（写之前先备份并给出 diff，确认后才写），最后做连通测试。宿主这一步只自动改 Claude Code 和 Codex 的 hook 文件，Pi 只帮建扩展的符号链接，opencode 不管，要手动接（见本文件各宿主一节）。`--only fast,reviewers,panel,keys,hosts,test` 只重做其中几步。
+- 配置 `~/.agentbrain/review.json`，样例见 `integrations/review.example.json`。
   - **审稿成员两种后端**：`type: "cli"`（默认样例，2026-10-15 用户认可）用宿主自己的命令行无头跑，用宿主自己的账号额度，不用 key：
     - Claude Code：`claude -p --model haiku --effort max`（haiku = claude-haiku-5-5），关工具、不读设置源（hook 不跑）、不存会话；
     - Codex：`codex exec -m gpt-6-astra -c model_reasoning_effort=max --ephemeral -s read-only --disable hooks`（gpt-6-astra 是 codex 模型目录里的第二档）；
     - Pi：`pi -p --no-session --no-tools --no-extensions`，`model` 写 `provider/id`（不写用 Pi 的默认模型），`effort` 走 `--thinking`。
-    - 审稿子进程带 `AGENTBRAIN_REVIEWER=1`，`ab capture/recall --hook` 看到就什么都不做，审稿会话不会被登记、抽取或再触发审稿；在空临时目录里跑。
+    - 审稿子进程带 `AGENTBRAIN_REVIEWER=1`，`ab capture --hook` 和 `ab recall --hook` 看到就什么都不做，审稿会话不会被登记、抽取或再触发审稿；在空临时目录里跑。
     - `type: "api"`（不写 type 时的默认）照旧直接调 OpenAI 兼容接口，例如经 cpa 的 gpt-6-astra：`{"name":"astra","baseUrl":"http://127.0.0.1:8317/v1","model":"gpt-6-astra","keyService":"codex-cpa-local-api-key","extraBody":{"reasoning_effort":"medium"}}`。
-  - `hostReviewers`：每个宿主一个审稿人。`ab curate --host claude` 只审从 Claude Code 会话抽出来的未确认条目，用这个宿主配的审稿人当唯一主审。没配的宿主、手动 `ab curate`、不属于任何宿主的条目走主配置（`mode`/`panel`）。
+  - `hostReviewers`：每个宿主一个审稿人，**只能写 `claude`、`codex`、`pi`**（opencode 没有审稿子命令，写了会被当成非法配置拒绝）。`ab curate --host claude` 只审从 Claude Code 会话抽出来的未确认条目，用这个宿主配的审稿人当唯一主审。没配的宿主、手动 `ab curate`、不属于任何宿主的条目走主配置（`mode`/`panel`）。`ab curate --host opencode` 能用，但只能走主配置。
   - 会话结束自动审稿和多审稿人认领/租约**暂不做**（2026-10-15 用户定）：目标设计改为话题结束时一个后台子模型一次决定新记/并入/不记（见 `src/onepass.ts`），staging 只留作审计和撤销。审稿要几分钟，审完按此刻的库重新规划，期间被用户确认或归档的条目跳过。
   - `mode` 有两种：
     - `primary`（默认）：只有 `primary` 一位主审定结论。panel 里可以另加成员当参考意见（先各自给意见，附给主审、写进报告，不投票，不仲裁）；90 条标注评测里参考意见没带来提升，默认不加。没有参考成员时主审的提示词和普通审稿人一样。主审没给出有效结论的条目算未决，不执行。
@@ -178,13 +196,14 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 **开关**：`~/.agentbrain/extract.json` 里加一个键 `"topic": true`（其他字段不变）。删掉这个键或改成别的值就是关。关着时下面新加的 hook 什么都不做，`ab work` 行为和以前一样。
 
-**每个宿主要加的事件**（`ab setup` 的宿主一步会把这条一起合进去，写前备份、给 diff、确认后才写；不跑 setup 就手动合并样例）：
+**每个宿主要加的事件**（`ab setup` 的宿主一步只写 Claude Code 和 Codex，写前备份、给 diff、确认后才写；Pi 和 opencode 插件已自带；不跑 setup 就手动合并样例）：
 
 | 宿主 | 新增 | 作用 |
 |---|---|---|
 | Claude Code | `PreCompact`：`ab capture --hook --host claude`（超时 5 秒） | 压缩前记一个话题边界，拉起分离的 `ab work --session`，立即返回，不挡压缩 |
 | Codex | `PreCompact`：`ab capture --hook --host codex`（超时 5 秒；改完要在 `/hooks` 里重新信任） | 同上 |
-| Pi | 扩展的 `session_before_compact`（`pi/agentbrain-recall.ts` 已带） | 同上；不取消、不改压缩 |
+| Pi | 扩展的 `session_before_compact`（`integrations/pi/agentbrain-recall.ts` 已带） | 同上；不取消、不改压缩 |
+| opencode | 插件的 `ctx.session.hook("compaction")`（`integrations/opencode/agentbrain-v2.js` 已带） | 登记 PreCompact 并拉起 `ab work --session`；但 opencode 不走话题模式（`src/work.ts:715` 把 opencode 排除在外），仍用原来的两步式抽取 |
 
 已有的 `UserPromptSubmit` / `SessionEnd`（Pi：`before_agent_start` / `session_shutdown`）不用改：开关打开后，`UserPromptSubmit` 时如果距这个会话上次登记已超过 20 分钟，就顺便拉起 `ab work --session`（候选 B，不加闹钟进程）。
 
@@ -196,4 +215,4 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 **审计和撤销**：每次运行一份报告 `~/.agentbrain/topic/<run>.json`；`ab work --runs` 列出运行，`ab work --undo <run>` 整次撤销（只归档本次写入、之后没被动过的条目；你确认过的、已自动转正的、后来归档过的不动）。单条用 `ab archive <id>`。
 
-**没有实测的**：三个宿主的压缩事件真的会来（需要在你的机器上装 hook 才能测，本 PR 没装）。已离线核对本机 transcript：Claude（`compact_boundary` + `isCompactSummary` 摘要）、Codex（`compacted`）、Pi（`compaction` 条目）压缩后都保留压缩前的原文，从会话文件补读话题的前提成立；Claude 的压缩摘要不当成用户的一轮。
+**没有实测的**：宿主压缩时这几个事件真的会来。Claude Code 和 Codex 的 `PreCompact` hook 本机还没装（`~/.claude/settings.json` 和 `~/.codex/hooks.json` 里都没有这一条），Pi 的 `session_before_compact` 和 opencode 的 `compaction` 也没在真实会话里看到登记效果。已离线核对本机 transcript：Claude（`compact_boundary` + `isCompactSummary` 摘要）、Codex（`compacted`）、Pi（`compaction` 条目）压缩后都保留压缩前的原文，从会话文件补读话题的前提成立；Claude 的压缩摘要不当成用户的一轮。opencode 走它自己的 SQLite，不读 transcript 文件，这条前提对它不适用。
