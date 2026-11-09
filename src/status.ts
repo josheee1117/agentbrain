@@ -157,6 +157,7 @@ export function statusLine(store: Store, now: Date, clock = sourceClock()): { re
   const props = store.project().props.values();
   const review = reviewList(props, store.usage(), now, clock).length;
   const since = new Date(now.getTime() - STATUS_LINE_FAILED_DAYS * 86_400_000).toISOString();
-  const row = store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE state='failed' AND updated_at >= ?").get(since) as { n: number };
+  // superseded 是清理进度已越过的旧积压行，不是这次抽取失败，不能点亮“抽取失败”警告
+  const row = store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE state='failed' AND error_code!='superseded' AND updated_at >= ?").get(since) as { n: number };
   return { review, work_failed: Number(row.n) };
 }

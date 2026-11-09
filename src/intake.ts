@@ -17,6 +17,9 @@ const SESSION_RETENTION_DAYS = 90;
 
 export type WindowState = "deferred" | "done" | "failed";
 
+/** 窗口的未完成原因：模型/资源的错误码，加上进度越过后的 superseded（不是抽取失败）。 */
+export type WindowErrorCode = WorkError | "superseded";
+
 export interface SessionRow {
   host: Host;
   session_id: string;
@@ -42,7 +45,7 @@ export interface WindowRow {
   state: WindowState;
   attempts: number;
   next_at: string | null;
-  error_code: WorkError | null;
+  error_code: WindowErrorCode | null;
   receipt: string | null;
   updated_at: string;
 }
@@ -119,6 +122,17 @@ export function dueDeferredSessions(db: DatabaseSync, now: Date, except: { host:
 export function deferDue(w: Pick<WindowRow, "next_at" | "error_code" | "updated_at">, now: Date): boolean {
   if (!w.next_at || Date.parse(w.next_at) <= now.getTime()) return true;
   return w.error_code === "http_429" && now.getTime() - Date.parse(w.updated_at) >= MAX_DEFER_MS;
+}
+
+/**
+ * 宿主冷却（话题模式 429）到期了吗。截止时间和窗口延后共用一个封顶：旧版本把 429 报的“八天后重置”原样存进 work_meta，
+ * 这里按该宿主最近一条 429 延后记录的时间封顶算，不改库。没有 429 窗口记录的冷却已无从证明来源，按到期处理。
+ */
+export function cooldownDue(db: DatabaseSync, host: Host, until: string, now: Date): boolean {
+  if (until <= now.toISOString()) return true;
+  const row = db.prepare("SELECT MAX(updated_at) AS t FROM capture_windows WHERE host=? AND error_code='http_429'").get(host) as { t: string | null } | undefined;
+  const at = row?.t ? Date.parse(row.t) : NaN;
+  return !Number.isFinite(at) || now.getTime() - at >= MAX_DEFER_MS;
 }
 
 export function deferredWindows(db: DatabaseSync, host: Host, sessionId: string): WindowRow[] {
@@ -360,7 +374,8 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
     windows: {
       done: wins.filter((w) => w.state === "done").length,
       deferred: wins.filter((w) => w.state === "deferred").length,
-      failed: wins.filter((w) => w.state === "failed").length,
+      // superseded 是进度越过后的旧积压清理，不是抽取失败；它照旧出现在 errors 里当未完成原因
+      failed: wins.filter((w) => w.state === "failed" && w.error_code !== "superseded").length,
       errors: werr,
       nextRetry,
     },

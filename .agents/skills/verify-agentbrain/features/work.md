@@ -7,7 +7,9 @@
 - 代码只读核验与转正 (`ab work --sweep`)：只读检查代码仓库，验证未确认的坑与事实是否属实，对得上则自动转正
 - 话题模式与断点续抽 (`ab work --session ... [--redo]`, `ab work --runs`, `ab work --undo`)
 - 额度限流自恢复：抽取、embedding、代码核验撞上 429/quota/rate limit 按 Retry-After 延后，不算失败尝试，额度恢复后接着做。单次延后最多 1 小时，历史上被写成几天后的 429 行也按延后满 1 小时算到期。单会话 hook 拉起的 `ab work` 顺带重试别的会话已到期的延后窗口
-- 过期延后行退出：进度已越过 `to_anchor` 的 deferred 行标 `failed` / `superseded`（不删，到期由 prune 清）。Codex 换了 transcript 文件、旧数字进度不在新文件里、且新文件第一轮 ordinal 更大时，从第一轮接着切，窗口 `from` 仍是旧进度
+- 过期延后行退出：进度已越过 `to_anchor` 的 deferred 行标 `failed` / `superseded`（不删，到期由 prune 清）。清理在短写事务里复核租约并重读当前进度，旧进程被接管后恢复时不会误标别人的正常排队行；它不算抽取失败（`report.windows.failed`、`ab status` 的「失败」与 `status --line` 的 `work_failed` 都排除 `error_code='superseded'`，但「未完成原因」照常列出）。Codex 换了 transcript 文件、旧数字进度不在新文件里、且新文件第一轮 ordinal 更大时，从第一轮接着切，窗口 `from` 仍是旧进度
+- 换文件后的重放不重记证据：用户编辑 Codex 旧消息也会换文件，新文件首轮会把已抽过的原话再送一遍。给已有条目追加来源时，同宿主同会话里 `quote_sha256` 已经记过的证据跳过；整条来源都跳掉就不写事件。跨会话同原话照常追加（那是印证，有意义）
+- 话题模式的 `topic_cooldown:<host>` 与窗口延后共用 `MAX_DEFER_MS` 封顶，读时按封顶算，不改库
 - 模型产出留痕（§8.10）：普通抽取、一步式话题、重复追加证据、关系判定、代码核验写下的 L1 事件都带 `model` 与 `prompt_version`（实发系统提示词全文的 SHA-256 前 12 位），`ab get` 按事件逐条列出
 - 转正只有三条路：用户 confirm / 代码核验 / 跨会话印证；跨会话印证要求两个以上会话各自有用户原话，关系未判定（`[关系未判定]`）或带冲突、待确认纠正、替代关系的条目不转正
 
@@ -32,3 +34,5 @@
 - `extract.json` 可加 `extraBody`（对象，如 `{"reasoning_effort":"medium"}`）原样带进 chat 请求；写了非对象时 `ab status` / `ab doctor` 的「抽取模型」行显示「不可用（…/extract.json 的 extraBody 必须是对象）」
 - 抽取请求不设超时（用户 2026-10-30）：租约过期由别的进程接管，写库前复核租约，不会重复写；因此挂住的 `ab work` 不会自己退，靠租约接管——这条只能在真实模型调用里观察，本技能不跑
 - 话题一步式的 `prompt_version` 改成只 hash 实发的系统提示词（worker 说明在 user 消息里，不再混进 hash）；旧 `topic.prompt_version` 保留原口径，不回填
+- `superseded` 只是窗口的 `error_code` 取值，没有新的窗口状态、事件类型或配置键；`WindowErrorCode` 类型把它和 `WorkError` 分开，状态栏统计靠 `error_code!='superseded'` 排除
+- 重放去重的边界就三条：同一条目、同宿主同会话、同 `quote_sha256`。不解析 Codex 的 `history_base` / `edit_user_message`，`codexContinues` 的判定没改（只看首轮 ordinal 是否更大），去重放在 `admit` 里

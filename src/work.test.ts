@@ -17,6 +17,7 @@ import { allowedTranscript } from "./transcript-file.ts";
 import { expandSource } from "./source.ts";
 import * as intake from "./intake.ts";
 import { sha256, validate } from "./extract.ts";
+import { statusLine, statusReport } from "./status.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "ab-work-")));
@@ -55,7 +56,10 @@ interface Env {
   registryDir: string;
   deps: (chat: Chat | null, extra?: Partial<WorkDeps>) => WorkDeps;
   transcript: (sid: string, lines: object[], idle?: boolean) => string;
-  codexTranscript: (sid: string, lines: object[], idle?: boolean) => string;  register: (sid: string, file: string, ended?: boolean) => void;
+  codexTranscript: (sid: string, lines: object[], idle?: boolean) => string;
+  /** 同一条 Codex 会话的另一个 rollout 文件（编辑旧消息后宿主另起文件），文件名带不同的时间与后缀。 */
+  codexRollout: (sid: string, name: string, lines: object[], idle?: boolean) => string;
+  register: (sid: string, file: string, ended?: boolean) => void;
   pid: string;
 }
 
@@ -103,6 +107,14 @@ function env(): Env {
       const d = join(dir, ".codex/sessions/fixture");
       mkdirSync(d, { recursive: true });
       const p = join(d, `rollout-2026-10-08T10-45-49-${sid}.jsonl`);
+      writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+      return p;
+    },
+    codexRollout: (sid, name, lines, idle = true) => {
+      const d = join(dir, ".codex/sessions/fixture");
+      mkdirSync(d, { recursive: true });
+      const p = join(d, `rollout-${name}-${sid}.jsonl`);
       writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
       if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
       return p;
@@ -1402,10 +1414,10 @@ const codexTurn = (ordinal: number, role: "user" | "assistant", text: string) =>
   payload: { type: "message", role, content: [{ type: role === "user" ? "input_text" : "output_text", text }] },
 });
 
-function insertDeferred(e: Env, id: string, host: string, sid: string, to: string, nextAt: string): void {
+function insertDeferred(e: Env, id: string, host: string, sid: string, to: string, nextAt: string, from: string | null = null): void {
   e.store.workDb.prepare(
     "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES(?,?,?,?,?,'deferred',1,?,?,NULL,?)",
-  ).run(id, host, sid, null, to, nextAt, "http_429", nextAt);
+  ).run(id, host, sid, from, to, nextAt, "http_429", nextAt);
 }
 
 test("进度已越过的延后行退出为 superseded，同会话还没处理的窗口照常完成", async () => {
@@ -1560,4 +1572,94 @@ test("历史行里 next_at 已被 429 推到几天后：按延后时间封顶算
   const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] })), { now: () => new Date(t0 + 3_600_000) }), { sweep: false, dryRun: false, session: { host: "claude", session_id: "new" } });
   assert.equal(r.windows.done, 2, "新会话 + 旧会话里被推到几天后的延后窗口");
   assert.equal(intake.sessions(e.store.workDb, { host: "claude", session_id: "old" })[0].processed_anchor, "u1");
+});
+
+// ---------- review 修复：重放不重复记证据、清理复核租约与进度、superseded 不算失败 ----------
+
+test("Codex 编辑旧消息换了文件：重放已抽过的原话不再追加来源，之后的新内容照常抽取", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-0000000000aa";
+  const repeated = "以后 hook 命令都写 node 绝对路径";
+  const oldFile = e.codexRollout(sid, "2026-11-04T16-12-10", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(635, "user", repeated),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: oldFile, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  const prop = props(e.store).find((p) => p.text === RULE.text)!;
+  assert.equal(prop.evidence[0].anchor, "635");
+  // 编辑旧消息后宿主另起文件：642 重放 635 的原话，644 之后是新内容
+  const forked = e.codexRollout(sid, "2026-11-04T17-14-37", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", repeated),
+    codexTurn(643, "assistant", "好"),
+    codexTurn(644, "user", "提交前先跑 tsc"),
+  ]);
+  e.store.workDb.prepare("UPDATE capture_sessions SET transcript=?, ended_at=? WHERE session_id=?").run(forked, new Date().toISOString(), sid);
+  const dup = { ...RULE, relation: { type: "duplicate", target: "m1" } };
+  // 新文件的三轮：1=642 重放，2=643 回答，3=644 新内容
+  const fresh = { ...RULE, text: "提交前先跑 tsc", why: "上次漏跑 tsc，CI 上才报类型错误", evidence: [{ anchor: "#3", role: "user", quote: "提交前先跑 tsc" }] };
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [dup, fresh] }))), { sweep: false, dryRun: false });
+  assert.deepEqual(e.store.project().props.get(prop.id)!.extra_sources, [], "同一会话同一句原话不再追加第二份来源");
+  assert.equal(r.receipt.attached, 0);
+  assert.ok(props(e.store).some((p) => p.text === "提交前先跑 tsc"), "重放之后的新内容照常抽取");
+  assert.equal(intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0].processed_anchor, "644");
+});
+
+test("别的会话里出现同一句原话照常追加来源：去重不扩到跨会话", async () => {
+  const e = env();
+  const quote = "以后 hook 命令都写 node 绝对路径";
+  const old = e.store.remember(e.pid, null, false, {
+    kind: "rule", text: RULE.text, confirmed: false, basis: "user_directive",
+    evidence: [{ anchor: "u1", role: "user", quote_sha256: sha256(quote) }],
+    source: { host: "claude", session_id: "s0", transcript: null, anchor: "u1", summary: "x" },
+  });
+  e.register("s1", e.transcript("s1", [user("u1", quote)]));
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [{ ...RULE, relation: { type: "duplicate", target: "m1" } }] }))), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.attached, 1);
+  assert.deepEqual(e.store.project().props.get(old)!.extra_sources.map((s) => s.session_id), ["s1"]);
+});
+
+test("旧进程被接管后恢复：新进程正常排队的行仍是 deferred，不被改成 superseded", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-0000000000bb";
+  // 旧进程启动时读到的进度是 635，B 会话里有一条它以为被越过的延后行（to=633）
+  const target = e.codexRollout(sid, "2026-11-04T16-12-10", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: target, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='635' WHERE session_id=?").run(sid);
+  insertDeferred(e, "stale-633", "codex", sid, "633", "2026-11-04T00:00:00.000Z");
+  // A 先处理：模型调用期间，新进程接管租约、对 B 做 --redo 并把 NULL→635 正常延后
+  e.register("a", e.transcript("a", [user("u1", "以后 hook 命令都写 node 绝对路径")], true));
+  e.store.workDb.prepare("UPDATE capture_sessions SET last_touch='2000-01-01T00:00:00.000Z' WHERE session_id='a'").run();
+  const chat = fakeChat(() => {
+    e.store.workDb.prepare("INSERT OR REPLACE INTO work_lease(name,holder,pid,expires_at) VALUES('work','new-process',?,?)").run(process.pid, new Date(Date.now() + 3_600_000).toISOString());
+    e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor=NULL WHERE session_id=?").run(sid);
+    e.store.workDb.prepare("DELETE FROM capture_windows WHERE window_id='stale-633'").run();
+    insertDeferred(e, "live-635", "codex", sid, "635", new Date(Date.now() + 600_000).toISOString());
+    return json({ candidates: [] });
+  });
+  await assert.rejects(runWork(e.deps(chat), { sweep: false, dryRun: false }), /租约已被接管/, "旧进程领不清租约就停下，不写库");
+  const row = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='live-635'").get() as { state: string; error_code: string };
+  assert.equal(row.state, "deferred", "别人正常排队的行仍是 deferred");
+  assert.equal(row.error_code, "http_429", "错误码没被改成 superseded");
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE error_code='superseded'").get()!.n, 0);
+});
+
+test("清理越过的旧行不算抽取失败：report.windows.failed 不增，状态栏和 ab status 都排除 superseded", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "旧要求"), asst("a1", "好"), user("u2", "以后 hook 命令都写 node 绝对路径")]), true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='a1' WHERE session_id='s1'").run();
+  insertDeferred(e, "stale-row", "claude", "s1", "u1", "2026-10-14T10:03:43.000Z");
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: true, dryRun: false });
+  assert.equal(r.windows.failed, 0, "清理旧行不算抽取失败");
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE error_code='superseded'").get()!.n, 1, "行照常留痕");
+  assert.equal(statusLine(e.store, new Date()).work_failed, 0, "状态栏不把 superseded 当抽取失败");
+  const line = statusReport(e.store, {
+    cwd: e.repo, userHome: e.dir, storeHome: e.dir, host: { ok: true, detection: null } as never,
+    embedder: null, embedReason: "未配置", chatConfig: { error: "没有 extract.json" }, now: new Date(),
+  });
+  assert.match(line, /失败 0；未完成原因 superseded 1/, "ab status 里 superseded 照常出现在未完成原因");
 });

@@ -243,7 +243,9 @@ function ordinalOf(anchor: string | null | undefined): number | null {
   return Number.isSafeInteger(n) ? n : null;
 }
 
-/** Codex 换文件后旧 ordinal 不在新文件里。新文件第一轮更大，说明内容接在旧进度之后，可以从第一轮接着切。 */
+/** Codex 换文件后旧 ordinal 不在新文件里。新文件第一轮更大，说明内容接在旧进度之后，可以从第一轮接着切。
+ * 注意这不等于“新内容”：用户编辑旧消息也会换文件，新文件首轮会把已抽过的原话再送一遍。
+ * 重复的原话由 admit 按“同条目 + 同宿主同会话 + 同 quote_sha256”挡住，这里只管接上进度。 */
 function codexContinues(host: Host, all: Turn[], from: string): boolean {
   if (host !== "codex") return false;
   const progress = ordinalOf(from);
@@ -497,6 +499,19 @@ function corroborationConfirm(target: Proposition, extra: Pick<EvidenceBody, "so
   return sessions.length >= 2 ? { by: "corroboration", sessions } : null;
 }
 
+/** 同一条目、同宿主同会话里已经记过的原话哈希。用于挡住 Codex 编辑旧消息后换文件造成的重放。 */
+function quotesIn(p: Proposition, host: Host, sessionId: string): Set<string> {
+  const out = new Set<string>();
+  if (p.source.host === host && p.source.session_id === sessionId) {
+    for (const e of p.evidence) out.add(e.quote_sha256);
+  }
+  for (const s of p.extra_sources) {
+    if (s.host !== host || s.session_id !== sessionId) continue;
+    for (const e of s.evidence) out.add(e.quote_sha256);
+  }
+  return out;
+}
+
 export function admit(
   candidates: (Candidate & { unreconciled: boolean })[],
   s: intake.SessionRow,
@@ -531,7 +546,14 @@ export function admit(
     if (!c.unreconciled && !crossProjectDup && rel.type === "duplicate" && relTarget && relTarget.state === "active" && !detailDiffers) {
       // duplicate 追加的证据事件也带 quote 和 said_at（§8.11.2），密钥检查在 store.commit 前由 checkRememberBody 负责；
       // 证据事件不经过 checkRememberBody，这里用与 extract 相同的 secretKinds 自查，脏引文只丢该条证据
-      const body: EvidenceBody = { source, basis: c.basis, evidence: c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0), window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
+      const kept = c.evidence.filter((e) => !e.quote || secretKinds(e.quote).length === 0);
+      // 同宿主同会话里已有的原话不再追另一份：Codex 编辑旧消息会换文件，新文件首轮把已抽过的原话再送一遍。
+      // 只看同一会话（跨会话印证有意义）；不是重复关系的条目本来就不走这里。
+      const known = quotesIn(relTarget, s.host, s.session_id);
+      const evidence = kept.filter((e) => !known.has(e.quote_sha256));
+      // 原话全在本会话里记过：整条来源跳掉，不写事件（keys 与 appends 按下标配对，不能只推键）
+      if (!evidence.length) continue;
+      const body: EvidenceBody = { source, basis: c.basis, evidence, window_id: windowId, model, prompt_version: EXTRACT_PROMPT_VERSION };
       out.appends.push({ kind: "evidence", project_id: relTarget.project_id, session_id: s.session_id, target_id: relTarget.id, body });
       out.keys.push(c.key);
       out.legacyKeys.push(c.legacyKey);
@@ -780,11 +802,22 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
-  if (!opts.dryRun && s.processed_anchor) {
-    for (const w of intake.deferredWindows(db, s.host, s.session_id)) {
-      if (!progressPassed(s.host, turns, s.processed_anchor, w.to_anchor)) continue;
-      intake.failSuperseded(db, w.window_id, deps.now());
-      report.windows.failed++;
+  if (!opts.dryRun && s.processed_anchor && intake.deferredWindows(db, s.host, s.session_id).length) {
+    // 清理“进度已越过”的旧延后行。上面的进度来自启动时读的会话列表，可能已经过时（旧进程暂停期间另一进程接管租约、
+    // --redo 后重新延后）。所以租约和当前进度都在短写事务里重读再判；租约已不在自己手里就抛错中止，一个行也不改。
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      holdsLease(db, holder, deps.now());
+      const behind = intake.sessions(db, { host: s.host, session_id: s.session_id })[0]?.processed_anchor;
+      if (behind) {
+        for (const w of intake.deferredWindows(db, s.host, s.session_id)) {
+          if (progressPassed(s.host, turns, behind, w.to_anchor)) intake.failSuperseded(db, w.window_id, deps.now());
+        }
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw e;
     }
   }
   if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
@@ -918,7 +951,7 @@ async function processTopicSession(
     const prev = intake.getWindow(db, c.id);
     if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && !intake.deferDue(prev, deps.now())) break;
     const cool = cooldown.get(s.host) ?? intake.meta(db, `topic_cooldown:${s.host}`);
-    if (cool && cool > deps.now().toISOString()) {
+    if (cool && !intake.cooldownDue(db, s.host, cool, deps.now())) {
       report.windows.deferred++;
       break;
     }
@@ -972,8 +1005,11 @@ async function processTopicSession(
       const after = e instanceof WorkFailure ? e.retryAfterMs : undefined;
       const until = limited && typeof after === "number" ? new Date(deps.now().getTime() + after) : undefined;
       if (limited) {
-        // 记到 work_meta：之后几次 ab work（别的会话、下一轮 hook 拉起的）在恢复前也不再给这个宿主发请求
-        const iso = (until ?? new Date(deps.now().getTime() + 60_000)).toISOString();
+        // 记到 work_meta：之后几次 ab work（别的会话、下一轮 hook 拉起的）在恢复前也不再给这个宿主发请求。
+        // 截止时间与窗口延后共用一个封顶：429 报的“八天后重置”不能把这个宿主锁住几天；没给重试时间时按一分钟试
+        const cap = deps.now().getTime() + intake.MAX_DEFER_MS;
+        const wanted = until?.getTime() ?? deps.now().getTime() + 60_000;
+        const iso = new Date(Math.min(wanted, cap)).toISOString();
         cooldown.set(s.host, iso);
         intake.setMeta(db, `topic_cooldown:${s.host}`, iso);
       }
