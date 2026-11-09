@@ -1120,6 +1120,73 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 要用户定：① 是否愿意标约 40 条；② 上线条件是否照建议；③ 是否同意不做自动归档。
 
+### 8.13 冲突看得清、能处理（CANDIDATE，2026-11-09，用户说"先写设计草案"；三轮 review 后收窄为最简版，未授权实现）
+
+**结论**：已判出的冲突要能被看清、被处理，不加新服务、新事件、新命令、新表。只改两处：冲突按"对"记录，不再互相覆盖；search、get、brief、status 把冲突和"待确认纠正"分开写清楚。处理冲突用现有命令。
+
+#### 8.13.1 现状（2026-11-09 只读，事件水位 4832）
+
+| 事实 | 依据 |
+|---|---|
+| 当前冲突 30 对、涉及 57 条，两边都有效；同一对按最新判定取（49 条冲突事件 ≠ 49 对，有同一对正反两个方向判过的） | 两轮 review 只读重放；`src/relate.ts:122-123,150-155` |
+| 这些条目被注入过 824 次（brief 587、search 209、get 17、recall 11），被引用 11 次 | `inject_log` |
+| **冲突只能存一个对象**：`conflicts_with` 是单值，后一次 `relate` 覆盖前一次 | `src/l2.ts:261,447` |
+| brief 把冲突写成"有待确认的纠正"：投影把冲突塞进 `pending_corrections`，`disputed` 只看这个列表 | `src/l2.ts:455-459`；`src/present.ts:11-13`；`src/brief.ts:31` |
+| 处理办法已经有：`ab archive` 归档错的一条，`ab archive --reactivate` 撤销；`ab correct` 加 `ab confirm` 让新条替代旧条；`ab get` 已提示"作废哪条就 ab archive 哪条" | `src/cli.ts:692-695,742-837` |
+
+#### 8.13.2 方案（两项）
+
+**① 冲突按对记录（`src/l2.ts`）**
+
+- `conflicts_with: string | null` 换成 `conflicts: string[]`：从 `relate` 和 `remember.relation` 派生，按排好序的 id 对归一，同一对取 seq 最新的判定；两端都能看到对方。
+- 冲突不再塞进 `pending_corrections`；那个列表只放真正未确认的 `supersedes`。
+- 读这个字段的地方一次改完（品味规范 D2）：`links.ts:43-45`、`view.ts:313,318`、`cli.ts:694`、`recall.ts:166`、`visibility.ts:22,27`。原来靠 `pending_corrections` 判"有争议"的地方，改成同时看 `conflicts.length`，行为不变（有冲突的未确认条目照旧不进常驻注入）。
+
+**② 写清楚（`present.ts`、`brief.ts`、`status.ts`）**
+
+- search、get、brief 都写"与 [x] 冲突"，和"有待确认的纠正 [y]"分开。
+- `ab status` 加一行：`冲突 N 对，最老 D 天，挂着期间被注入 M 次；处理：ab get 看双方，ab archive 错的一条`。年龄取这对最新冲突判定的时间，注入数取那之后的 `inject_log`（借鉴群友看板的"最老等待"）。
+
+**处理**：只留一条用 `ab archive`，替代用 `ab correct` 再 `ab confirm`，反悔用 `ab archive --reactivate` 或归档新纠正。归档是整条生效的，被归档那条跟别的记忆的冲突也一起消失，`ab get` 会列出它所有的冲突，处理前能看到。
+
+**代价**：两条在不同条件下都成立时没有专门出口。可以不处理（冲突继续标着），或用 `ab correct` 把条件写进新正文再确认。真的经常碰到再单独设计。
+
+#### 8.13.3 收窄检查
+
+| 新增或改动 | 防的真实问题 | 依据 |
+|---|---|---|
+| `conflicts[]` 替换 `conflicts_with` | 多方冲突被覆盖、悄悄丢失 | `e36330f9` 同时跟两条有关系；`src/l2.ts:447` |
+| 冲突和待确认纠正分开写 | brief 把冲突说成纠正，看的人不知道要处理 | `src/present.ts:11-13` |
+| `ab status` 一行 | 30 对冲突挂着、被注入 824 次，没人知道 | `inject_log` |
+
+能删（三轮 review 里出现过、这一版不做）：`rev`、`resolve` 事件、版本令牌、专用撤销、`ab review --conflicts`、建议表、`stale_current`、一次性补判 78 对、自动化、离线耗时基准。它们带出的并发、Purge、撤销、后台优先级问题随之不存在。
+
+#### 8.13.4 不做
+
+| 不做 | 为什么 |
+|---|---|
+| 后台整理工序、建议队列 | 冲突已经在写入时判出，缺的是看清和处理；§8.8 候选区没人处理的教训 |
+| "两条都成立"的正式裁决 | 需要新事件，引出双端撤销、Purge、后台优先级一串问题；没有证据说现在需要 |
+| 过期检查、旧对补判、摘要、全库扫描、自动合并 | 收益未证实，误伤风险高 |
+
+#### 8.13.5 验收
+
+1. A/B 冲突后又判出 A/C 冲突：`ab get A` 同时列出 B、C；B、C 各自也能看到 A。
+2. 同一对后来判成 `refines`：这对不再显示冲突，A 跟别的条目的冲突不受影响。
+3. brief 里普通冲突写"与 [x] 冲突"，只有真正未确认的 `supersedes` 才写"待确认的纠正"。
+4. `ab archive B` 后默认读取不再返回 B，`ab status` 冲突对数减少；`ab archive --reactivate B` 后 B 和 A/B 冲突都恢复。
+5. 有冲突的未确认条目照旧不进常驻偏好注入（改字段前后行为一致）。
+6. 正式库副本上改前改后各跑一次 `ab status`、`ab get` 抽 5 条、`ab brief`，冲突数和显示符合 1–5，耗时没有肉眼可见的变化。
+
+#### 8.13.6 顺带发现，另外处理
+
+| 发现 | 依据 |
+|---|---|
+| `fold` 把不认识的事件当成"恢复有效" | `src/l2.ts` 末尾 `target.state = r.kind === "archive" ? "archived" : "active"` |
+| `relatePass` 续租不看返回值，租约被接管后旧进程仍会提交 | `src/work.ts:1133` |
+| 8 个抽取窗口卡在延后状态，最早从 10-14 起，重试时间早已过去但一直没重试 | `capture_windows` 只读查询 |
+| `ab search` 不记耗时和有没有结果；`recall_runs` 的 83ms 测的是提醒钩子 | `src/cli.ts:220-242` |
+
 ## 9. 生命周期、冲突与纠错
 
 ### 9.1 两条正交状态轴
@@ -2706,6 +2773,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-09 新增 §8.13（CANDIDATE，用户同日说"先写设计草案"，未授权实现）。初稿是后台整理工序加三类建议；astra xhigh 两轮只读 review（pm `docs/agentbrain/2026-11-09-memory-tidy/tasks/01`、`02`）后一度加成 `rev`、`resolve` 事件、版本令牌的裁决协议。用户指出偏离初衷，kimi k3.1 从最初问题重看（`tasks/03`）后收窄为最简版：冲突按对记录、和待确认纠正分开写清楚、`ab status` 报数，处理用现有 `ab archive` / `ab correct`，不加新事件、命令、表。当前冲突 30 对（不是 32，事件数 ≠ 对数）。
 - 2026-11-05 新增 §8.12（CANDIDATE，用户同日说"先写设计"，未授权实现）：抽取提示词还假设后面有审稿人，也没用《好记忆的标准》，改成引用同一份标准，逐条对比和新标注验证后才上线。按 astra xhigh 只读 review（pm `docs/agentbrain/2026-11-05-capture-precision/tasks/01-review-design.md`）撤掉初稿的硬拦截和子代理上限 2（会误删 42e571e8、c40af79e、c66d4f13 这类条目），门槛改成逐条对比，存量改成固定清单。不改 §10.3，不做自动归档。
 - 2026-11-03 删除 `CONTEXT.md`（用户同日决定）：它来自 09-07 一次 grill，之后没人维护，`AGENTS.md`、代码和验证技能都不引用。逐条对照 47 个术语：44 个设计正文已有（含中文别名，如证据层 L1），1 个补进 §7.2（Host Adapter，按现状写明四宿主接法，并改掉"什么都不装进宿主"），2 个丢弃（Procedure View、Workflow Reference，用户 2026-10-15 决定不做 Procedure，§20 把 Workflow 引擎列为 out of scope）。同时按代码改掉两处过期说法（宿主是四个、Pi 装扩展）和一处混淆（`confirmed_by: corroboration` 与 Corroboration Count 不是一回事）。原指针改为正文定义（§6.3.2、§9.5、§10.2.2），新增 §5.6 收容易混的词。
 - 2026-11-03 新增 §7.6（用户同日授权实现）：Codex 会把会话文件压成 `.jsonl.zst`，已登记的 321 个 Codex 会话里 153 个路径失效，L1 里 227 条来源展开不了。方案是读时解析，不迁移数据；文件层只留 `src/transcript-file.ts` 一个入口。按只读 review 修订：准入改成每次读都查；解压前单独查完整性，因为 Node 对截断帧不报错；读开头只读文件前 256 KB。
