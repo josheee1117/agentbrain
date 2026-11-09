@@ -951,7 +951,7 @@ async function processTopicSession(
     const prev = intake.getWindow(db, c.id);
     if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && !intake.deferDue(prev, deps.now())) break;
     const cool = cooldown.get(s.host) ?? intake.meta(db, `topic_cooldown:${s.host}`);
-    if (cool && !intake.cooldownDue(db, s.host, cool, deps.now())) {
+    if (cool && !intake.cooldownDue(cool, deps.now())) {
       report.windows.deferred++;
       break;
     }

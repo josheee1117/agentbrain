@@ -125,14 +125,12 @@ export function deferDue(w: Pick<WindowRow, "next_at" | "error_code" | "updated_
 }
 
 /**
- * 宿主冷却（话题模式 429）到期了吗。截止时间和窗口延后共用一个封顶：旧版本把 429 报的“八天后重置”原样存进 work_meta，
- * 这里按该宿主最近一条 429 延后记录的时间封顶算，不改库。没有 429 窗口记录的冷却已无从证明来源，按到期处理。
+ * 宿主冷却（话题模式 429）到期了吗。新版本写入时已按 MAX_DEFER_MS 封顶，比这更远的截止时间只可能来自旧版本未封顶的写入，
+ * 无须查库核对来源，按到期处理；不必为此改库。
  */
-export function cooldownDue(db: DatabaseSync, host: Host, until: string, now: Date): boolean {
+export function cooldownDue(until: string, now: Date): boolean {
   if (until <= now.toISOString()) return true;
-  const row = db.prepare("SELECT MAX(updated_at) AS t FROM capture_windows WHERE host=? AND error_code='http_429'").get(host) as { t: string | null } | undefined;
-  const at = row?.t ? Date.parse(row.t) : NaN;
-  return !Number.isFinite(at) || now.getTime() - at >= MAX_DEFER_MS;
+  return Date.parse(until) > now.getTime() + MAX_DEFER_MS;
 }
 
 export function deferredWindows(db: DatabaseSync, host: Host, sessionId: string): WindowRow[] {
