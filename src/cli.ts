@@ -687,11 +687,14 @@ function cmdGet(argv: string[]): void {
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
-      // 并入、冲突、替代的对方在下面"关联"里列（带状态和正文第一行）；这里只留撤销提示
+      // 并入、替代的对方在下面"关联"里列；冲突和待确认纠正在这里带操作提示。
       p.merged_into ? `已判定为重复并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
+      ...p.conflicts.map((id) => {
+        const c = store.project().props.get(id)!;
+        return `与 [${short(id)}] 冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;
+      }),
       ...p.pending_corrections.map((id) => {
         const c = store.project().props.get(id)!;
-        if (c.conflicts_with === p.id && !c.supersedes) return `与 [${short(id)}] 说法冲突（关系判定）: ${c.text}（两条不能同时成立；作废哪条就 ab archive 哪条）`;
         return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
       }),
       `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
@@ -701,16 +704,16 @@ function cmdGet(argv: string[]): void {
       linesOut.push("模型产出记录:", ...p.model_outputs.map((o) =>
         `  [${short(o.event_id)}] ${labels[o.kind]}: ${o.model ?? "未记录"}，提示词版本 ${o.prompt_version ?? "未记录"}`));
     }
-    // 双向关联（§11.6 (ii)）：每个一行，带对方状态和正文第一行；上面已带操作提示列出的待确认纠正不重复
+    // 双向关联（§11.6 (ii)）：每个一行，带对方状态和正文第一行；上面已列出的冲突和待确认纠正不重复。
     const all = store.project().props;
-    const rel = (linkIndex(all).get(p.id) ?? []).filter((l) => !p.pending_corrections.includes(l.id));
+    const rel = (linkIndex(all).get(p.id) ?? []).filter((l) => !p.pending_corrections.includes(l.id) && !(l.type === "conflicts" && p.conflicts.includes(l.id)));
     if (rel.length) {
       linesOut.push("关联:", ...rel.map((l) => {
         const n = all.get(l.id)!;
         return `  ${LINK_LABEL[l.type]} [${short(n.id)}]${linkState(n)} ${SCOPE_LABEL(n, names)} ${KIND_LABEL[n.kind]}${marks(n)}: ${firstLine(n.text, SEARCH_BRIEF_CHARS)}`;
       }));
     }
-    const shown = new Set<string | undefined>([p.supersedes, p.superseded_by, ...p.pending_corrections, ...rel.map((l) => l.id)]);
+    const shown = new Set<string | undefined>([p.supersedes, p.superseded_by, ...p.conflicts, ...p.pending_corrections, ...rel.map((l) => l.id)]);
     const near = store.neighbors(p.id);
     if (near === null) linesOut.push("相关: 近邻不可用，这条还没有向量");
     else {

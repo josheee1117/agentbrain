@@ -19,6 +19,7 @@ case "${1:-}" in
   run)
     step unit npm test
     step typecheck npm run typecheck
+    step cli-conflicts node --test src/conflicts.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
     S=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-XXXXXX")")

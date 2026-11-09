@@ -6,6 +6,7 @@
 | brief | [brief.md](brief.md) | 开工背景速览、全局规则与当前项目坑注入（含子代理 --worker 模式） |
 | scene | [scene.md](scene.md) | 规则场景标签（设计/开发/review）、brief 按场景加载与 search --scene 列举 |
 | remember / search / get / correct | [memory.md](memory.md) | 显式记忆记录、纠正替代、混合检索与详情关联查看、模型产出记录（模型与提示词版本） |
+| 冲突显示与处理 | [conflicts.md](conflicts.md) | 冲突按对双向显示，与待确认纠正分开；status 报对数、最老天数和期间注入次数；归档与恢复闭环 |
 | 详情正文与原话 | [detail.md](detail.md) | 决定/事实/坑的详情正文、否掉的方案、`ab get` 原话显示、含 Pensieve 重导补正文 |
 | 跨项目段 | [cross-project.md](cross-project.md) | 项目目录里搜索时，末尾带出其他项目里相近的条目（阈值 0.65、最多 3 条） |
 | 归属显示 | [attribution.md](attribution.md) | 抽取判到别的项目时 `ab get` 写清会话在哪；归属没确认的条目标「[归属未定]」 |

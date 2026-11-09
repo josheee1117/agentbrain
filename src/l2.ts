@@ -233,7 +233,7 @@ export interface Proposition {
   state: PropState;
   supersedes?: string;
   superseded_by?: string;
-  /** 指向本条、仍 active 但未确认的纠正。非空即未解决冲突，读路径必须标出（§9.2）。 */
+  /** 指向本条、仍 active 且未获用户确认的纠正，读路径必须标出（§9.2）。 */
   pending_corrections: string[];
   origin: Origin;
   basis?: Basis;
@@ -257,8 +257,8 @@ export interface Proposition {
   related: { outcome: RelateBody["outcome"]; target: string | null } | null;
   /** 判定为重复、已并入的条目。 */
   merged_into: string | null;
-  /** 关系判定判为与之冲突的条目；只标记，从不替代对方。 */
-  conflicts_with: string | null;
+  /** 当前与本条冲突的有效条目；两端都记录，只标记、不替代。 */
+  conflicts: string[];
   import_ref: ImportRef | null;
   /** 详情正文；旧数据为 null（§8.11.2）。 */
   body: string | null;
@@ -275,8 +275,14 @@ export interface Proposition {
   value: RememberBody["value"] | null;
 }
 
+export interface ConflictPair {
+  ids: [string, string];
+  ts: string;
+}
+
 export interface Projection {
   props: Map<string, Proposition>;
+  conflict_pairs: ConflictPair[];
   /** 指向不存在/已清除目标的 meta-lifecycle 事件，fail-closed 跳过并计数（§14.2） */
   orphans: number;
   /** 被忽略的详情字段数：条目已有 body 或 alternatives 时 detail 不覆盖（§8.11.2，与 orphans 同类诊断）。 */
@@ -300,6 +306,13 @@ export interface EventRow {
 /** 确定性投影：同一事件序列必然产生同一结果；不调用任何外部状态。 */
 export function fold(rows: EventRow[]): Projection {
   const props = new Map<string, Proposition>();
+  const pairs = new Map<string, ConflictPair & { seq: number; outcome: RelationType | RelateBody["outcome"] }>();
+  const judgePair = (a: string, b: string | null, outcome: RelationType | RelateBody["outcome"], r: EventRow) => {
+    if (!b || a === b) return;
+    const ids: [string, string] = a < b ? [a, b] : [b, a];
+    const key = JSON.stringify(ids);
+    if ((pairs.get(key)?.seq ?? -1) < r.seq) pairs.set(key, { ids, seq: r.seq, ts: r.ts, outcome });
+  };
   let orphans = 0;
   let detail_ignored = 0;
   let ephemeral = 0;
@@ -348,7 +361,7 @@ export function fold(rows: EventRow[]): Projection {
         said_at: typeof b.said_at === "string" ? b.said_at : null,
         related: null,
         merged_into: null,
-        conflicts_with: null,
+        conflicts: [],
         import_ref: b.import_ref ?? null,
         body: typeof b.body === "string" ? b.body : null,
         alternatives: Array.isArray(b.alternatives) ? b.alternatives : [],
@@ -358,6 +371,7 @@ export function fold(rows: EventRow[]): Projection {
         demoted: null,
         value: b.value ?? null,
       });
+      if (b.relation) judgePair(r.id, b.relation.target, b.relation.type, r);
       continue;
     }
     const target = r.target_id ? props.get(r.target_id) : undefined;
@@ -443,19 +457,14 @@ export function fold(rows: EventRow[]): Projection {
       target.related = { outcome: b.outcome, target: b.target };
       // 第 2 层判出了确定关系才解除"关系未判定"；unsure 照旧，之后只有用户能解除
       if (b.outcome !== "unsure") target.unreconciled = false;
-      // 冲突只标出来，不写 supersedes：本条日后被印证或代码核验转正也不会自动盖掉对方（§21 2026-10-13 修正）
-      target.conflicts_with = b.outcome === "conflicts" ? b.target : null;
+      // 冲突只标记，不写 supersedes；另一端的判定也只更新同一对。
+      judgePair(target.id, b.target, b.outcome, r);
       continue;
     }
     target.state = r.kind === "archive" ? "archived" : "active";
     const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
     target.expired = ab?.reason === "expired";
     target.merged_into = ab?.reason === "duplicate" ? (ab.into ?? null) : null;
-  }
-  for (const p of props.values()) {
-    if (!p.conflicts_with || p.state !== "active") continue;
-    const target = props.get(p.conflicts_with);
-    if (target && target.state === "active" && !target.pending_corrections.includes(p.id)) target.pending_corrections.push(p.id);
   }
   // 未确认的纠正不改旧条目：agent 的推断不能盖掉已确认的结论。
   // 纠正只有用户确认才生效（§8.4"待确认的纠正不走自动转正"）；被印证或代码核验转正的纠正仍只是待确认。
@@ -473,7 +482,16 @@ export function fold(rows: EventRow[]): Projection {
     target.state = "superseded";
     target.superseded_by = p.id;
   }
-  return { props, orphans, detail_ignored, ephemeral, purged };
+  const conflict_pairs: ConflictPair[] = [];
+  for (const pair of pairs.values()) {
+    if (pair.outcome !== "conflicts") continue;
+    const a = props.get(pair.ids[0]), b = props.get(pair.ids[1]);
+    if (a?.state !== "active" || b?.state !== "active") continue;
+    a.conflicts.push(b.id);
+    b.conflicts.push(a.id);
+    conflict_pairs.push({ ids: pair.ids, ts: pair.ts });
+  }
+  return { props, conflict_pairs, orphans, detail_ignored, ephemeral, purged };
 }
 
 // ---------- 写入 L1 前的统一检查（§8.11.2：种类、长度、密钥只在入口查一次） ----------

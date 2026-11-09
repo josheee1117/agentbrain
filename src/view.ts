@@ -310,12 +310,12 @@ export function buildViewData(store: Store, now: Date = new Date()): ViewData {
     };
     add("merged_into", p.merged_into);
     if (p.related?.outcome === "refines") add("refines", p.related.target);
-    add("conflicts", p.conflicts_with);
+    for (const id of p.conflicts) add("conflicts", id);
     // 替代只有"有效且用户确认"的纠正才生效（l2.ts 投影）；没生效的另标，免得看起来像已替代
     if (p.supersedes && props.get(p.supersedes)?.superseded_by === p.id) add("supersedes", p.supersedes);
     else add("supersedes_pending", p.supersedes);
     add("superseded_by", p.superseded_by);
-    for (const c of p.pending_corrections) add(props.get(c)?.conflicts_with === p.id ? "conflicts" : "pending_correction", c);
+    for (const c of p.pending_corrections) add("pending_correction", c);
     for (const l of reverse.get(p.id) ?? []) add(l.type, l.id);
     const own = vecs.get(p.id);
     const neighbors = own

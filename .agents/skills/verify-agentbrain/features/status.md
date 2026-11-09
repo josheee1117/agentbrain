@@ -2,6 +2,7 @@
 
 ## Sub-features
 - 数据库摘要与 active 记忆计数 (`ab status`)
+- 当前冲突对数、最老等待天数和期间注入行数，零冲突写 "冲突 0 对"。口径与副本验收见 [conflicts.md](conflicts.md)。
 - 宿主与清单接线自检、向量与抽取模型连通诊断 (`ab doctor`)
 - 单行 JSON 状态输出供宿主状态栏使用 (`ab status --line`)
 

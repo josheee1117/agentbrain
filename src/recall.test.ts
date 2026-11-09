@@ -219,10 +219,10 @@ test("向量可用时，只靠字面沾边、向量不相关的已确认条目�
 test("agent 推断的未确认坑现在可进；有冲突、待确认纠正、关系未判定、与代码不符、本身是纠正的不进", async () => {
   const { recallable } = await import("./visibility.ts");
   const perTurnUnconfirmed = (p: any) => !p.confirmed && recallable(p, false);
-  const ok = { state: "active", confirmed: false, kind: "pitfall", basis: "agent_inferred", evidence: [{ role: "assistant" }], unreconciled: false, stale: null, conflicts_with: null, supersedes: undefined, pending_corrections: [] } as any;
+  const ok = { state: "active", confirmed: false, kind: "pitfall", basis: "agent_inferred", evidence: [{ role: "assistant" }], unreconciled: false, stale: null, conflicts: [], supersedes: undefined, pending_corrections: [] } as any;
   assert.equal(perTurnUnconfirmed(ok), true);
   assert.equal(perTurnUnconfirmed({ ...ok, kind: "decision" }), true);
-  for (const bad of [{ confirmed: true }, { kind: "note" }, { conflicts_with: "x" }, { pending_corrections: ["x"] }, { unreconciled: true }, { stale: { at: "t" } }, { supersedes: "x" }])
+  for (const bad of [{ confirmed: true }, { kind: "note" }, { conflicts: ["x"] }, { pending_corrections: ["x"] }, { unreconciled: true }, { stale: { at: "t" } }, { supersedes: "x" }])
     assert.equal(perTurnUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
   const s = new Store(":memory:", ":memory:");
   const pid = s.ensureProject("alpha");

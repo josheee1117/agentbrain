@@ -459,7 +459,7 @@ function distinctUserSessions(p: Proposition, extra: { host: Host | null; sessio
 }
 
 function corroborationConfirm(target: Proposition, extra: Pick<EvidenceBody, "source" | "basis" | "evidence">): ConfirmBody | null {
-  if (!CORROBORATE_KINDS.has(target.kind) || target.project_id === null || target.confirmed || target.demoted || target.unreconciled || target.conflicts_with || target.pending_corrections.length || target.supersedes) return null;
+  if (!CORROBORATE_KINDS.has(target.kind) || target.project_id === null || target.confirmed || target.demoted || target.unreconciled || target.conflicts.length || target.pending_corrections.length || target.supersedes) return null;
   const sessions = distinctUserSessions(target, {
     host: extra.source.host,
     session_id: extra.source.session_id,

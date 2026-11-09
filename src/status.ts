@@ -58,6 +58,24 @@ function sedimentLines(store: Store, cfg: StatusContext["chatConfig"], now: Date
   ];
 }
 
+function conflictLine(store: Store, now: Date): string {
+  const pairs = store.project().conflict_pairs;
+  if (!pairs.length) return "冲突 0 对";
+  const since = new Map<string, string>();
+  let oldest = 0;
+  for (const pair of pairs) {
+    oldest = Math.max(oldest, Math.floor((now.getTime() - Date.parse(pair.ts)) / 86_400_000));
+    for (const id of pair.ids) {
+      if (!since.has(id) || pair.ts < since.get(id)!) since.set(id, pair.ts);
+    }
+  }
+  // 一条记忆可能卷入多对冲突；同一行注入记录只计一次。
+  const count = store.workDb.prepare("SELECT COUNT(*) AS n FROM inject_log WHERE prop_id=? AND ts>?");
+  let injected = 0;
+  for (const [id, ts] of since) injected += Number(count.get(id, ts)!.n);
+  return `冲突 ${pairs.length} 对，最老 ${oldest} 天，挂着期间被注入 ${injected} 次；处理：ab get 看双方，ab archive 错的一条`;
+}
+
 function containsBrief(file: string): boolean {
   try {
     return readFileSync(file, "utf8").includes("ab brief");
@@ -117,6 +135,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         `目录: ${where}`,
         `宿主: ${!found.ok ? `宿主检测失败: ${found.error}` : found.detection ? `${found.detection.host}  会话 ${found.detection.session_id ?? "（未取得）"}  transcript ${found.detection.transcript ? "已找到" : "未找到"}` : "未检测到宿主"}`,
         `active: ${scopeLines.join("、") || "无"}`,
+        conflictLine(store, ctx.now),
         vectorLine,
         `doctor: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,

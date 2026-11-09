@@ -707,10 +707,10 @@ test("§8.11.4 跨项目段：查询向量算不出时不出候选；其他项�
 test("子代理召回的未确认门槛：只放有用户原话的未确认规则/决定，冲突、纠正、关系未判定、与代码不符、推断的坑都不放", async () => {
   const { recallable } = await import("./visibility.ts");
   const recallableUnconfirmed = (p: any) => !p.confirmed && recallable(p, true);
-  const ok = { state: "active", confirmed: false, kind: "rule", basis: "user_directive", evidence: [{ role: "user" }], unreconciled: false, stale: null, conflicts_with: null, supersedes: undefined, pending_corrections: [] } as any;
+  const ok = { state: "active", confirmed: false, kind: "rule", basis: "user_directive", evidence: [{ role: "user" }], unreconciled: false, stale: null, conflicts: [], supersedes: undefined, pending_corrections: [] } as any;
   assert.equal(recallableUnconfirmed(ok), true);
   assert.equal(recallableUnconfirmed({ ...ok, kind: "decision", basis: "user_confirmed" }), true);
-  for (const bad of [{ confirmed: true }, { kind: "pitfall" }, { basis: "agent_inference" }, { evidence: [{ role: "assistant" }] }, { unreconciled: true }, { stale: {} }, { conflicts_with: "x" }, { supersedes: "x" }, { pending_corrections: ["x"] }])
+  for (const bad of [{ confirmed: true }, { kind: "pitfall" }, { basis: "agent_inference" }, { evidence: [{ role: "assistant" }] }, { unreconciled: true }, { stale: {} }, { conflicts: ["x"] }, { supersedes: "x" }, { pending_corrections: ["x"] }])
     assert.equal(recallableUnconfirmed({ ...ok, ...bad }), false, JSON.stringify(bad));
 });
 

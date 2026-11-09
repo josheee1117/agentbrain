@@ -9,7 +9,10 @@ export function short(id: string): string {
 }
 
 export function disputed(p: Proposition): string {
-  return p.pending_corrections.length ? `（有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}）` : "";
+  const conflicts = p.conflicts.map((id) => `与 [${short(id)}] 冲突`);
+  const corrections = p.pending_corrections.length ? [`有待确认的纠正 ${p.pending_corrections.map((id) => `[${short(id)}]`).join("")}`] : [];
+  const marks = [...conflicts, ...corrections];
+  return marks.length ? `（${marks.join("；")}）` : "";
 }
 
 export function active(store: Store): Proposition[] {

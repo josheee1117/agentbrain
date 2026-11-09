@@ -19,12 +19,12 @@ export function searchable(p: Proposition): boolean {
 
 /** 有冲突、有待确认纠正、关系未判定、与代码不符，或本身是纠正：这类未确认条目有争议，不主动注入。 */
 function disputedUnconfirmed(p: Proposition): boolean {
-  return p.unreconciled || !!p.stale || !!p.conflicts_with || !!p.supersedes || p.pending_corrections.length > 0;
+  return p.unreconciled || !!p.stale || p.conflicts.length > 0 || !!p.supersedes || p.pending_corrections.length > 0;
 }
 
 /** 能占保底位的纠正：已确认、替代过旧条目，且自己没有争议。 */
 export function isConfirmedCorrection(p: Proposition): boolean {
-  return p.confirmed && !!p.supersedes && !p.pending_corrections.length && !p.conflicts_with;
+  return p.confirmed && !!p.supersedes && !p.pending_corrections.length && !p.conflicts.length;
 }
 
 /**

@@ -4,6 +4,7 @@
 - 主会话开工记忆速览，展示全局规则与当前项目的坑
 - 子代理模式 (`ab brief --worker`)，仅输出标记为 for_workers 的全局规则，排除未确认规则与项目坑，提示不写记忆
 - 场景加载 (`ab brief --scene design,code,review`)：带场景规则不进通用段，单独成段并单独预算；无场景时只多一行按范围计数的索引（§11.10）
+- 冲突写 "与 [id] 冲突"，真正未确认的纠正写 "有待确认的纠正 [id]"。验收见 [conflicts.md](conflicts.md)。
 - 智能预算控制，当条目总长超出字符上限时跳过整条条目，并在输出末尾提示使用 `ab search`
 
 ## How to get to it (user POV)

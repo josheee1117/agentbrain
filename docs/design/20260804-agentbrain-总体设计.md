@@ -1120,7 +1120,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 
 要用户定：① 是否愿意标约 40 条；② 上线条件是否照建议；③ 是否同意不做自动归档。
 
-### 8.13 冲突看得清、能处理（CANDIDATE，2026-11-09，用户说"先写设计草案"；三轮 review 后收窄为最简版，未授权实现）
+### 8.13 冲突看得清、能处理（2026-11-09，用户同日授权最简版实现）
 
 **结论**：已判出的冲突要能被看清、被处理，不加新服务、新事件、新命令、新表。只改两处：冲突按"对"记录，不再互相覆盖；search、get、brief、status 把冲突和"待确认纠正"分开写清楚。处理冲突用现有命令。
 
@@ -2773,7 +2773,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
-- 2026-11-09 新增 §8.13（CANDIDATE，用户同日说"先写设计草案"，未授权实现）。初稿是后台整理工序加三类建议；astra xhigh 两轮只读 review（pm `docs/agentbrain/2026-11-09-memory-tidy/tasks/01`、`02`）后一度加成 `rev`、`resolve` 事件、版本令牌的裁决协议。用户指出偏离初衷，kimi k3.1 从最初问题重看（`tasks/03`）后收窄为最简版：冲突按对记录、和待确认纠正分开写清楚、`ab status` 报数，处理用现有 `ab archive` / `ab correct`，不加新事件、命令、表。当前冲突 30 对（不是 32，事件数 ≠ 对数）。
+- 2026-11-09 实现 §8.13 最简版（用户同日授权）。用无方向 id 对的最新 seq 判定派生 `conflicts[]`，在替代投影完成后只保留两端 active 的冲突。投影同时保留当前对的判定时间供 status 统计，不新增表。期间注入次数按 `inject_log` 实际行计，同一条卷入多对时不重复计数。读取方同批迁移，含 `work.ts` 的印证资格检查。验证见 `src/conflicts.test.ts` 和验证技能 `features/conflicts.md`。正式库副本事件水位 4848，独立重放算出 32 对。对照水位 4832，只算 relate 为 30 对，加入 remember.relation 后为 31 对；水位 4848 两种口径分别为 31、32 对。差额来自初次 remember 判定的一对，以及之后新增的一对。
+- 2026-11-09 新增 §8.13 草案，用户同日随后授权最简版实现。初稿是后台整理工序加三类建议；astra xhigh 两轮只读 review（pm `docs/agentbrain/2026-11-09-memory-tidy/tasks/01`、`02`）后一度加成 `rev`、`resolve` 事件、版本令牌的裁决协议。用户指出偏离初衷，kimi k3.1 从最初问题重看（`tasks/03`）后收窄为最简版：冲突按对记录、和待确认纠正分开写清楚、`ab status` 报数，处理用现有 `ab archive` / `ab correct`，不加新事件、命令、表。当前冲突 30 对（不是 32，事件数 ≠ 对数）。
 - 2026-11-05 新增 §8.12（CANDIDATE，用户同日说"先写设计"，未授权实现）：抽取提示词还假设后面有审稿人，也没用《好记忆的标准》，改成引用同一份标准，逐条对比和新标注验证后才上线。按 astra xhigh 只读 review（pm `docs/agentbrain/2026-11-05-capture-precision/tasks/01-review-design.md`）撤掉初稿的硬拦截和子代理上限 2（会误删 42e571e8、c40af79e、c66d4f13 这类条目），门槛改成逐条对比，存量改成固定清单。不改 §10.3，不做自动归档。
 - 2026-11-03 删除 `CONTEXT.md`（用户同日决定）：它来自 09-07 一次 grill，之后没人维护，`AGENTS.md`、代码和验证技能都不引用。逐条对照 47 个术语：44 个设计正文已有（含中文别名，如证据层 L1），1 个补进 §7.2（Host Adapter，按现状写明四宿主接法，并改掉"什么都不装进宿主"），2 个丢弃（Procedure View、Workflow Reference，用户 2026-10-15 决定不做 Procedure，§20 把 Workflow 引擎列为 out of scope）。同时按代码改掉两处过期说法（宿主是四个、Pi 装扩展）和一处混淆（`confirmed_by: corroboration` 与 Corroboration Count 不是一回事）。原指针改为正文定义（§6.3.2、§9.5、§10.2.2），新增 §5.6 收容易混的词。
 - 2026-11-03 新增 §7.6（用户同日授权实现）：Codex 会把会话文件压成 `.jsonl.zst`，已登记的 321 个 Codex 会话里 153 个路径失效，L1 里 227 条来源展开不了。方案是读时解析，不迁移数据；文件层只留 `src/transcript-file.ts` 一个入口。按只读 review 修订：准入改成每次读都查；解压前单独查完整性，因为 Node 对截断帧不报错；读开头只读文件前 256 KB。

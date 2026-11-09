@@ -715,7 +715,7 @@ test("冲突两边都显示；被确认的纠正替代后，新条和旧条（�
   const s = ab(["search", "队列"], alpha, own);
   assert.equal(s.code, 0, s.err);
   assert.match(s.out, new RegExp(`与 \\[${id8(a)}\\] 冲突`));
-  assert.match(s.out, new RegExp(`与 \\[${id8(b)}\\] 冲突`), "a 自己没有 conflicts_with，也要看到 b");
+  assert.match(s.out, new RegExp(`与 \\[${id8(b)}\\] 冲突`), "两端都要看到对方");
   assert.match(s.out, new RegExp(`纠正了 \\[${id8(old)}\\]（已被替代）`), s.out);
   const g = ab(["get", id8(old)], alpha, own);
   assert.equal(g.code, 0, g.err);

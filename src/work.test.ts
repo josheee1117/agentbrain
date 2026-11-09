@@ -744,7 +744,7 @@ test("关系判定：同一会话里的重复只算一个会话，不转正", as
   assert.equal(e.store.project().props.get(a)!.confirmed, false);
 });
 
-test("关系判定：补充 / 无关解除关系未判定；拿不准照旧；冲突走待确认纠正，已确认条目不被改；校验不过的不写", async () => {
+test("关系判定：补充 / 无关解除关系未判定；拿不准照旧；冲突只标记，已确认条目不被改；校验不过的不写", async () => {
   const e = env();
   const ok = e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令直接写 ab，靠 PATH 找到它", confirmed: true, source: src0(null) });
   const c1 = auto(e, "s1", "hook 命令直接写 ab，不靠 PATH 找到它", "q1", { unreconciled: true });
@@ -764,8 +764,8 @@ test("关系判定：补充 / 无关解除关系未判定；拿不准照旧；�
   const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
   assert.deepEqual([r.relate.conflicts, r.relate.unrelated, r.relate.unsure, r.relate.errors], [1, 1, 1, 1]);
   const P = e.store.project().props;
-  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.confirmed, P.get(ok)!.pending_corrections], ["active", true, [c1]]);
-  assert.deepEqual([P.get(c1)!.unreconciled, P.get(c1)!.conflicts_with, P.get(c1)!.supersedes, P.get(c1)!.confirmed], [false, ok, undefined, false]);
+  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.confirmed, P.get(ok)!.conflicts, P.get(ok)!.pending_corrections], ["active", true, [c1], []]);
+  assert.deepEqual([P.get(c1)!.unreconciled, P.get(c1)!.conflicts, P.get(c1)!.supersedes, P.get(c1)!.confirmed], [false, [ok], undefined, false]);
   assert.equal(P.get(c2)!.unreconciled, false);
   assert.deepEqual([P.get(c3)!.unreconciled, P.get(c3)!.related?.outcome], [true, "unsure"]);
   assert.deepEqual([P.get(c4)!.unreconciled, P.get(c4)!.related], [true, null], "校验不过：不写 L1，下次再判");
@@ -779,8 +779,8 @@ test("关系判定的冲突只标记：本条之后被转正（如被并入后�
   await runWork(e.deps(chat), { sweep: false, dryRun: false });
   e.store.lifecycle("confirm", c1, null, { by: "code" });
   const P = e.store.project().props;
-  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.pending_corrections], ["active", [c1]], "对方仍有效，只标冲突");
-  assert.deepEqual([P.get(c1)!.conflicts_with, P.get(c1)!.supersedes], [ok, undefined]);
+  assert.deepEqual([P.get(ok)!.state, P.get(ok)!.conflicts, P.get(ok)!.pending_corrections], ["active", [c1], []], "对方仍有效，只标冲突");
+  assert.deepEqual([P.get(c1)!.conflicts, P.get(c1)!.supersedes], [[ok], undefined]);
 
 });
 

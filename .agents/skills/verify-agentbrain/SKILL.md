@@ -17,6 +17,7 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 `verify.sh run`: `npm test` (node --test src/*.test.ts), `npm run typecheck`, then drives the real CLI in isolated scratch environments:
 - `cli-status`: `status` and `status --line`, plus the 抽取模型 line from `status` under a scratch `extract.json` with and without a valid `extraBody`
 - `cli-memory`: `remember` (confirmed and unconfirmed), `confirm`, `search`, `get`, and `get` after seeding an `evidence` event that carries `model` / `prompt_version` (asserts the 模型产出记录 block, and that a hand-written entry has none)
+- `cli-conflicts`: `src/conflicts.test.ts` drives real `get`, `search`, `brief`, `status`, `archive`, and `archive --reactivate` against an isolated file-backed store. It asserts multi-pair visibility, reverse reassessment, and lifecycle counts. See [features/conflicts.md](features/conflicts.md).
 - `cli-lifecycle`: `correct` (old entry shows 已被替代), `archive` + `--reactivate`, `guidance` on/off with `recall --hook` showing and hiding the `<agentbrain-prefs>` block
 - `cli-brief`: `brief` before and after confirm, plus `brief --worker` (asserts unconfirmed text stays out until confirm)
 - `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)

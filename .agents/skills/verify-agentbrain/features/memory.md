@@ -6,6 +6,7 @@
 - 记忆纠正与替换 (`ab correct <id> --text ... --summary ... [--confirmed]`)
 - 混合检索 (`ab search <query> [--kind ...] [--project ...] [--archived]`)，前 8 条全文加关联关系，第 9 至 16 条单行显示
 - 详情与关联查看 (`ab get <id> [--expand]`)，展示双向关联、待确认纠正、向量近邻与原始讨论出处；模型产出的条目另有一段「模型产出记录」（§8.10）
+- 冲突按对双向列出，不混入待确认纠正。判定与归档恢复验收见 [conflicts.md](conflicts.md)。
 - 记忆生命周期操作 (`ab confirm <id>`, `ab archive <id> [--reactivate]`, `ab guidance <id>`)
 
 ## How to get to it (user POV)

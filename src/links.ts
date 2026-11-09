@@ -1,6 +1,6 @@
 /**
  * 显式关联（§11.6 (ii)，2026-10-19 用户批准）：从投影里算出一条记忆的双向关联，供 ab search / ab get 显示。
- * 只用已经存在的关系字段（refines、merged_into、supersedes、conflicts_with），两个方向都算，对方已归档、已替代也算。
+ * 只用已经存在的关系字段（refines、merged_into、supersedes、conflicts），两个方向都算，对方已归档、已替代也算。
  * 只读、不扩展：调用方只列 id 和一句话，不把对方变成结果行，也不沿关联继续走（与评测 08 的决定一致）。
  */
 import type { Proposition } from "./l2.ts";
@@ -40,10 +40,7 @@ export function linkIndex(props: ReadonlyMap<string, Proposition>): Map<string, 
       add(p.id, "supersedes", p.supersedes);
       add(p.supersedes, "corrected_by", p.id);
     }
-    if (p.conflicts_with) {
-      add(p.id, "conflicts", p.conflicts_with);
-      add(p.conflicts_with, "conflicts", p.id);
-    }
+    for (const id of p.conflicts) add(p.id, "conflicts", id);
   }
   for (const list of out.values()) list.sort((a, b) => ORDER.indexOf(a.type) - ORDER.indexOf(b.type));
   return out;

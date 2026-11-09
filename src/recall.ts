@@ -163,7 +163,7 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
         p.confirmed &&
         p.confirmed_by === "user" &&
         !p.pending_corrections.length &&
-        !p.conflicts_with &&
+        !p.conflicts.length &&
         (!worker || p.for_workers) &&
         !exclude.has(p.id),
     )
