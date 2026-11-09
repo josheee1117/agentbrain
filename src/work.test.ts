@@ -1395,3 +1395,169 @@ test("升级兼容：证据按旧键跳过时，confirm 也跳过，目标条目
   assert.deepEqual([stat("evidence"), stat("confirm")], [0, 0], "证据被旧键判成已处理时，confirm 不能单独写进去");
   assert.equal(e.store.project().props.get(target)!.confirmed, false, "目标条目不能靠没写进去的证据转正");
 });
+
+const codexTurn = (ordinal: number, role: "user" | "assistant", text: string) => ({
+  ordinal,
+  type: "response_item",
+  payload: { type: "message", role, content: [{ type: role === "user" ? "input_text" : "output_text", text }] },
+});
+
+function insertDeferred(e: Env, id: string, host: string, sid: string, to: string, nextAt: string): void {
+  e.store.workDb.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES(?,?,?,?,?,'deferred',1,?,?,NULL,?)",
+  ).run(id, host, sid, null, to, nextAt, "http_429", nextAt);
+}
+
+test("进度已越过的延后行退出为 superseded，同会话还没处理的窗口照常完成", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "旧要求"), asst("a1", "好"), user("u2", "以后 hook 命令都写 node 绝对路径")]);
+  e.register("s1", f, true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='a1' WHERE session_id='s1'").run();
+  const past = "2026-10-14T10:03:43.000Z";
+  insertDeferred(e, "passed-before", "claude", "s1", "u1", past);
+  insertDeferred(e, "passed-equal", "claude", "s1", "a1", past);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: true, dryRun: false });
+  const row = (id: string) => e.store.workDb.prepare("SELECT state, error_code, attempts FROM capture_windows WHERE window_id=?").get(id) as { state: string; error_code: string; attempts: number };
+  for (const id of ["passed-before", "passed-equal"]) {
+    const got = row(id);
+    assert.equal(got.state, "failed", id);
+    assert.equal(got.error_code, "superseded", id);
+    assert.equal(got.attempts, 1, id);
+  }
+  assert.equal(r.windows.done, 1, "进度之后的窗口照常完成");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u2");
+  const live = e.store.workDb.prepare("SELECT state FROM capture_windows WHERE to_anchor='u2'").get() as { state: string };
+  assert.equal(live.state, "done");
+});
+
+test("进度没越过、只是没到期的延后行保持不动，到期后照常重试", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "先记下这件事")]), true);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
+  const f = e.transcript("s1", [user("u1", "先记下这件事"), user("u2", "以后 hook 命令都写 node 绝对路径")]);
+  utimesSync(f, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+  const t0 = Date.parse("2026-11-09T00:00:00.000Z");
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流", 60_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  const before = e.store.workDb.prepare("SELECT state, attempts, next_at, error_code, to_anchor FROM capture_windows WHERE state='deferred'").get() as { state: string; attempts: number; next_at: string; error_code: string; to_anchor: string };
+  assert.equal(before.to_anchor, "u2");
+  assert.equal(before.state, "deferred");
+  const held = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t0 + 1_000) }), { sweep: false, dryRun: false });
+  assert.equal(held.windows.done, 0, "没到期不重试");
+  const mid = e.store.workDb.prepare("SELECT state, attempts, next_at, error_code FROM capture_windows WHERE to_anchor='u2'").get() as { state: string; attempts: number; next_at: string; error_code: string };
+  assert.equal(mid.state, before.state);
+  assert.equal(mid.attempts, before.attempts);
+  assert.equal(mid.next_at, before.next_at);
+  assert.equal(mid.error_code, before.error_code);
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u1");
+  const retried = await runWork(e.deps(fakeChat(() => json({ candidates: [] })), { now: () => new Date(t0 + 60_001) }), { sweep: false, dryRun: false });
+  assert.equal(retried.windows.done, 1, "到期后照常重试");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u2");
+  assert.equal((e.store.workDb.prepare("SELECT state FROM capture_windows WHERE to_anchor='u2'").get() as { state: string }).state, "done");
+});
+
+test("判不出锚点顺序时延后行不动", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]);
+  e.register("s1", f, true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='missing' WHERE session_id='s1'").run();
+  const past = "2026-10-14T10:03:43.000Z";
+  insertDeferred(e, "unknown-order", "claude", "s1", "also-missing", past);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
+  const row = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='unknown-order'").get() as { state: string; error_code: string };
+  assert.equal(row.state, "deferred");
+  assert.equal(row.error_code, "http_429");
+  assert.equal(intake.sessions(e.store.workDb)[0].error_code, "source_unavailable");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "missing");
+});
+
+test("Codex 换文件：旧进度找不到且新文件第一轮更大时，从第一轮切，窗口 from 仍是旧进度", () => {
+  const turns = [
+    { anchor: "642", role: "user" as const, text: "以后 hook 命令都写 node 绝对路径" },
+    { anchor: "643", role: "assistant" as const, text: "好" },
+  ];
+  const chunks = chunk("codex", "s", turns, "635", true) as any[];
+  assert.notEqual(chunks, "anchor_missing");
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].from, "635");
+  assert.deepEqual(chunks[0].turns.map((t: any) => t.anchor), ["642", "643"]);
+  assert.equal(chunk("codex", "s", turns, "700", true), "anchor_missing", "新文件第一轮不大于旧进度时仍算锚点缺失");
+  assert.equal(chunk("claude", "s", turns, "635", true), "anchor_missing", "别的宿主不按数字锚点接文件");
+});
+
+test("Codex 换文件后接着处理：窗口 from 是旧进度，进度向前推进，被越过的延后行退出", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-000000000001";
+  const f = e.codexTranscript(sid, [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+    codexTurn(643, "assistant", "好"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='635', error_code='source_unavailable' WHERE session_id=?").run(sid);
+  const past = "2026-11-04T00:00:00.000Z";
+  insertDeferred(e, "old-633", "codex", sid, "633", past);
+  const chat = fakeChat(() => json({ candidates: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const old = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='old-633'").get() as { state: string; error_code: string };
+  assert.equal(old.state, "failed", "两个数字锚点都不在新文件里时按大小判断");
+  assert.equal(old.error_code, "superseded");
+  const win = e.store.workDb.prepare("SELECT from_anchor, to_anchor, state, receipt FROM capture_windows WHERE window_id!='old-633'").get() as { from_anchor: string; to_anchor: string; state: string; receipt: string };
+  assert.equal(win.state, "done");
+  assert.equal(win.from_anchor, "635", "窗口 from 仍是旧进度，CAS 才能通过");
+  assert.equal(win.to_anchor, "643");
+  assert.equal(JSON.parse(win.receipt).turns, 2, "从新文件第一轮开始切，不重跑旧内容");
+  const session = intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0];
+  assert.equal(session.processed_anchor, "643");
+  assert.equal(session.error_code, null);
+  assert.equal(chat.calls.length, 1);
+});
+
+test("Codex 新文件第一轮不大于旧进度：仍记 source_unavailable，进度不动", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-000000000002";
+  const f = e.codexTranscript(sid, [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='700' WHERE session_id=?").run(sid);
+  const chat = fakeChat(() => json({ candidates: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const session = intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0];
+  assert.equal(session.error_code, "source_unavailable");
+  assert.equal(session.processed_anchor, "700");
+  assert.equal(chat.calls.length, 0);
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows").get()!.n, 0);
+});
+
+test("429 报的 Retry-After 远超实际（网关说 8 天后才重置）：延后有上限，额度恢复后一小时内就能重试", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH")]), true);
+  const t0 = Date.now();
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "模型接口限流 429: reset at 2026-11-06 23:59:59+08:00", 8 * 86_400_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  const w = e.store.workDb.prepare("SELECT state, next_at FROM capture_windows").get() as { state: string; next_at: string };
+  assert.equal(w.state, "deferred");
+  assert.ok(Date.parse(w.next_at) - t0 <= 3_600_000, `延后到 ${w.next_at}，超过一小时上限`);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t0 + 3_600_001) }), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u1");
+});
+
+test("历史行里 next_at 已被 429 推到几天后：按延后时间封顶算到期，hook 拉起的单会话运行也会重试", async () => {
+  const e = env();
+  e.register("old", e.transcript("old", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH")]), true);
+  const t0 = Date.now();
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流", 8 * 86_400_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  // 修之前写下的行：next_at 在 8 天后，updated_at 是延后那一刻
+  e.store.workDb.prepare("UPDATE capture_windows SET next_at=?").run(new Date(t0 + 8 * 86_400_000).toISOString());
+  e.register("new", e.transcript("new", [user("u2", "随便聊聊天气")]), true);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] })), { now: () => new Date(t0 + 3_600_000) }), { sweep: false, dryRun: false, session: { host: "claude", session_id: "new" } });
+  assert.equal(r.windows.done, 2, "新会话 + 旧会话里被推到几天后的延后窗口");
+  assert.equal(intake.sessions(e.store.workDb, { host: "claude", session_id: "old" })[0].processed_anchor, "u1");
+});

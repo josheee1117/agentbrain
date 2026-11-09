@@ -281,7 +281,7 @@ test("额度用完：窗口延后到恢复时间、不算失败尝试；同一�
   const w = e.store.workDb.prepare("SELECT state,attempts,error_code,next_at FROM capture_windows").all() as any[];
   assert.equal(w.length, 1);
   assert.deepEqual([w[0].state, w[0].attempts, w[0].error_code], ["deferred", 0, "http_429"]);
-  assert.equal(w[0].next_at, new Date(T0 + 120 * MIN + hours).toISOString());
+  assert.equal(w[0].next_at, new Date(T0 + 120 * MIN + 3_600_000).toISOString(), "429 的等待封顶 1 小时，不照搬 10 小时");
   // 恢复前再跑：不调模型
   await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
   assert.equal(chat.calls.length, 1);

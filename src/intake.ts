@@ -10,6 +10,8 @@ import type { WorkError } from "./llm.ts";
 export const LEASE_TTL_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 4;
 const BACKOFF_MIN = [1, 5, 30, 120];
+/** 一次延后最多等一小时：429 的 Retry-After 会报“额度 8 天后重置”这种远超实际的等待，等太久窗口就几天不重试。 */
+export const MAX_DEFER_MS = 60 * 60_000;
 const WINDOW_RETENTION_DAYS = 30;
 const SESSION_RETENTION_DAYS = 90;
 
@@ -108,9 +110,24 @@ export function dueDeferredSessions(db: DatabaseSync, now: Date, except: { host:
   return db
     .prepare(
       `SELECT DISTINCT s.* FROM capture_sessions s JOIN capture_windows w ON w.host=s.host AND w.session_id=s.session_id
-       WHERE w.state='deferred' AND (w.next_at IS NULL OR w.next_at <= ?) AND NOT (s.host=? AND s.session_id=?) ORDER BY s.last_touch`,
+       WHERE w.state='deferred' AND (w.next_at IS NULL OR w.next_at <= ? OR (w.error_code='http_429' AND w.updated_at <= ?)) AND NOT (s.host=? AND s.session_id=?) ORDER BY s.last_touch`,
     )
-    .all(now.toISOString(), except.host, except.session_id) as unknown as SessionRow[];
+    .all(now.toISOString(), new Date(now.getTime() - MAX_DEFER_MS).toISOString(), except.host, except.session_id) as unknown as SessionRow[];
+}
+
+/** 延后窗口现在到期了吗。429 的历史行里存过远超上限的 next_at，按延后时间封顶算，不用一次性改库。 */
+export function deferDue(w: Pick<WindowRow, "next_at" | "error_code" | "updated_at">, now: Date): boolean {
+  if (!w.next_at || Date.parse(w.next_at) <= now.getTime()) return true;
+  return w.error_code === "http_429" && now.getTime() - Date.parse(w.updated_at) >= MAX_DEFER_MS;
+}
+
+export function deferredWindows(db: DatabaseSync, host: Host, sessionId: string): WindowRow[] {
+  return db.prepare("SELECT * FROM capture_windows WHERE host=? AND session_id=? AND state='deferred'").all(host, sessionId) as unknown as WindowRow[];
+}
+
+/** 进度已越过的延后行不会再被切出来。标 failed 留痕，不删、不推进 checkpoint：finishWindow 的 CAS 要求进度仍停在窗口 from 上，这里对不上。 */
+export function failSuperseded(db: DatabaseSync, windowId: string, now: Date): void {
+  db.prepare("UPDATE capture_windows SET state='failed', next_at=NULL, error_code='superseded', updated_at=? WHERE window_id=? AND state='deferred'").run(now.toISOString(), windowId);
 }
 
 export function knownSession(db: DatabaseSync, host: Host, sessionId: string): boolean {
@@ -158,7 +175,9 @@ export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; fr
   const prev = getWindow(db, w.id);
   const attempts = (prev?.attempts ?? 0) + (countAttempt ? 1 : 0);
   if (attempts >= MAX_ATTEMPTS) return true;
-  const next = until ?? new Date(now.getTime() + BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length - 1)] * 60_000);
+  const next = until
+    ? new Date(Math.min(until.getTime(), now.getTime() + MAX_DEFER_MS))
+    : new Date(now.getTime() + BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length - 1)] * 60_000);
   db.prepare(
     `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at)
      VALUES(?,?,?,?,?,'deferred',?,?,?,NULL,?)

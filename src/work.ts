@@ -237,13 +237,41 @@ interface Chunk {
   truncated: number;
 }
 
+function ordinalOf(anchor: string | null | undefined): number | null {
+  if (!anchor || !/^\d+$/.test(anchor)) return null;
+  const n = Number(anchor);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
+/** Codex 换文件后旧 ordinal 不在新文件里。新文件第一轮更大，说明内容接在旧进度之后，可以从第一轮接着切。 */
+function codexContinues(host: Host, all: Turn[], from: string): boolean {
+  if (host !== "codex") return false;
+  const progress = ordinalOf(from);
+  const first = ordinalOf(all[0]?.anchor);
+  return progress !== null && first !== null && first > progress;
+}
+
+/** 进度已经越过这个窗口的终点。Codex 两个锚点都是数字时直接比大小，换文件后两者都不在新文件里也能判。 */
+function progressPassed(host: Host, turns: Turn[], processed: string, to: string): boolean {
+  if (host === "codex") {
+    const progress = ordinalOf(processed);
+    const end = ordinalOf(to);
+    if (progress !== null && end !== null) return end <= progress;
+  }
+  const at = turns.findIndex((t) => t.anchor === processed);
+  const end = turns.findIndex((t) => t.anchor === to);
+  if (at < 0 || end < 0) return false;
+  return end <= at;
+}
+
 /** 从 checkpoint 之后按轮次边界切块，每块 ≤ WINDOW_MAX_CHARS；单轮超长时截断并计数（不静默）。 */
 export function chunk(host: Host, sessionId: string, all: Turn[], from: string | null, settled: boolean): Chunk[] | "anchor_missing" {
   let start = 0;
   if (from !== null) {
     const i = all.findIndex((t) => t.anchor === from);
-    if (i < 0) return "anchor_missing";
-    start = i + 1;
+    if (i >= 0) start = i + 1;
+    else if (!codexContinues(host, all, from)) return "anchor_missing";
+    // 接上新文件时 start 仍是 0，窗口 from 保持旧进度，finishWindow 的 CAS 才能通过
   }
   const chunks: Chunk[] = [];
   let cur: Turn[] = [];
@@ -752,6 +780,13 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
+  if (!opts.dryRun && s.processed_anchor) {
+    for (const w of intake.deferredWindows(db, s.host, s.session_id)) {
+      if (!progressPassed(s.host, turns, s.processed_anchor, w.to_anchor)) continue;
+      intake.failSuperseded(db, w.window_id, deps.now());
+      report.windows.failed++;
+    }
+  }
   if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
   if (chunks === "anchor_missing") {
@@ -772,7 +807,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
   for (const c of chunks.slice(0, MAX_WINDOWS_PER_SESSION_RUN)) {
     const prev = intake.getWindow(db, c.id);
     // 旧版日预算留下的 budget_exhausted 延后已无意义，立即重做
-    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
+    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && !intake.deferDue(prev, deps.now())) break;
     if (capped && backlog.left <= 0) {
       report.backlogLeft++;
       break;
@@ -881,7 +916,7 @@ async function processTopicSession(
   if (!cooldown) hostCooldown.set(t, (cooldown = new Map()));
   for (const c of cut.chunks.slice(0, MAX_WINDOWS_PER_SESSION_RUN)) {
     const prev = intake.getWindow(db, c.id);
-    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && prev.next_at && prev.next_at > deps.now().toISOString()) break;
+    if (prev?.state === "deferred" && prev.error_code !== "budget_exhausted" && !intake.deferDue(prev, deps.now())) break;
     const cool = cooldown.get(s.host) ?? intake.meta(db, `topic_cooldown:${s.host}`);
     if (cool && cool > deps.now().toISOString()) {
       report.windows.deferred++;

@@ -6,7 +6,8 @@
 - 会话静置与结束抽取：基于 LLM（DashScope `qwen-plus`）提取候选命题，引文逐字核对，两次脱敏
 - 代码只读核验与转正 (`ab work --sweep`)：只读检查代码仓库，验证未确认的坑与事实是否属实，对得上则自动转正
 - 话题模式与断点续抽 (`ab work --session ... [--redo]`, `ab work --runs`, `ab work --undo`)
-- 额度限流自恢复：抽取、embedding、代码核验撞上 429/quota/rate limit 按 Retry-After 延后，不算失败尝试，额度恢复后接着做；单会话 hook 拉起的 `ab work` 顺带重试别的会话已到期的延后窗口
+- 额度限流自恢复：抽取、embedding、代码核验撞上 429/quota/rate limit 按 Retry-After 延后，不算失败尝试，额度恢复后接着做。单次延后最多 1 小时，历史上被写成几天后的 429 行也按延后满 1 小时算到期。单会话 hook 拉起的 `ab work` 顺带重试别的会话已到期的延后窗口
+- 过期延后行退出：进度已越过 `to_anchor` 的 deferred 行标 `failed` / `superseded`（不删，到期由 prune 清）。Codex 换了 transcript 文件、旧数字进度不在新文件里、且新文件第一轮 ordinal 更大时，从第一轮接着切，窗口 `from` 仍是旧进度
 - 模型产出留痕（§8.10）：普通抽取、一步式话题、重复追加证据、关系判定、代码核验写下的 L1 事件都带 `model` 与 `prompt_version`（实发系统提示词全文的 SHA-256 前 12 位），`ab get` 按事件逐条列出
 - 转正只有三条路：用户 confirm / 代码核验 / 跨会话印证；跨会话印证要求两个以上会话各自有用户原话，关系未判定（`[关系未判定]`）或带冲突、待确认纠正、替代关系的条目不转正
 
@@ -23,7 +24,7 @@
 ## Gotchas
 - 会话一律写成 `host:<session_id>`，首个冒号之后整段都算 session id（子代理 id 带冒号也能用）；`capture` / `work --session` / `remember --from-worker` 各自的报错文案不同，都不接受未知宿主或空 id
 - 真实的抽取沉淀和代码核验依赖远程大模型 API key（`~/.agentbrain/extract.json`）
-- 本地无真实 key 时真实模型调用受限，通过 `--dry-run` 验证调度与积压扫描逻辑；429 延后与续做只能用单元测试覆盖，真实额度恢复未在本技能里跑
+- 本地无真实 key 时真实模型调用受限，通过 `--dry-run` 验证调度与积压扫描逻辑。429 封顶、被越过的延后行退出、Codex 换文件后续切，都用 `src/work.test.ts` 覆盖。真实额度恢复未在本技能里跑
 - 自动抽取和 agent 自记都直接写成有效的未确认条目（不再进候选区），代码核验转正或用户 confirm 才变已确认
 - `.jsonl.zst` 只在 Codex 会话目录里被放行（§7.6）；Claude、Pi 的压缩文件照旧拒绝。全文解压上限 256 MB；开头只读压缩文件前 256 KB，与全文共用 256 MB 解压上限，按字节截取。坏文件不阻断扫描，缺失文件报 source_unavailable，进度不动。`--dry-run` 不写库，处理和来源展开不改登记路径。回归测试在 `src/transcript-file.test.ts` 和 `src/work.test.ts`。
 - 模型产出段与版本口径只用单测覆盖（`src/prompt-version.test.ts` 用假 chat 跑真实的 `runWork` / `importPensieve` / `applyActions`，再调真实 `ab get`）。`ab work --dry-run` 不调模型，驱动不出这段，要看真实输出用 `ab get`
