@@ -42,6 +42,24 @@ test("报告各行：目录、宿主、active 按范围、向量不可用原因�
   assert.match(out, /^store: \/tmp\/abhome$/m);
 });
 
+test("抽取模型那行显示渠道链：主渠道 → 备用渠道", () => {
+  const out = statusReport(new Store(":memory:", ":memory:"), ctx({
+    chatConfig: {
+      model: "cn:deepseek-v4.1-flash",
+      baseUrl: "http://127.0.0.1:7864/v1",
+      keyService: "agentbrain-extract-cn",
+      fallbacks: [{ model: "deepseek-v4.1-flash-1017-tx", baseUrl: "http://127.0.0.1:8317/v1", keyService: "codex-cpa-local-api-key" }],
+    },
+  }));
+  assert.match(out, /抽取模型: cn:deepseek-v4\.1-flash @ 127\.0\.0\.1:7864 → deepseek-v4\.1-flash-1017-tx @ 127\.0\.0\.1:8317（key: 钥匙串 agentbrain-extract-cn）/);
+});
+
+test("抽取模型只有一个渠道时不画箭头，与以前逐字相同", () => {
+  const out = statusReport(new Store(":memory:", ":memory:"), ctx({ chatConfig: { model: "m", baseUrl: "http://127.0.0.1:7864/v1", keyService: "agentbrain-extract" } }));
+  assert.match(out, /抽取模型: m @ 127\.0\.0\.1:7864（key: 钥匙串 agentbrain-extract）；/);
+  assert.doesNotMatch(out, /→/);
+});
+
 test("宿主检测失败如实写出", () => {
   const out = statusReport(new Store(":memory:", ":memory:"), ctx({ host: { ok: false, error: "ps 坏了" } as StatusContext["host"] }));
   assert.match(out, /宿主: 宿主检测失败: ps 坏了/);

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { Store, type Embedder } from "./store.ts";
-import { WorkFailure, type Chat, type ChatMessage } from "./llm.ts";
+import { WorkFailure, fallbackChat, type Chat, type ChatMessage } from "./llm.ts";
 import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
 import { allowedTranscript } from "./transcript-file.ts";
 import { expandSource } from "./source.ts";
@@ -1350,6 +1350,78 @@ function recordLegacyCandidate(e: Env, sid: string, to: string, cand: { kind: st
 
 const proposalCount = (e: Env) => e.store.project().props.size;
 const evidenceCount = (e: Env) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='evidence'").get()!.n;
+
+// ---------- 备用渠道：产出记录写实际用到的模型 ----------
+
+/** 默认成功会报实际模型；报不出模型时由 WorkDeps.chat.model 兑底。 */
+function fallbackChatOf(main: Chat, backup: Chat): Chat {
+  return fallbackChat([main, backup]);
+}
+
+for (const code of ["http_error", "http_429", "network", "timeout"] as const) {
+  test(`主渠道 ${code}：走备用渠道，产出记录写备用模型`, async () => {
+    const e = env();
+    e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+    const main: Chat = async () => {
+      throw new WorkFailure(code, `主渠道 ${code}`);
+    };
+    const backup: Chat = async () => ({ message: json({ candidates: [RULE] }), tokens: 100, model: "backup-m" });
+    const r = await runWork(e.deps(fallbackChatOf(main, backup), { chat: { chat: fallbackChatOf(main, backup), model: "main-m" } }), { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    const p = props(e.store).find((x) => x.text === RULE.text)!;
+    assert.equal(p.model_outputs[0].model, "backup-m", "产出记录写实际用到的备用模型");
+  });
+}
+
+test("主渠道成功：产出记录写主模型", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const main: Chat = async () => ({ message: json({ candidates: [RULE] }), tokens: 100, model: "main-m" });
+  const backup: Chat = async () => ({ message: json({ candidates: [RULE] }), tokens: 100, model: "backup-m" });
+  await runWork(e.deps(fallbackChatOf(main, backup), { chat: { chat: fallbackChatOf(main, backup), model: "main-m" } }), { sweep: false, dryRun: false });
+  assert.equal(props(e.store).find((x) => x.text === RULE.text)!.model_outputs[0].model, "main-m");
+});
+
+for (const code of ["http_error", "http_429", "network", "timeout"] as const) {
+  test(`主渠道 ${code} 且备用也挂：窗口按原有失败/延后规则处理，不写条目`, async () => {
+    const e = env();
+    e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+    const main: Chat = async () => {
+      throw new WorkFailure(code, "主也挂");
+    };
+    const backup: Chat = async () => {
+      throw new WorkFailure(code, "备用也挂");
+    };
+    const r = await runWork(e.deps(fallbackChatOf(main, backup)), { sweep: false, dryRun: false });
+    assert.equal(props(e.store).length, 0);
+    assert.deepEqual([r.windows.done, r.windows.deferred + r.windows.failed], [0, 1]);
+    const w = e.store.workDb.prepare("SELECT state,error_code FROM capture_windows").get() as { state: string; error_code: string };
+    assert.equal(w.error_code, code, "记的是最后一个错误码");
+  });
+}
+
+test("invalid_output 不切备用：两次输出都不是 JSON 直接失败，备用一次没被调", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const main: Chat & { calls: number } = Object.assign(
+    async () => {
+      main.calls++;
+      throw new WorkFailure("invalid_output", "主渠道输出不是 JSON");
+    },
+    { calls: 0 },
+  );
+  const backup: Chat & { calls: number } = Object.assign(
+    async () => {
+      backup.calls++;
+      return { message: json({ candidates: [RULE] }), tokens: 1, model: "backup-m" };
+    },
+    { calls: 0 },
+  );
+  const r = await runWork(e.deps(fallbackChatOf(main, backup)), { sweep: false, dryRun: false });
+  assert.equal(backup.calls, 0, "invalid_output 是输出问题，不换渠道");
+  assert.equal(r.windows.done, 0);
+  assert.equal(props(e.store).length, 0);
+});
 
 test("升级兼容：旧键已在库、旧条目还有效 → 重跑不再追加证据、不新建条目", async () => {
   const e = env();

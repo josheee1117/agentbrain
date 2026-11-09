@@ -16,7 +16,7 @@ import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState }
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
-import { chatClient, loadChatConfig } from "./llm.ts";
+import { chatChain, chatClient, loadChatConfig } from "./llm.ts";
 import { allowedTranscript } from "./transcript-file.ts";
 import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
@@ -1137,12 +1137,8 @@ async function cmdCapture(argv: string[]): Promise<void> {
 
 function workDeps(store: Store): WorkDeps {
   const cfg = loadChatConfig(home());
-  let chat: WorkDeps["chat"];
-  if ("error" in cfg) chat = { error: "no_config", message: cfg.error };
-  else {
-    const key = readKey(cfg.keyService);
-    chat = typeof key === "string" ? { chat: chatClient(cfg, key, undefined), model: cfg.model } : { error: "no_key", message: key.error };
-  }
+  // 主渠道与备用渠道串成一条链；备用渠道读不到 key 就跳过它（chatChain 负责）
+  const chat: WorkDeps["chat"] = "error" in cfg ? { error: "no_config", message: cfg.error } : chatChain(cfg, readKey, (c, k) => chatClient(c, k, undefined));
   return {
     store,
     now: () => new Date(),

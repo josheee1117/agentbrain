@@ -659,7 +659,7 @@ async function extractWindow(deps: WorkDeps, c: Chunk, s: intake.SessionRow, pro
       unreconciled: hits.some((n) => !shown.has(n.prop.id)) || (cand.relation.type === "new" && hits.some((n) => !handled.has(n.prop.id))),
     };
   });
-  return admit(checked, s, projectId, c.id, deps.store.project().props, deps.chat.model, deps.projectId);
+  return admit(checked, s, projectId, c.id, deps.store.project().props, r.model ?? deps.chat.model, deps.projectId);
 }
 
 function dumpDebug(dir: string, s: intake.SessionRow, c: Chunk, raw: string, v: ReturnType<typeof validate>): void {
@@ -1052,7 +1052,7 @@ async function onePassWindow(
     const hits = deps.store.nearestByVector(vecs[i], projectId, RECHECK_TOP, DUP_CHECK_SIM);
     const unreconciled = hits.length > 0;
     const body: RememberBody = {
-      model: chat.model,
+      model: r.model ?? chat.model,
       prompt_version: PROMPT_VERSION,
       kind: it.kind,
       text: it.text,
@@ -1122,8 +1122,11 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
   for (let i = 0, calls = 0; i < todo.length && calls < MAX_RELATE_CALLS_PER_RUN; i += RELATE_BATCH, calls++) {
     const batch = todo.slice(i, i + RELATE_BATCH);
     let verdicts;
+    // 关系判定可能落到备用渠道：记下这一批真正回话的模型名
+    let model = deps.chat.model;
     try {
       const r = await deps.chat.chat(buildRelateMessages(batch), { json: true });
+      if (r.model) model = r.model;
       intake.spend(db, deps.now(), 1, r.tokens);
       verdicts = parseRelate(parseJsonLoose(r.message.content), batch);
     } catch {
@@ -1144,7 +1147,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const target = v.target ? props.get(v.target.id) : null;
       // 同一次运行里前面的并入可能已让本条被印证转正：已确认的条目一律不再自动改
       if (!p || p.state !== "active" || p.confirmed || p.related || (v.target && target?.state !== "active")) continue;
-      const { appends, corroborated, outcome } = applyVerdict(p, target ?? null, v, deps.chat.model, {
+      const { appends, corroborated, outcome } = applyVerdict(p, target ?? null, v, model, {
         mode: "absorb-new",
         corroborate: (np, t, basis) => corroborationConfirm(t, { source: np.source, basis, evidence: np.evidence }),
       });
@@ -1158,6 +1161,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
 /** 按代码核验：只核验项目范围、未确认、可由代码证明的种类（坑、事实），且不是待确认的纠正。 */
 async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
   if ("error" in deps.chat) return;
+  const baseChat = deps.chat;
   const db = deps.store.workDb;
   const names = new Map(deps.store.listProjects().map((p) => [p.id, p.name]));
   const queued = intake.queuedReverify(db);
@@ -1189,8 +1193,15 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } else if (last && !last.outcome.startsWith("error:") && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
     done++;
     let result;
+    // 核验可能落到备用渠道：记下最后一次真正回话的模型名
+    let usedModel = baseChat.model;
+    const chatOf: Chat = async (messages, opts) => {
+      const r = await baseChat.chat(messages, opts);
+      if (r.model) usedModel = r.model;
+      return r;
+    };
     try {
-      result = await verifyProposition(deps.chat.chat, tools, p);
+      result = await verifyProposition(chatOf, tools, p);
     } catch (e) {
       intake.recordVerify(db, p.id, head, `error:${e instanceof WorkFailure ? e.code : "network"}`, deps.now());
       report.verify.errors++;
@@ -1205,7 +1216,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
     if (result.verdict === "verified" || result.verdict === "contradicted") {
-      const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: deps.chat.model, prompt_version: VERIFY_PROMPT_VERSION };
+      const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: usedModel, prompt_version: VERIFY_PROMPT_VERSION };
       deps.store.commit([{ kind: "verify", project_id: p.project_id, session_id: null, target_id: p.id, body }], (tx) =>
         intake.recordVerify(tx, p.id, head, result.verdict, deps.now()),
       );

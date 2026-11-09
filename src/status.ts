@@ -39,6 +39,12 @@ function hostOf(url: string): string {
   }
 }
 
+function chatLine(cfg: StatusContext["chatConfig"]): string {
+  if ("error" in cfg) return `不可用（${cfg.error}）`;
+  const chain = [cfg, ...(cfg.fallbacks ?? [])].map((c) => `${c.model} @ ${hostOf(c.baseUrl)}`).join(" → ");
+  return `${chain}（key: 钥匙串 ${cfg.keyService}）`;
+}
+
 function sedimentLines(store: Store, cfg: StatusContext["chatConfig"], now: Date): string[] {
   const st = intake.stats(store.workDb, now);
   const props = [...store.project().props.values()];
@@ -54,7 +60,7 @@ function sedimentLines(store: Store, cfg: StatusContext["chatConfig"], now: Date
     `  自动沉淀条目: 共 ${auto.length}，未确认 ${auto.filter((p) => !p.confirmed && p.state === "active").length}，代码核验转正 ${props.filter((p) => p.confirmed_by === "code").length}，跨会话印证转正 ${props.filter((p) => p.confirmed_by === "corroboration").length}，与代码不符 ${props.filter((p) => p.stale && p.state === "active").length}，到期归档 ${auto.filter((p) => p.expired).length}`,
     `  到期待复审: ${reviewList(props, store.usage(), now, sourceClock()).length}（ab review 查看，ab view 里标"到期待复审"；不会自动归档）`,
     `  关系未判定积压（§9.4.4）: ${props.filter((p) => p.unreconciled && p.state === "active").length}`,
-    `  抽取模型: ${"error" in cfg ? `不可用（${cfg.error}）` : `${cfg.model} @ ${hostOf(cfg.baseUrl)}（key: 钥匙串 ${cfg.keyService}）`}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
+    `  抽取模型: ${chatLine(cfg)}；上次运行 ${st.lastRun ?? "从未"}，上次成功 ${st.lastSuccess ?? "从未"}；租约被接管 ${st.leaseTakeovers} 次`,
   ];
 }
 
