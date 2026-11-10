@@ -227,6 +227,9 @@ export const JUDGE_RULES = `判断要点：
 
 const JUDGE_FORMAT = `- 格式硬要求：keep/rewrite/merge 必须给 class（A/B/C）和以"当"开头、含"时"的 scenario；class 为 none 时 verdict 必须是 discard。缺这些的结论会被当成废票。`;
 
+/** 排查手法的放行条：只加在审稿人自己的判断要点里，不动一步式引用的 JUDGE_RULES（那份提示词§8.7 逐字钉死）。 */
+export const TROUBLESHOOT_NOTE = `- 排查手法（怎么在受限环境里查到真实运行状态、怎么对齐两边的日志时间、哪条报错是噪可以忽略、远程终端/堡垒机怎么可靠地操作）是 B 类或 C 类，不是"一次性调试步骤"：下一个 agent 不知道往哪查、会反复试错的价值就在这里。写成"当排查/操作 …时"就留，不要以"只是一次调试过程"或"通用技术常识"为由丢；也不要当 findable 丢掉——findable 只指报错自己说明原因、改一次就好的问题。`;
+
 export const JUDGE_SYSTEM = `你是记忆库的审稿人。下面是《好记忆的标准》全文，严格按它判断每条候选该不该进正式库。
 
 ${GOOD_MEMORY_STANDARD}
@@ -236,9 +239,10 @@ ${GOOD_MEMORY_STANDARD}
 - keep：原文已经合格（能迁移、查不到、改做法、有"当…时"场景），原样进库。scenario 填它的适用场景。
 - rewrite：内容有价值，但写得太具体、是现状描述、缺场景或夹着流水账；把它概括成可迁移的原则再进库。text 写新正文（一句话、可照着做、不写本次/日期/内部 id），scenario 以"当…时"开头且不能只是正文换个说法。
 - merge：和某条近邻讲的是同一件事；into 填那条近邻的编号，text 写合并后的原则。
-- discard：不满足标准（流水账、报错自己说明原因的一次性问题、代码/文档里能查到的事实、临时用法、一次性授权、只针对某次任务的派活限制、通用技术常识）。
+- discard：不满足标准（流水账、报错自己说明原因的一次性问题、代码/文档里能查到的事实、临时用法、一次性授权、只针对某次任务的派活限制、通用技术常识）。写成"当排查/操作 …时"的排查手法不在此列，照常留。
 
 ${JUDGE_RULES}
+${TROUBLESHOOT_NOTE}
 ${JUDGE_FORMAT}
 
 ${EVIDENCE_NOTE}
@@ -353,6 +357,7 @@ export const ARBITER_SYSTEM = `你是记忆库的仲裁人。审稿团三位审�
 ${GOOD_MEMORY_STANDARD}
 
 ${JUDGE_RULES}
+${TROUBLESHOOT_NOTE}
 ${JUDGE_FORMAT}
 
 ${EVIDENCE_NOTE}
