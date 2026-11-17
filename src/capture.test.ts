@@ -112,8 +112,8 @@ test("SessionEnd 拉起分离的 ab work：会话被抽成未确认的自动沉�
     await new Promise((res) => setTimeout(res, 200));
     out = (await ab(["search", "node 绝对路径"])).out;
   }
-  assert.match(out, /alpha 规则\[未确认·自动沉淀\]: hook 命令都写 node 绝对路径/);
-  assert.match((await ab(["search", "解释器"])).out, /alpha 坑\[未确认·自动沉淀\]: 宿主子进程环境变量很少，找不到解释器就报错退出/);
+  assert.match(out, /alpha 规则\[未确认·自动沉淀\]\[字面\+相似 \d\.\d\d\]: hook 命令都写 node 绝对路径/);
+  assert.match((await ab(["search", "解释器"])).out, /alpha 坑\[未确认·自动沉淀\](\[[^\]]+\])?: 宿主子进程环境变量很少，找不到解释器就报错退出/);
   const chats = seen.filter((s) => s.path === "/v1/chat/completions");
   assert.equal(chats.length, 1);
   assert.equal(chats[0].auth, "Bearer fixture-key");
@@ -143,7 +143,8 @@ test("ab work --sweep 按仓库代码核验未确认的坑：证据对得上就�
   const id = /\[([0-9a-f]{8})\] alpha 坑/.exec(hit)![1];
   assert.doesNotMatch(hit, /alpha 坑\[未确认/);
   const got = (await ab(["get", id])).out;
-  assert.match(got, /已由代码核验转正/);
+  assert.match(got, /^确认: 代码核验转正 · \d{4}-\d\d-\d\d（模型按仓库代码核对后转正，没有人确认过）$/m);
+  assert.match(got, /^写入: \S+@\S+ · 后台抽取，来自 claude 会话 11111111 · \d{4}-\d\d-\d\d$/m);
   assert.match(got, /代码证据（HEAD [0-9a-f]{10}）: README\.md:3「hook 命令要写成 \/opt\/homebrew\/bin\/node 的绝对路径」/);
   assert.match(got, /依据: 工具报错/);
   const rule = (await ab(["search", "hook 命令都写"])).out;

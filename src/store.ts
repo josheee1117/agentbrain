@@ -63,6 +63,8 @@ export interface SearchHit {
   state: PropState;
   /** 向量相似度（只有向量命中才有；纯全文检索命中没有）。 */
   similarity?: number;
+  /** 字面（全文检索）命中。和 similarity 可以同时有（§12.6.7 T3：结果要看得出为什么命中）。 */
+  lexical?: boolean;
 }
 
 export interface SearchOpts {
@@ -860,7 +862,8 @@ export class Store {
   async searchHybrid(query: string, opts: SearchOpts, embedder: Embedder | null): Promise<{ hits: SearchHit[]; cross?: CrossProjectResult; degraded: string | null }> {
     const limit = opts.limit ?? 8;
     const ftsHits = () => this.search(query, { ...opts, limit: HYBRID_FTS_K });
-    if (!embedder) return { hits: ftsHits().slice(0, limit), degraded: "未配置 embedding" };
+    const lex = (hs: SearchHit[]) => hs.map((h) => ({ ...h, lexical: true }));
+    if (!embedder) return { hits: lex(ftsHits()).slice(0, limit), degraded: "未配置 embedding" };
     const reasons: string[] = [];
     const model = embedder.model ?? this.embeddingModel() ?? "未指定模型";
     if (!opts.skipSync) {
@@ -899,12 +902,17 @@ export class Store {
         });
       }
       const sim = new Map(dense.map((d) => [d.hit.id, d.similarity]));
-      const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => (sim.has(p.hit.id) ? { ...p.hit, similarity: sim.get(p.hit.id) } : p.hit));
+      const inLexical = new Set(lexical.map((h) => h.id));
+      const hits = [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((p) => ({
+        ...p.hit,
+        ...(sim.has(p.hit.id) ? { similarity: sim.get(p.hit.id) } : {}),
+        ...(inLexical.has(p.hit.id) ? { lexical: true } : {}),
+      }));
       const cross = opts.crossProject ? this.crossProjectHits(queryVec, opts.crossProject.excludeProjectId, opts.kind) : undefined;
       return { hits, ...(cross ? { cross } : {}), degraded: reasons.length ? reasons.join("；") : null };
     } catch (e) {
       reasons.push(`向量检索不可用：${e instanceof Error ? e.message : String(e)}`);
-      return { hits: ftsHits().slice(0, limit), degraded: reasons.join("；") };
+      return { hits: lex(ftsHits()).slice(0, limit), degraded: reasons.join("；") };
     }
   }
 

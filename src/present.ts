@@ -1,11 +1,46 @@
 /** brief / recall / CLI 共用的展示与查找小工具。 */
 import type { Store } from "./store.ts";
-import { KIND_LABEL, type PropKind, type Proposition } from "./l2.ts";
+import { KIND_LABEL, type PropKind, type Proposition, type Who } from "./l2.ts";
 
 export { KIND_LABEL };
 
 export function short(id: string): string {
   return id.slice(0, 8);
+}
+
+/** 确认来源的叫法（§12.6.7 T1/T2）：读路径都用这一份，agent 才分得清哪些是人确认过的。 */
+export const TRUST_LABEL = { user: "用户确认", code: "代码核验", corroboration: "跨会话印证" } as const;
+
+/** 已确认条目的来源标记；未确认的由调用方按原口径标（自动沉淀 / agent 自记）。 */
+export function trustMark(p: Pick<Proposition, "confirmed" | "confirmed_by">): string {
+  return p.confirmed ? `[${TRUST_LABEL[p.confirmed_by ?? "user"]}]` : "";
+}
+
+/** 谁、哪台机器；旧事件没有记。 */
+export function whoLabel(w: Who): string {
+  return w.actor ? `${w.actor}@${w.machine ?? "未知机器"}` : "操作者未记录（旧事件）";
+}
+
+/** ab get 的「写入」行：谁写的、哪台机器、从哪来（§12.6.7 T4）。 */
+export function writtenLine(p: Proposition): string {
+  const sid = p.session_id ? p.session_id.slice(0, 8) : null;
+  const via =
+    p.origin === "extract" ? `后台抽取，来自 ${p.source.host ?? "未知宿主"} 会话 ${sid ?? "?"}`
+    : p.origin === "import" ? "导入"
+    : p.origin === "curate" ? "审稿改写"
+    : sid ? `在 ${p.source.host ?? "agent"} 会话 ${sid} 里执行` : "不在 agent 会话里执行";
+  return `写入: ${whoLabel(p.written_by)} · ${via} · ${p.ts.slice(0, 10)}`;
+}
+
+/** ab get 的「确认」行：确认来源、谁、何时、是否在 agent 会话里执行。 */
+export function confirmedLine(p: Proposition): string {
+  if (!p.confirmed) return `确认: 还没有人确认${p.demoted ? "（自动转正被撤销过，只有用户 ab confirm 能再转正）" : ""}`;
+  const e = p.confirmed_event;
+  const at = e ? e.ts.slice(0, 10) : "时间未记录";
+  if (p.confirmed_by === "code") return `确认: ${TRUST_LABEL.code}转正 · ${at}（模型按仓库代码核对后转正，没有人确认过）`;
+  if (p.confirmed_by === "corroboration") return `确认: ${TRUST_LABEL.corroboration}转正 · ${at}（两个以上会话里用户都这样说过）`;
+  const where = e?.session_id ? `在 agent 会话 ${e.session_id.slice(0, 8)} 里执行` : "不在 agent 会话里执行";
+  return `确认: ${TRUST_LABEL.user} · ${e ? whoLabel(e) : "操作者未记录（旧事件）"} · ${at} · ${where}`;
 }
 
 export function disputed(p: Proposition): string {

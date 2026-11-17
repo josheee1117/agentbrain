@@ -417,7 +417,8 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
   const r7 = emptyReceipt();
   let nextRetry: string | null = null;
   for (const w of wins) {
-    if (w.error_code && w.state !== "done") werr[w.error_code] = (werr[w.error_code] ?? 0) + 1;
+    // split 是拆成两个小窗口重试，内容没丢，不算未完成原因
+    if (w.error_code && w.state !== "done" && w.error_code !== "split") werr[w.error_code] = (werr[w.error_code] ?? 0) + 1;
     if (w.state === "deferred" && w.next_at && (!nextRetry || w.next_at < nextRetry)) nextRetry = w.next_at;
     if (w.state === "done" && w.updated_at >= week && w.receipt) addReceipt(r7, JSON.parse(w.receipt) as Receipt);
   }

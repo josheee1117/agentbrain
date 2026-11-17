@@ -8,6 +8,22 @@ import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./reg
 import * as intake from "./intake.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { opencodeDbPath, recentOpencodeSessions } from "./opencode.ts";
+import { listBackups } from "./admin.ts";
+
+/** 最近一次备份超过这么久就列进"要处理"（自动备份每天一次，两天没有说明巡检没在跑）。 */
+const BACKUP_STALE_MS = 48 * 3_600_000;
+/** "失败窗口"一段最多列几个。 */
+const STATUS_PROBLEM_ROWS = 5;
+/** 孤立项目超过这么多个就折成一行。 */
+const ORPHAN_FOLD = 3;
+
+export interface CodeVersion {
+  commit: string;
+  branch: string | null;
+  /** 没提交的文件数（只看 src、integrations、package.json）。 */
+  dirty: number;
+  root: string;
+}
 
 export interface StatusContext {
   cwd: string;
@@ -20,6 +36,13 @@ export interface StatusContext {
   embedReason: string | null;
   chatConfig: ChatConfig | { error: string };
   now: Date;
+  /** 当前这份代码的提交与未提交改动（cli 给；拿不到为 null）。 */
+  code?: CodeVersion | null;
+}
+
+function ago(from: Date, now: Date): string {
+  const h = Math.max(0, Math.floor((now.getTime() - from.getTime()) / 3_600_000));
+  return h < 1 ? "不到 1 小时前" : h < 48 ? `${h} 小时前` : `${Math.floor(h / 24)} 天前`;
 }
 
 function namesOf(store: Store): Map<string, string> {
@@ -52,7 +75,7 @@ function sedimentLines(store: Store, cfg: StatusContext["chatConfig"], now: Date
   const r = st.receipts7d;
   const lastRetry = st.windows.nextRetry ? `，最早 ${new Date(st.windows.nextRetry).toLocaleString("zh-CN", { hour12: false })} 重试` : "";
   return [
-    "沉淀（切片 3）:",
+    "后台抽取:",
     `  会话: 已登记 ${st.sessions.total}，未登记目录 ${st.sessions.unregistered}，ephemeral ${st.sessions.ephemeral}；补登记历史会话（装 hook 前）${st.sessions.backfill}；近 7 天疑似漏登记 ${st.sessions.scanned}${st.sessions.scanned ? `（${fmtCounts(st.sessions.scannedByHost)}；hook 装好后开始的会话仍只能靠扫描登记，该宿主 hook 可能没生效，Codex 要在 /hooks 里信任）` : ""}；会话级错误 ${fmtCounts(st.sessions.errors)}`,
     `  窗口: 完成 ${st.windows.done}，延后 ${st.windows.deferred}${lastRetry}，失败 ${st.windows.failed}；未完成原因 ${fmtCounts(st.windows.errors)}`,
     `  今日用量: 调用 ${st.budget.calls}，token ${st.budget.tokens}（只记录，不设上限）`,
@@ -136,19 +159,64 @@ export function statusReport(store: Store, ctx: StatusContext): string {
       ? `向量: ${embedder.model}，已向量化 ${vectors.model === embedder.model ? vectors.embedded : 0}/${vectors.total}`
       : `向量: 不可用（${reason}）`;
 
+    // §12.6.7 T5：代码、库、备份、失败窗口四行，加开头的"要处理"清单
+    const schema = store.schema;
+    const code = ctx.code;
+    const codeLine = code
+      ? `代码: ${code.commit}${code.branch ? `（${code.branch}）` : ""}${code.dirty ? `，有 ${code.dirty} 个文件没提交` : "，没有未提交改动"}  ${code.root}`
+      : "代码: 版本未知（不是 git 仓库，或没有 git）";
+    const dbLine = `库: 版本 ${schema.version}（代码支持 ${schema.supported}）${schema.readOnly ? "，库比代码新，只读" : ""}；事件 ${store.eventCount()} 条；不认识的事件 ${proj.unknown} 条`;
+    const backups = listBackups(ctx.storeHome);
+    const last = backups[0];
+    const backupLine = last
+      ? `备份: 最近一次 ${last.at.toISOString()}（${ago(last.at, ctx.now)}），共 ${backups.length} 份  ${last.path}`
+      : "备份: 还没有（ab backup 做一份；ab work --sweep 每天自动做一次）";
+    const st = intake.stats(store.workDb, ctx.now);
+    const recentFailed = statusLine(store, ctx.now).work_failed;
+    const probs = intake.windowProblems(store.workDb, STATUS_PROBLEM_ROWS);
+    const probLines = probs.length
+      ? [
+          `失败窗口: 失败 ${st.windows.failed}，延后 ${st.windows.deferred}；最近 ${probs.length} 个:`,
+          ...probs.map((p) => `  ${p.at.slice(0, 16)} ${p.host}:${p.session_id.slice(0, 8)} ${p.state === "failed" ? "失败" : `延后（第 ${p.attempts} 次）`} ${p.code ?? "?"}${p.chars ? ` ${p.chars} 字` : ""}: ${p.detail ?? "原因没有记录（旧版本留下的）"}`),
+        ]
+      : ["失败窗口: 没有"];
+    const conflicts = proj.conflict_pairs.length;
+    const due = reviewList(all, store.usage(), ctx.now, sourceClock()).length;
+    const todo = [
+      schema.readOnly ? `库版本 ${schema.version} 比代码支持的 ${schema.supported} 新：这份代码只能读不能写，先更新 ab 的代码` : "",
+      proj.unknown ? `库里有 ${proj.unknown} 条这份代码不认识的事件，它们没有生效：更新 ab 的代码` : "",
+      "error" in ctx.chatConfig ? `抽取模型不可用（${ctx.chatConfig.error}）：后台不会从新会话里抽取记忆` : "",
+      recentFailed ? `近 7 天有 ${recentFailed} 个窗口抽取失败，这些对话没有抽取：原因看下面"失败窗口"` : "",
+      !last ? "还没有备份：ab backup" : ctx.now.getTime() - last.at.getTime() > BACKUP_STALE_MS ? `最近一次备份是 ${ago(last.at, ctx.now)}：ab backup（ab work --sweep 每天会自动做，没做说明巡检没在跑）` : "",
+      code?.dirty ? `代码有 ${code.dirty} 个文件没提交：后台任务和钩子跑的就是这份没提交的代码` : "",
+      conflicts ? `冲突 ${conflicts} 对未解决：ab get 看双方，ab archive 错的一条` : "",
+      due ? `到期待复审 ${due} 条：ab review` : "",
+      !embedder ? `向量不可用（${reason}）：搜索只剩全文检索` : "",
+      st.sessions.scanned ? `近 7 天 ${st.sessions.scanned} 个会话钩子没登记、靠扫描补上：检查该宿主的钩子（${fmtCounts(st.sessions.scannedByHost)}）` : "",
+    ].filter(Boolean);
+    const orphanLines = orphans.length > ORPHAN_FOLD
+      ? [`孤立项目 ${orphans.length} 个（库里有、清单里没有，改名或删除了？）: ${store.listProjects().filter((p) => !regNames.has(p.name)).map((p) => `${p.name} ${byScope.get(p.id) ?? 0} 条`).join("、")}`]
+      : orphans;
+
     return (
       [
+        todo.length ? `要处理（${todo.length} 项）:` : "要处理: 没有要处理的事",
+        ...todo.map((t, i) => `  ${i + 1}. ${t}`),
         `目录: ${where}`,
         `宿主: ${!found.ok ? `宿主检测失败: ${found.error}` : found.detection ? `${found.detection.host}  会话 ${found.detection.session_id ?? "（未取得）"}  transcript ${found.detection.transcript ? "已找到" : "未找到"}` : "未检测到宿主"}`,
+        codeLine,
+        dbLine,
+        backupLine,
         `active: ${scopeLines.join("、") || "无"}`,
         conflictLine(store, ctx.now),
         vectorLine,
-        `doctor: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
+        `投影: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `opencode: ${opencode}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
         ...sedimentLines(store, ctx.chatConfig, ctx.now),
-        ...(orphans.length ? [orphans.join("\n")] : []),
+        ...probLines,
+        ...orphanLines,
         `store: ${ctx.storeHome}`,
       ].join("\n")
     );

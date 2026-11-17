@@ -487,7 +487,8 @@ test("混合检索：embedding 抛错或未配置时返回纯 FTS 和降级原�
   try {
     s.remember(null, "s", false, { kind: "note", text: "猫咪很可爱", confirmed: true, source: src() });
     const opts = { projects: [], includeGlobal: true };
-    const expected = s.search("猫咪很可爱", opts);
+    // 降级成纯全文检索时，每条都标成字面命中（§12.6.7 T3）
+    const expected = s.search("猫咪很可爱", opts).map((h) => ({ ...h, lexical: true }));
     const failed = await s.searchHybrid("猫咪很可爱", opts, async () => { throw new Error("假接口超时"); });
     assert.deepEqual(failed.hits, expected);
     assert.match(failed.degraded!, /假接口超时/);

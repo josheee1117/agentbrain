@@ -2,7 +2,7 @@
 import type { Store } from "./store.ts";
 import { SCENES, type PropKind, type Proposition, type Scene } from "./l2.ts";
 import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
-import { active, disputed, short } from "./present.ts";
+import { active, disputed, short, TRUST_LABEL } from "./present.ts";
 import { reviewList } from "./expiry.ts";
 
 export const BRIEF_MAX_CHARS = 2000;
@@ -29,7 +29,9 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
   let text = "";
   let shown = 0;
   for (const p of rows) {
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${disputed(p)}\n`;
+    // §12.6.7 T1：不是用户确认的条目标出转正来源；没标的就是用户确认过的（见 TRUST_LEGEND）
+    const trust = p.confirmed_by && p.confirmed_by !== "user" ? `（${TRUST_LABEL[p.confirmed_by]}）` : "";
+    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${trust}${disputed(p)}\n`;
     if (text.length + line.length > budget) continue;
     text += line;
     used.push(p.id);
@@ -39,6 +41,14 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
 }
 
 const CLOSE = "\n</agentbrain>\n";
+
+/** 只在范围里有自动转正的条目时才多这一行（算进固定预算，所以尽量短；哪种来源出现了才解释哪种）。 */
+export function trustLegend(rows: readonly Proposition[]): string | null {
+  const code = rows.some((p) => p.confirmed_by === "code");
+  const corr = rows.some((p) => p.confirmed_by === "corroboration");
+  if (!code && !corr) return null;
+  return `没标注的条目是用户确认过的${code ? "；标（代码核验）的由模型核对代码后转正，没有人确认过" : ""}${corr ? "；标（跨会话印证）的是用户在多个会话里说过" : ""}。`;
+}
 
 /** 冲突汇总（§8.13.7）：只数与本次 brief 范围（全局 + 当前项目）有关的冲突对，
  *  报对数和最老天数，不查 inject_log（那是 ab status 的事，brief 每轮都跑，不为它多打数据库）。 */
@@ -193,10 +203,12 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   if (pending.length && !worker)
     tails.push(
       auto
-        ? `另有 ${pending.length} 条未确认（其中自动沉淀 ${auto} 条，ab search 可见），用户认可后 ab confirm <id>。`
-        : `另有 ${pending.length} 条 agent 自记未确认（ab search 可见），用户认可后 ab confirm <id>。`,
+        ? `另有 ${pending.length} 条未确认（其中自动沉淀 ${auto} 条，ab search 可见）。用户明确说认可才执行 ab confirm <id>，不要自己确认。`
+        : `另有 ${pending.length} 条 agent 自记未确认（ab search 可见）。用户明确说认可才执行 ab confirm <id>，不要自己确认。`,
     );
 
+  const legend = trustLegend([...sections.flatMap((s) => s.rows.filter((p) => s.kinds.includes(p.kind))), ...sceneRows]);
+  if (legend) before.push(legend);
   const candidates = sections.reduce((n, s) => n + s.rows.filter((p) => s.kinds.includes(p.kind)).length, 0);
   const noteReserve = candidates > 0 ? noteFor(candidates) : "";
   // 冲突提醒和到期摘要算进固定预算，跟 SEARCH_HINT 同级：超预算时先截条目，不截这行（§8.13.7、§8.14）。

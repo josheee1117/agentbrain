@@ -39,7 +39,8 @@ import { configForHost, loadReviewConfig, QuotaExhausted, type CallStat } from "
 import { runSetup, STEPS, type Step } from "./setup.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { fmtCounts, statusLine, statusReport } from "./status.ts";
-import { disputed, KIND_LABEL, quoteLines, searchDetail, short } from "./present.ts";
+import { confirmedLine, disputed, KIND_LABEL, quoteLines, searchDetail, short, trustMark, writtenLine } from "./present.ts";
+import { execFileSync } from "node:child_process";
 import { displayPath, importPensieve, planImport, type PlanInput } from "./pensieve.ts";
 
 const RECALL_EMBED_TIMEOUT_MS = 3000;
@@ -118,10 +119,10 @@ function ownershipLine(p: Proposition, names: Map<string, string>): string {
   return session && session !== here ? `归属: 会话在 ${session}，抽取判定归属 ${here}` : "";
 }
 
-/** 读路径标记：未确认、自动沉淀、归属未定、关系未判定（§9.4.4）、与代码不符。 */
+/** 读路径标记：确认来源（§12.6.7 T2，每条都标）、自动沉淀、归属未定、关系未判定（§9.4.4）、与代码不符。 */
 function marks(p: Proposition): string {
   return [
-    p.confirmed ? "" : p.origin === "extract" ? "[未确认·自动沉淀]" : "[未确认]",
+    p.confirmed ? trustMark(p) : p.origin === "extract" ? "[未确认·自动沉淀]" : "[未确认]",
     unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
     p.stale ? "[与代码不符]" : "",
@@ -134,6 +135,31 @@ const BASIS_LABEL: Record<string, string> = {
   observed_failure: "工具报错",
   agent_inference: "agent 推断",
 };
+
+/** 搜索结果的命中方式（§12.6.7 T3）：字面、相似度，或两者都有。 */
+function hitMark(h: { lexical?: boolean; similarity?: number }): string {
+  const sim = typeof h.similarity === "number" ? `相似 ${h.similarity.toFixed(2)}` : "";
+  return h.lexical && sim ? `[字面+${sim}]` : h.lexical ? "[字面]" : sim ? `[${sim}]` : "";
+}
+
+/** 当前这份代码的提交和未提交改动（§12.6.2、I1）：线上跑的可能就是工作区。拿不到（不是 git 仓库、没有 git）返回 null。 */
+function codeVersion(): { commit: string; branch: string | null; dirty: number; root: string } | null {
+  const root = join(import.meta.dirname, "..");
+  const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 3000 }).trim();
+  try {
+    const commit = git("rev-parse", "--short", "HEAD");
+    let branch: string | null = null;
+    try {
+      branch = git("symbolic-ref", "--short", "-q", "HEAD") || null;
+    } catch {
+      branch = null; // 游离 HEAD
+    }
+    const dirty = git("status", "--porcelain", "--untracked-files=no", "--", "src", "integrations", "package.json").split("\n").filter(Boolean).length;
+    return { commit, branch, dirty, root };
+  } catch {
+    return null;
+  }
+}
 
 function codeRef(r: import("./l2.ts").CodeRef): string {
   return "commit" in r ? `commit ${r.commit.slice(0, 10)}「${r.quote}」` : `${r.path}:${r.line_start}${r.line_end !== r.line_start ? `-${r.line_end}` : ""}「${r.quote}」`;
@@ -614,7 +640,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       const scope = p ? SCOPE_LABEL(p, names) : "未知";
       const mark = p ? marks(p) : "";
       // 正文用投影里的 p.text：命中里的 text 是索引文本（正文 + why），用它会把 why 打两遍
-      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${p ? linkState(p) : ""}${p ? disputed(p) : ""}: ${searchDetail(p ? p.text : h.text, p)}`);
+      console.log(`[${short(h.id)}] ${scope} ${KIND_LABEL[h.kind]}${mark}${hitMark(h)}${p ? linkState(p) : ""}${p ? disputed(p) : ""}: ${searchDetail(p ? p.text : h.text, p)}`);
       const rel = p ? linkSummary(links.get(p.id) ?? [], props, short) : "";
       if (rel) console.log(`  关联: ${rel}`);
     });
@@ -623,7 +649,7 @@ async function cmdSearch(argv: string[]): Promise<void> {
       console.log(`更多（第 ${SEARCH_FULL_ROWS + 1}–${SEARCH_FULL_ROWS + more.length} 名，看全文用 ab get）:`);
       for (const h of more) {
         const p = props.get(h.id);
-        console.log(`  [${short(h.id)}] ${p ? SCOPE_LABEL(p, names) : "未知"} ${KIND_LABEL[h.kind]}${p ? marks(p) + linkState(p) : ""}: ${firstLine(p ? p.text : h.text, SEARCH_BRIEF_CHARS)}`);
+        console.log(`  [${short(h.id)}] ${p ? SCOPE_LABEL(p, names) : "未知"} ${KIND_LABEL[h.kind]}${p ? marks(p) : ""}${hitMark(h)}${p ? linkState(p) : ""}: ${firstLine(p ? p.text : h.text, SEARCH_BRIEF_CHARS)}`);
       }
     }
     if (degraded) console.log(`（仅全文检索：${reason ?? degraded}${crossProject && !cross ? "；跨项目段也要算查询向量，这次没查" : ""}）`);
@@ -679,8 +705,8 @@ function cmdGet(argv: string[]): void {
     const quotes = quoteLines(p);
     const linesOut = [
       `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${unresolvedMark(p)}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
-      p.confirmed && p.confirmed_by === "code" ? "已由代码核验转正" : "",
-      p.confirmed && p.confirmed_by === "corroboration" ? "已由跨会话印证转正（两个以上会话里用户都这样说过）" : "",
+      confirmedLine(p),
+      writtenLine(p),
       p.expired ? `到期未确认，已归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       p.trigger ? `触发: ${p.trigger}` : "",
       p.import_ref ? `导入自 Pensieve ${p.import_ref.id}: ${p.import_ref.path}${p.import_ref.also?.length ? `（另有 ${p.import_ref.also.length} 处相同副本）` : ""}` : "",
@@ -704,7 +730,7 @@ function cmdGet(argv: string[]): void {
         const c = store.project().props.get(id)!;
         return `待确认的纠正 [${short(id)}]: ${c.text}（认可用 ab confirm ${short(id)}，否决用 ab archive ${short(id)}）`;
       }),
-      `来源: ${p.source.summary}（${p.source.host ?? "未知宿主"}）${p.source.transcript ? "" : "（无 transcript）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
+      `来源: ${p.source.summary}（${p.source.host ?? "命令行"}）${p.source.transcript ? "" : "（没有可展开的对话记录）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
     if (p.model_outputs.length) {
       const labels = { remember: "抽取", evidence: "追加证据", relate: "关系判定", verify: "代码核验" };
@@ -824,8 +850,11 @@ function cmdConfirm(argv: string[]): void {
       return;
     }
     const found = detectHost();
-    store.lifecycle("confirm", p.id, found.ok ? (found.detection?.session_id ?? null) : null);
+    const det = found.ok ? found.detection : null;
+    store.lifecycle("confirm", p.id, det?.session_id ?? null);
     console.log(`已确认 [${short(p.id)}] ${p.text}`);
+    // §12.6.7 T7：在 agent 会话里执行也记成用户确认，所以把这件事说出来，并记下是哪个会话执行的
+    if (det) console.log(`这次记为用户确认，由 ${det.host} 会话 ${(det.session_id ?? "未知").slice(0, 8)} 执行。只有用户明确说认可时才该执行这条命令；如果不是，请如实告诉用户。`);
   } finally {
     store.close();
   }
@@ -1488,6 +1517,7 @@ function cmdStatus(argv: string[] = []): void {
       embedReason: reason,
       chatConfig: loadChatConfig(home()),
       now: new Date(),
+      code: codeVersion(),
     }));
   } finally {
     store.close();

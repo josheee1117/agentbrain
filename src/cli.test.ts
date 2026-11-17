@@ -277,7 +277,7 @@ test("--worker 排除未确认的 for_workers 全局规则", () => {
 
 test("search、get、archive 基本流程", () => {
   const s = ab(["search", "全局锁"], alpha);
-  assert.match(s.out, /alpha 坑: 别在 alpha 里用全局锁/);
+  assert.match(s.out, /alpha 坑\[用户确认\]\[字面\]: 别在 alpha 里用全局锁/);
   const id = s.out.match(/\[([0-9a-f]{8})\]/)![1];
 
   const g = ab(["get", id], beta);
@@ -324,7 +324,7 @@ test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 se
   assert.match(before.out, new RegExp(`锁用全局一把（有待确认的纠正 \\[${neuId}\\]）`));
   assert.doesNotMatch(before.out, /锁按账户分/);
   assert.match(run(["get", oldId]).out, new RegExp(`\n待确认的纠正 \\[${neuId}\\]: 锁按账户分（认可用 ab confirm ${neuId}，否决用 ab archive ${neuId}）`));
-  assert.match(run(["search", "全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
+  assert.match(run(["search", "全局一把"]).out, new RegExp(`坑\\[用户确认\\]\\[字面\\]（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
   assert.match(run(["recall", "锁用全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
   assert.equal(run(["confirm", neuId]).code, 0);
   const after = run(["brief"]);
@@ -348,7 +348,7 @@ test("--from-worker 格式错误报错；找不到的子会话仍记下且来源
   assert.match(r.out, /未找到子代理会话记录/);
   const id = r.out.match(/\[([0-9a-f]{8})\]/)![1];
   const g = ab(["get", id], alpha);
-  assert.match(g.out, /（pi）（无 transcript）（经 pi 主会话转记）/);
+  assert.match(g.out, /（pi）（没有可展开的对话记录）（经 pi 主会话转记）/);
 });
 
 test("会话解析：各入口保留原报错，首个冒号之后都是 session id", async () => {
@@ -428,9 +428,9 @@ test("假 embedding：remember/correct 同步、search 混合、status 数量、
   const neighborId = neighbor.out.match(/\[([0-9a-f]{8})\]/)![1];
   const correctedId = corrected.out.match(/\[([0-9a-f]{8})\]/)![1];
   const got = run(["get", correctedId]).out;
-  assert.match(got, new RegExp(`\\n相关（向量近邻）:\\n  \\[${neighborId}\\] alpha 事实: 猫粮放在柜子里（1\\.00）\\n$`));
+  assert.match(got, new RegExp(`\\n相关（向量近邻）:\\n  \\[${neighborId}\\] alpha 事实\\[用户确认\\]: 猫粮放在柜子里（1\\.00）\\n$`));
   // §11.6 (ii)：被替代的旧条目在"关联"里列一行并标状态，但不当近邻
-  assert.match(got, /\n关联:\n  纠正了 \[[0-9a-f]{8}\]（已被替代） alpha 事实: 猫咪很可爱\n/);
+  assert.match(got, /\n关联:\n  纠正了 \[[0-9a-f]{8}\]（已被替代） alpha 事实\[用户确认\]: 猫咪很可爱\n/);
   assert.doesNotMatch(got.slice(got.indexOf("相关（向量近邻）")), /猫咪很可爱/, "已被替代的旧条目只出现在关联里，不当近邻");
   config("fake-two");
   assert.match(run(["status"]).out, /向量: fake-two，已向量化 0\/3/);
@@ -678,13 +678,13 @@ test("关联双向显示：被补充、合并自（对方已归档，标状态�
 
   const g = ab(["get", id8(a)], alpha, own);
   assert.equal(g.code, 0, g.err);
-  assert.match(g.out, new RegExp(`\\n关联:\\n(  .*\\n)*  被它补充 \\[${id8(b)}\\] alpha 决定: 缓存层 Redis 的过期时间定为 300 秒`));
-  assert.match(g.out, new RegExp(`  合并自 \\[${id8(c)}\\]（已归档） alpha 决定: 缓存层用 Redis 做方案甲的旧说法`));
+  assert.match(g.out, new RegExp(`\\n关联:\\n(  .*\\n)*  被它补充 \\[${id8(b)}\\] alpha 决定\\[用户确认\\]: 缓存层 Redis 的过期时间定为 300 秒`));
+  assert.match(g.out, new RegExp(`  合并自 \\[${id8(c)}\\]（已归档） alpha 决定\\[用户确认\\]: 缓存层用 Redis 做方案甲的旧说法`));
   assert.equal(g.out.split(`[${id8(b)}]`).length - 1, 1, "关联里列过的不再在邻近块里重复");
 
   const gc = ab(["get", id8(c)], alpha, own);
   assert.equal(gc.code, 0, gc.err);
-  assert.match(gc.out, new RegExp(`  已并入 \\[${id8(a)}\\] alpha 决定: 缓存层采用 Redis 方案甲`));
+  assert.match(gc.out, new RegExp(`  已并入 \\[${id8(a)}\\] alpha 决定\\[用户确认\\]: 缓存层采用 Redis 方案甲`));
   assert.match(gc.out, new RegExp(`撤销用 ab archive --reactivate ${id8(c)}`));
 });
 
@@ -719,7 +719,7 @@ test("冲突两边都显示；被确认的纠正替代后，新条和旧条（�
   assert.match(s.out, new RegExp(`纠正了 \\[${id8(old)}\\]（已被替代）`), s.out);
   const g = ab(["get", id8(old)], alpha, own);
   assert.equal(g.code, 0, g.err);
-  assert.match(g.out, new RegExp(`  被它纠正 \\[${id8(fix)}\\] alpha 决定: 队列消费者改用 4 线程`));
+  assert.match(g.out, new RegExp(`  被它纠正 \\[${id8(fix)}\\] alpha 决定\\[用户确认\\]: 队列消费者改用 4 线程`));
 });
 
 test("search 里 why 只打一遍（回归：之前正文用了索引文本，why 出现两次）", async () => {
@@ -733,7 +733,7 @@ test("search 里 why 只打一遍（回归：之前正文用了索引文本，wh
   assert.equal(s.code, 0, s.err);
   assert.doesNotMatch(s.out, /仅全文检索/, "确实走了混合检索");
   assert.equal(s.out.split("周五上线出过两次事故").length - 1, 1, s.out);
-  assert.match(s.out, /alpha 决定: 发布流程改为周四冻结\n  为什么: 周五上线出过两次事故/);
+  assert.match(s.out, /alpha 决定\[用户确认\]\[字面\+相似 1\.00\]: 发布流程改为周四冻结\n  为什么: 周五上线出过两次事故/);
 });
 
 test("search 前 8 条全文，第 9–16 名每条一行，再往后不出", async () => {
@@ -788,7 +788,7 @@ test("§8.11.4 跨项目段：已登记项目里搜索带出其他项目的相�
   const cross = lines.slice(head + 1).filter(Boolean);
   assert.equal(cross.length, 3, `门槛 0.65 挡掉 0.62，最多 3 条：\n${s.out}`);
   assert.deepEqual(cross.map((l) => /（([0-9.]+)）$/.exec(l)?.[1]), ["0.90", "0.80", "0.70"]);
-  assert.match(cross[0], new RegExp(`^\\[${betaIds[0]}\\] beta 决定: beta 的缓存决定 SIM0\\.9（0\\.90）$`), s.out);
+  assert.match(cross[0], new RegExp(`^\\[${betaIds[0]}\\] beta 决定\\[用户确认\\]: beta 的缓存决定 SIM0\\.9（0\\.90）$`), s.out);
   assert.ok(!s.out.includes(betaIds[3]), "过不了门槛的不出");
   assert.ok(!s.out.includes("alpha 的缓存决定（"), "本项目的条目不在跨项目段里");
   assert.doesNotMatch(run(["search", "缓存策略", "--kind", "note"]).out, /beta 的缓存决定/, "--kind 同样限定跨项目段");

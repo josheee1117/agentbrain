@@ -140,3 +140,39 @@ test("§11.5 (i)：主会话和子代理的 brief 都点出该先 ab search 的�
   assert.match(full, /还有 \d+ 条放不下/);
   assert.ok(full.includes(SEARCH_HINT), "超预算时提示行仍在");
 });
+
+// ---------- §12.6.7 T1 / T7 ----------
+
+test("§12.6.7 T1：代码核验转正的坑在 brief 里标出来，用户确认的不标；有这类条目才多一行说明", () => {
+  const s = seeded();
+  const plain = brief(s, alpha, undefined, false);
+  assert.doesNotMatch(plain, /代码核验/, "全是用户确认的：不多说明行");
+  const pid = s.ensureProject("alpha");
+  const auto = s.remember(pid, "s2", false, { kind: "pitfall", text: "alpha 坑 P2 模型抽取的", confirmed: false, origin: "extract", source: src });
+  assert.doesNotMatch(brief(s, alpha, undefined, false), /P2/, "未确认的不进 brief（门槛不变）");
+  s.commit([{ kind: "verify", project_id: pid, session_id: null, target_id: auto, body: { outcome: "verified", head: "abc", refs: [], model: "m" } }], () => {});
+  const out = brief(s, alpha, undefined, false);
+  assert.match(out, /^- \[[0-9a-f]{8}\] alpha 坑 P2 模型抽取的（代码核验）$/m);
+  assert.match(out, /^- \[[0-9a-f]{8}\] alpha 坑 P1$/m, "用户确认的照旧不带标注");
+  assert.match(out, /^没标注的条目是用户确认过的；标（代码核验）的由模型核对代码后转正，没有人确认过。$/m);
+  assert.ok(out.length <= BRIEF_MAX_CHARS);
+});
+
+test("§12.6.7 T7：未确认提示写明用户明确认可才能确认", () => {
+  const out = brief(seeded(), alpha, undefined, false);
+  assert.match(out, /另有 1 条 agent 自记未确认（ab search 可见）。用户明确说认可才执行 ab confirm <id>，不要自己确认。/);
+});
+
+test("§12.6.7 T1：条目很多时说明行和标注都算进预算，总长不超上限", () => {
+  const s = new Store(":memory:", ":memory:");
+  const pid = s.ensureProject("alpha");
+  for (let i = 0; i < 80; i++) {
+    const id = s.remember(pid, "s", false, { kind: "pitfall", text: `坑 ${i} ${"很长的一句说明".repeat(8)}`, confirmed: false, origin: "extract", source: src });
+    s.commit([{ kind: "verify", project_id: pid, session_id: null, target_id: id, body: { outcome: "verified", head: "abc", refs: [], model: "m" } }], () => {});
+  }
+  const out = brief(s, alpha, undefined, false);
+  assert.ok(out.length <= BRIEF_MAX_CHARS, `brief ${out.length} 字`);
+  assert.match(out, /^没标注的条目是用户确认过的/m);
+  assert.match(out, /（代码核验）$/m);
+  assert.match(out, /还有 \d+ 条放不下/);
+});

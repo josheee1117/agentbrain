@@ -130,7 +130,7 @@ test("开关打开：距上一轮超过 20 分钟的下一轮拉起 ab work，�
   assert.equal(calls[0].reviewer, "1", "子模型会话带 AGENTBRAIN_REVIEWER=1，不会被登记、不会再触发抽取");
   assert.ok(calls[0].args.includes("--model") && calls[0].args.includes("haiku") && calls[0].args.includes("max"));
   const out = (await ab(["search", "dev server e2e"])).out;
-  assert.match(out, /alpha 坑\[未确认·自动沉淀\]: 改了前端 UI 后要先重启 dev server 再跑 e2e，否则测的是旧代码/);
+  assert.match(out, /alpha 坑\[未确认·自动沉淀\]\[字面\+相似 \d\.\d\d\]: 改了前端 UI 后要先重启 dev server 再跑 e2e，否则测的是旧代码/);
   assert.match(out, /\n  为什么: 上次 e2e 全绿但页面没变，查了半小时才发现 dev server 没热更新到构建产物/, "搜索结果显示全文");
   assert.match(out, /\n  场景: 当改完前端代码要跑 e2e 时/);
 });
