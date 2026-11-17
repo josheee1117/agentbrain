@@ -114,7 +114,7 @@ function telemetryOf(db: DatabaseSync, now: Date, reviewDue: number): Telemetry 
   const modelFailed = all.length - runs.length;
   const ms = runs.map((r) => r.ms).sort((a, b) => a - b);
   const daily = new Map<string, { day: string; hit: number; nohit: number; error: number }>();
-  for (let i = 29; i >= 0; i--) {
+  for (let i = 89; i >= 0; i--) {
     const day = new Date(now.getTime() - i * DAY).toISOString().slice(0, 10);
     daily.set(day, { day, hit: 0, nohit: 0, error: 0 });
   }
@@ -379,29 +379,29 @@ export function renderHtml(data: ViewData): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>agentbrain 记忆看板</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;background:#0b1020;color:#e6e9f2}
-header{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:1px solid #1e2742;background:linear-gradient(90deg,#0f1630,#111a3a);position:sticky;top:0;z-index:5}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 -apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;background:#000;color:#e6e9f2}
+header{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.03);backdrop-filter:blur(20px);position:sticky;top:0;z-index:5}
 .logo{width:32px;height:32px;border-radius:9px;background:conic-gradient(#7c5cff,#2dd4bf,#7c5cff);display:grid;place-items:center;font-weight:800}
 h1{font-size:17px;margin:0}.sub{color:#8a93b2;font-size:12px}
-nav{margin-left:24px;display:flex;gap:4px}nav a{padding:6px 13px;border-radius:8px;color:#9aa3c2;cursor:pointer;font-size:13px}nav a.on{background:#1d2650;color:#fff}
+nav{margin-left:24px;display:flex;gap:4px}nav a{padding:6px 13px;border-radius:8px;color:#9aa3c2;cursor:pointer;font-size:13px}nav a.on{background:rgba(255,255,255,.1);color:#fff}
 .meta{margin-left:auto;text-align:right;font-size:12px;color:#8a93b2}.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;margin-left:6px}
 .b-old{background:#4a1d2a;color:#fda4af}
 main{padding:20px 28px;display:none;gap:16px}main.on{display:grid}
-.grid{display:grid;gap:16px}.card{background:#111830;border:1px solid #1e2742;border-radius:14px;padding:16px}
+.grid{display:grid;gap:16px}.card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;backdrop-filter:blur(10px)}
 .card h3{margin:0 0 10px;font-size:13px;color:#aab3d4;font-weight:600}
 .kpi .v{font-size:28px;font-weight:700}.kpi .l{color:#8a93b2;font-size:12px}.kpi .d{font-size:12px;margin-top:6px;color:#5eead4}
 .row{display:grid;grid-template-columns:90px 1fr 48px;align-items:center;gap:10px;font-size:12px;color:#aab3d4;margin:7px 0}
-.bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:#1a2240}
+.bar{display:flex;height:12px;border-radius:6px;overflow:hidden;background:rgba(255,255,255,.06)}
 .lg{display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:#8a93b2;margin-top:8px}.lg i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}
-table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:6px;border-bottom:1px solid #1a2240;text-align:left}th{color:#7f88a8;font-weight:500}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:6px;border-bottom:1px solid rgba(255,255,255,.06);text-align:left}th{color:#7f88a8;font-weight:500}
 .num{text-align:right;font-variant-numeric:tabular-nums}.dim{color:#5b6488}
 .pill{padding:1px 8px;border-radius:99px;font-size:11px;margin-right:4px;display:inline-block}
 .k-decision{background:#2a1f5c;color:#c4b5fd}.k-pitfall{background:#4a1d2a;color:#fda4af}.k-rule{background:#0f3b3a;color:#5eead4}.k-note{background:#3b3416;color:#fde68a}
 .s-user{color:#22c55e}.s-code{color:#38bdf8}.s-corroboration{color:#a78bfa}.s-unconfirmed{color:#94a3b8}.s-stale{color:#ef4444}
-.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.filters input,.filters select{background:#0b1020;color:#e6e9f2;border:1px solid #2a3460;border-radius:8px;padding:5px 8px}
-.item{padding:10px 12px;border-bottom:1px solid #1a2240;cursor:pointer}.item:hover,.item.sel{background:#16204a}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.filters input,.filters select{background:rgba(255,255,255,.05);color:#e6e9f2;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:5px 8px}
+.item{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer}.item:hover,.item.sel{background:rgba(255,255,255,.06)}
 .item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-a{color:#93c5fd;cursor:pointer}#tip{position:fixed;pointer-events:none;background:#020617;border:1px solid #2a3460;color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;max-width:380px;display:none;z-index:9}
+a{color:#93c5fd;cursor:pointer}#tip{position:fixed;pointer-events:none;background:#111;border:1px solid rgba(255,255,255,.15);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;max-width:380px;display:none;z-index:9}
 </style></head><body>
 <header><div class="logo">ab</div><div><h1>agentbrain 记忆看板</h1><div class="sub" id="sub"></div></div>
 <nav><a data-tab="ov" class="on">概览</a><a data-tab="gr">关联图</a><a data-tab="ls">记忆</a><a data-tab="mp">向量地图</a></nav>
@@ -410,7 +410,7 @@ a{color:#93c5fd;cursor:pointer}#tip{position:fixed;pointer-events:none;backgroun
 <main id="gr"><div class="card" style="padding:0;overflow:hidden"><div style="display:flex;gap:14px;padding:12px 16px;border-bottom:1px solid #1e2742;font-size:13px;color:#aab3d4;flex-wrap:wrap">
 <b style="color:#fff">关联图</b><span id="gcount"></span><span class="lg" style="margin:0 0 0 auto"><span><i style="background:#7c5cff"></i>决定</span><span><i style="background:#f472b6"></i>坑</span><span><i style="background:#2dd4bf"></i>规则</span><span><i style="background:#fbbf24"></i>事实</span>
 <span style="color:#64748b">— 补充</span><span style="color:#60a5fa">— 合并</span><span style="color:#ef4444">— 冲突</span><span style="color:#e2e8f0">— 替代（已生效）</span><span style="color:#f59e0b">┄ 替代（未生效）</span><span>白描边=用户确认 · 大小=注入会话数</span></span></div>
-<svg id="gsvg" width="100%" style="display:block;background:radial-gradient(circle at 50% 45%,#141d40,#0b1020)"></svg></div></main>
+<svg id="gsvg" width="100%" style="display:block;background:radial-gradient(circle at 50% 45%,#0a0a1a,#000)"></svg></div></main>
 <main id="ls"><div class="grid" style="grid-template-columns:minmax(360px,1fr) 1.4fr;align-items:start">
 <div class="card" style="padding:0"><div class="filters" style="padding:12px"><input type="search" id="q" placeholder="搜索正文 / id" style="flex:1">
 <select id="fp"></select><select id="fk"></select><select id="fs"></select><select id="fu"><option value="">全部</option><option value="never">从未注入</option><option value="cited">被引用过</option><option value="mismatch">标题不符</option></select>
@@ -444,13 +444,44 @@ const lt=cnt(E.flatMap(e=>e.links),l=>l.type);
 const hostRows=T.hosts.map(h=>'<tr><td>'+esc(h.host)+'</td><td>'+esc(h.model)+'</td><td class="num">'+h.sessions+'</td><td class="num">'+h.recall_turns+'</td><td class="num">'+h.marked_turns+'</td><td class="num">'+(h.recall_turns?Math.round(100*h.marked_turns/h.recall_turns)+'%':'<span class="dim">—</span>')+'</td></tr>').join('');
 const maxK=Math.max(1,...Object.values(kd));
 const days=T.recall_daily,mx=Math.max(1,...days.map(d=>d.hit+d.nohit+d.error));
-const chart='<svg viewBox="0 0 600 120" width="100%">'+days.map((d,i)=>{let y=110,s='';[['hit','#7c5cff'],['nohit','#334155'],['error','#ef4444']].forEach(([k,c])=>{const h=100*d[k]/mx;if(h>0){s+='<rect x="'+(i*20+2)+'" y="'+(y-h).toFixed(1)+'" width="16" height="'+h.toFixed(1)+'" fill="'+c+'" rx="2"><title>'+d.day+' '+k+' '+d[k]+'</title></rect>';y-=h}});return s}).join('')+'</svg>';
+// 90 天时间轴：召回轮数按 recall_runs 算，新增记忆按条目 created 算
+const newByDay={};A.forEach(e=>{const d=e.created.slice(0,10);newByDay[d]=(newByDay[d]||0)+1});
+const maxNew=Math.max(1,...Object.values(newByDay));
+const timeline='<svg viewBox="0 0 900 140" width="100%" style="display:block">'+days.map((d,i)=>{
+const x=i*10+5,total=d.hit+d.nohit+d.error,h1=total?Math.max(2,60*d.hit/mx):0,h2=total?Math.max(2,60*d.nohit/mx):0,h3=total?Math.max(2,60*d.error/mx):0;
+const nw=newByDay[d.day]||0,h4=nw?Math.max(2,60*nw/maxNew):0;
+return '<rect x="'+x+'" y="'+(110-h1)+'" width="8" height="'+h1+'" fill="#7c5cff" rx="1"><title>'+d.day+' 命中 '+d.hit+'</title></rect>'+
+'<rect x="'+x+'" y="'+(110-h1-h2)+'" width="8" height="'+h2+'" fill="#334155" rx="1"><title>'+d.day+' 没命中 '+d.nohit+'</title></rect>'+
+'<rect x="'+x+'" y="'+(110-h1-h2-h3)+'" width="8" height="'+h3+'" fill="#ef4444" rx="1"><title>'+d.day+' 出错 '+d.error+'</title></rect>'+
+'<rect x="'+x+'" y="'+115+'" width="8" height="'+h4+'" fill="#2dd4bf" rx="1"><title>'+d.day+' 新增 '+nw+'</title></rect>';
+}).join('')+'<line x1="0" y1="112" x2="900" y2="112" stroke="#1e2742" stroke-width="1"/></svg>';
+// 类型×项目矩阵
+const matrixProjects=[...new Set(A.map(e=>e.project))].sort();
+const matrix=matrixProjects.map(p=>{
+const mine=A.filter(e=>e.project===p);
+const cells=Object.keys(KIND).map(k=>{
+const items=mine.filter(e=>e.kind===k),delivered=items.filter(e=>e.usage.inject_total>0).length,total=items.length;
+const rate=total?Math.round(100*delivered/total):0;
+const bg=total?('rgba(124,92,255,'+(0.08+0.5*rate/100)+')'):'transparent';
+return '<td style="background:'+bg+';text-align:center;padding:8px 4px;cursor:'+(total?'pointer':'default')+'" '+(total?'data-go-project="'+esc(p)+'" data-go-kind="'+k+'"':'')+'>'+(total?('<div style="font-weight:600">'+delivered+'<span class="dim"> / '+total+'</span></div><div class="dim" style="font-size:11px">'+rate+'%</div>'):'<span class="dim">—</span>')+'</td>';
+}).join('');
+return '<tr><td style="padding:8px 6px;font-size:12px">'+esc(p)+'</td>'+cells+'</tr>';
+}).join('');
+const matrixTable='<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="text-align:left;padding:8px 6px">项目</th>'+Object.keys(KIND).map(k=>'<th style="text-align:center;padding:8px 4px"><span class="pill k-'+k+'">'+KIND[k]+'</span></th>').join('')+'</tr>'+matrix+'</table>';
+// 首页第一屏：一句话 + 时间轴 + 矩阵 + 关系图入口
+const hero='<div class="card" style="text-align:center;padding:28px 16px"><div style="font-size:20px;font-weight:700;margin-bottom:8px">'+n(A.length)+' 条有效记忆 · '+matrixProjects.length+' 个项目 · 过去 90 天召回 '+n(T.recall_runs.total)+' 轮</div><div class="sub">命中 '+n(T.recall_runs.hit)+' · 没命中 '+n(T.recall_runs.nohit)+' · 出错 '+n(T.recall_runs.error)+(T.recall_runs.model_failed?' · 模型没回答 '+n(T.recall_runs.model_failed):'')+'</div></div>';
+const timelineCard='<div class="card"><h3>90 天时间轴（召回轮数 + 新增记忆）</h3>'+timeline+'<div class="lg"><span><i style="background:#7c5cff"></i>命中</span><span><i style="background:#334155"></i>没命中</span><span><i style="background:#ef4444"></i>出错</span><span><i style="background:#2dd4bf"></i>新增记忆（下方）</span></div></div>';
+const matrixCard='<div class="card"><h3>类型 × 项目矩阵（被交付数 / 总数，颜色深浅 = 交付率）</h3>'+matrixTable+'<div class="sub" style="margin-top:6px">「被交付」= 该条目出现在 inject_log 的次数（含 brief/search/get/recall），不等于「被召回」。点击单元格看该组合下的记忆。</div></div>';
+const graphCard='<div class="card" style="text-align:center;padding:20px"><h3>记忆关系图</h3><div class="sub" style="margin-bottom:10px">边是模型判定的关系（补充/合并/冲突/替代），未经人工核实</div><a data-tab-link="gr" style="display:inline-block;padding:8px 20px;background:#1d2650;border-radius:8px;color:#93c5fd;cursor:pointer">打开关联图 →</a></div>';
 const top=A.filter(e=>e.usage.inject_total>0).sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions).slice(0,8);
 const conflicts=A.filter(e=>e.links.some(l=>l.type==='conflicts'||l.type==='pending_correction')).length;
 const pendingSup=E.filter(e=>e.links.some(l=>l.type==='supersedes_pending')).length;
 const supStillInj=E.filter(e=>e.state==='superseded'&&e.usage.inject_total>0).length;
 const mism=A.reduce((s,e)=>s+e.usage.mismatched,0);
-$('ov').innerHTML='<div class="grid" style="grid-template-columns:repeat(5,1fr)">'+
+$('ov').innerHTML=hero+
+'<div class="grid" style="grid-template-columns:1fr">'+timelineCard+'</div>'+
+'<div class="grid" style="grid-template-columns:1.2fr 1fr">'+matrixCard+graphCard+'</div>'+
+'<div class="grid" style="grid-template-columns:repeat(5,1fr)">'+
 kpi('有效记忆',n(A.length),'共 '+n(D.counts.total)+' 条 · 用户确认 '+(st.user||0),'未确认 '+(st.unconfirmed||0)+' · 代码核验 '+(st.code||0))+
 kpi('有关联的记忆',n(linked),'补充 '+((lt.refines||0))+' · 合并 '+(lt.merged_into||0)+' · 冲突 '+(lt.conflicts||0),'替代未生效 '+pendingSup,pendingSup?'#fbbf24':'')+
 kpi('被注入过',n(inj)+'<span class="dim" style="font-size:15px"> / '+n(A.length)+'</span>',(T.since?'明细统计自 '+esc(T.since.slice(0,10)):'还没有注入明细')+' · 老累计有记录 '+legacy+' 条',never+' 条从未被注入',never?'#fbbf24':'')+
@@ -460,8 +491,8 @@ kpi('抽取失败',n(T.capture.failed_sessions),'会话 · 延后窗口 '+T.capt
 Object.keys(KIND).map(k=>'<div class="row"><span>'+KIND[k]+'</span><div class="bar"><div style="width:'+(100*(kd[k]||0)/maxK)+'%;background:'+KC[k]+'"></div></div><span class="num">'+(kd[k]||0)+'</span></div>').join('')+
 '<h3 style="margin-top:14px">确认状态</h3><div class="bar" style="height:18px">'+Object.keys(ST).map(k=>'<div title="'+ST[k]+'" style="width:'+(100*(st[k]||0)/Math.max(1,A.length))+'%;background:'+SC[k]+'"></div>').join('')+'</div>'+
 '<div class="lg">'+Object.keys(ST).map(k=>'<span><i style="background:'+SC[k]+'"></i>'+ST[k]+' '+(st[k]||0)+'</span>').join('')+'</div></div>'+
-'<div class="card"><h3>召回（近 30 天每天）· 共 '+n(T.recall_runs.total)+' 次，命中 '+n(T.recall_runs.hit)+'，出错 '+n(T.recall_runs.error)+(T.recall_runs.model_failed?'，模型没回答（不计）'+n(T.recall_runs.model_failed):'')+(T.recall_runs.p50_ms!==null?' · 耗时 p50 '+T.recall_runs.p50_ms+'ms / p95 '+T.recall_runs.p95_ms+'ms':'')+'</h3>'+chart+
-'<div class="lg"><span><i style="background:#7c5cff"></i>命中</span><span><i style="background:#334155"></i>没命中</span><span><i style="background:#ef4444"></i>出错</span><span>宿主侧超时不经过 ab，不在这里</span></div></div></div>'+
+'<div class="card"><h3>召回统计 · 共 '+n(T.recall_runs.total)+' 次，命中 '+n(T.recall_runs.hit)+'，出错 '+n(T.recall_runs.error)+(T.recall_runs.model_failed?'，模型没回答（不计）'+n(T.recall_runs.model_failed):'')+(T.recall_runs.p50_ms!==null?' · 耗时 p50 '+T.recall_runs.p50_ms+'ms / p95 '+T.recall_runs.p95_ms+'ms':'')+'</h3>'+
+'<div class="sub" style="margin-top:6px">宿主侧超时不经过 ab，不在这里</div></div></div>'+
 '<div class="grid" style="grid-template-columns:1.2fr 1fr"><div class="card"><h3>标注率（按宿主 / 模型）</h3><table><tr><th>宿主</th><th>模型</th><th class="num">会话</th><th class="num">开关打开时有召回的回合</th><th class="num">标了 ab-used 的回合</th><th class="num">标注率</th></tr>'+(hostRows||'<tr><td colspan="6" class="dim">还没有记录</td></tr>')+'</table>'+
 '<div class="sub" style="margin-top:6px">"用上"= 模型在回复末尾自报的 ab-used，未经人工核对；标错请纠正。</div></div>'+
 '<div class="card"><h3>记忆可见性（§11.9）</h3>'+
@@ -475,7 +506,8 @@ Object.keys(KIND).map(k=>'<div class="row"><span>'+KIND[k]+'</span><div class="b
 '<div class="card"><h3>调优清单（只是建议，不会自动改任何条目）</h3><table>'+
 [['从未被注入的有效条目',never,'fu=never'],['冲突 / 待确认纠正未解决',conflicts,''],['替代未生效（纠正未确认或已归档）',pendingSup,''],['已被替代却仍被注入',supStillInj,''],['标题不符的引用',mism,'fu=mismatch'],['抽取失败会话 / 延后窗口',T.capture.failed_sessions+' / '+T.capture.deferred_windows,''],['到期待复审',T.review_due,'']].map(r=>'<tr><td>'+(r[2]?'<a data-filter="'+r[2]+'">'+r[0]+'</a>':r[0])+'</td><td class="num">'+r[1]+'</td></tr>').join('')+'</table></div></div>'+
 '<div class="card"><h3>注入最多的记忆（按会话数）</h3><table><tr><th>记忆</th><th class="num">注入会话</th><th class="num">注入次数</th><th class="num">被引用会话</th></tr>'+
-(top.map(e=>'<tr><td><a data-go="'+e.id+'"><span class="pill k-'+e.kind+'">'+KIND[e.kind]+'</span>'+esc(e.text.split('\\n')[0].slice(0,70))+'</a>'+(e.status==='unconfirmed'?' <span class="pill" style="background:#3b2a0a;color:#fbbf24">未确认</span>':'')+'</td><td class="num">'+e.usage.inject_sessions+'</td><td class="num">'+e.usage.inject_total+'</td><td class="num">'+e.usage.cited_sessions+'</td></tr>').join('')||'<tr><td colspan="4" class="dim">还没有注入记录</td></tr>')+'</table></div>'}
+(top.map(e=>'<tr><td><a data-go="'+e.id+'"><span class="pill k-'+e.kind+'">'+KIND[e.kind]+'</span>'+esc(e.text.split('\\n')[0].slice(0,70))+'</a>'+(e.status==='unconfirmed'?' <span class="pill" style="background:#3b2a0a;color:#fbbf24">未确认</span>':'')+'</td><td class="num">'+e.usage.inject_sessions+'</td><td class="num">'+e.usage.inject_total+'</td><td class="num">'+e.usage.cited_sessions+'</td></tr>').join('')||'<tr><td colspan="4" class="dim">还没有注入记录</td></tr>')+'</table></div>';
+}
 let gdone=false;function graph(){if(gdone)return;gdone=true;
 const N=E.filter(e=>e.g),svg=$('gsvg');$('gcount').textContent=N.length+' 条带关联的记忆';
 if(!N.length){svg.setAttribute('height',120);svg.innerHTML='<text x="20" y="60" fill="#8a93b2">没有带关联的记忆</text>';return}
@@ -507,7 +539,7 @@ $('detail').innerHTML='<div class="card"><div><span class="pill k-'+e.kind+'">'+
 '<div class="grid" style="grid-template-columns:1fr 1fr;margin-top:16px"><div class="card"><h3>关联</h3>'+(e.links.length?e.links.map(l=>'<div style="margin:5px 0"><span class="pill" style="background:#1d2650;color:'+EC[l.type]+'">'+LINK[l.type]+'</span>'+ref(l.id)+'</div>').join(''):'<span class="dim">无</span>')+'</div>'+
 '<div class="card"><h3>向量近邻</h3>'+(e.neighbors.length?e.neighbors.map(x=>'<div style="margin:5px 0"><span class="num" style="color:#5eead4">'+x.similarity.toFixed(2)+'</span> '+ref(x.id)+'</div>').join(''):'<span class="dim">无</span>')+'</div></div>'+
 (e.sessions.length||e.evidence.length||e.code?'<div class="card" style="margin-top:16px"><h3>来源与证据</h3>'+e.sessions.map(s=>'<div class="sub">会话 '+esc(s)+'</div>').join('')+e.evidence.map(v=>'<div class="sub">'+esc(v.role)+(v.anchor?' @ '+esc(v.anchor):'')+'</div>').join('')+(e.code?'<div class="sub">'+(e.code.stale?'与代码不符':'代码证据')+'：'+e.code.refs.map(esc).join('<br>')+'</div>':'')+'</div>':'');list()}
-document.addEventListener('click',ev=>{const f=ev.target.closest('[data-filter]');if(f){const [k,v]=f.dataset.filter.split('=');$(k).value=v;tab('ls');list();return}const t=ev.target.closest('[data-go],[data-id]');if(t){const id=t.dataset.go||t.dataset.id;const e=byId.get(id);if(e&&e.state!=='active')$('fa').checked=true;tab('ls');detail(id)}});
+document.addEventListener('click',ev=>{const f=ev.target.closest('[data-filter]');if(f){const [k,v]=f.dataset.filter.split('=');$(k).value=v;tab('ls');list();return}const tl=ev.target.closest('[data-tab-link]');if(tl){tab(tl.dataset.tabLink);return}const mp=ev.target.closest('[data-go-project]');if(mp){$('fp').value=mp.dataset.goProject;$('fk').value=mp.dataset.goKind;tab('ls');list();return}const t=ev.target.closest('[data-go],[data-id]');if(t){const id=t.dataset.go||t.dataset.id;const e=byId.get(id);if(e&&e.state!=='active')$('fa').checked=true;tab('ls');detail(id)}});
 const tip=$('tip');document.addEventListener('mousemove',ev=>{const id=ev.target.dataset&&ev.target.dataset.id;if(!id){tip.style.display='none';return}const e=byId.get(id);tip.textContent='['+KIND[e.kind]+' · '+e.project+'] '+e.text.slice(0,160);tip.style.display='block';tip.style.left=(ev.clientX+12)+'px';tip.style.top=(ev.clientY+12)+'px'});
 ['q','fp','fk','fs','fu','fa'].forEach(k=>$(k).addEventListener('input',list));
 overview();list();const first=A.slice().sort((a,b)=>b.usage.inject_sessions-a.usage.inject_sessions)[0];if(first)detail(first.id);
