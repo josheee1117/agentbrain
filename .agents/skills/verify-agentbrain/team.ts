@@ -65,10 +65,11 @@ const ab = (args: string[], cwd = repo) => {
 };
 
 // ---- 临时项目 team-demo ----
-writeFileSync(join(repo, "README.md"), "# team-demo\n\n验收用的演示项目。发布脚本在 scripts/ 下。\n");
-// 每个宿主会话开始前删掉 .state，保证 deploy.sh 第一次一定失败
-writeFileSync(join(repo, "scripts/deploy.sh"), "#!/bin/sh\nif [ ! -f .state/migrated ]; then\n  echo 'ERROR: schema_migrations 落后 3 个版本，拒绝发布（退出码 3）。deploy.sh 不会自动迁移，先执行 sh scripts/smoke.sh --migrate 再重试。' >&2\n  exit 3\nfi\necho 'deploy ok: 已发布 team-demo'\n", { mode: 0o755 });
-writeFileSync(join(repo, "scripts/smoke.sh"), "#!/bin/sh\nif [ \"$1\" = --migrate ]; then mkdir -p .state && touch .state/migrated && echo 'migrated 3 versions'; fi\necho smoke ok\n", { mode: 0o755 });
+writeFileSync(join(repo, "README.md"), "# team-demo\n\n验收用的演示项目。本地构建脚本在 scripts/ 下，只写本目录的 .state/。\n");
+// 每个宿主会话开始前删掉 .state，保证 build.sh 第一次一定失败。
+// 夹具只做本地构建：叫 deploy 会被 Claude Code 的权限分类器当成没有预览的生产发布拦下（基线实测）
+writeFileSync(join(repo, "scripts/build.sh"), "#!/bin/sh\n# 只在本目录生成 .state/build.txt，不联网、不碰别的目录\nif [ ! -f .state/prepared ]; then\n  echo 'ERROR: 本地缓存 .state/prepared 不存在，构建中止（退出码 3）。build.sh 不会自动准备，先执行 sh scripts/smoke.sh --prepare 再重试。' >&2\n  exit 3\nfi\necho built > .state/build.txt\necho 'build ok: 本地构建完成'\n", { mode: 0o755 });
+writeFileSync(join(repo, "scripts/smoke.sh"), "#!/bin/sh\nif [ \"$1\" = --prepare ]; then mkdir -p .state && touch .state/prepared && echo 'prepared local cache'; fi\necho smoke ok\n", { mode: 0o755 });
 writeFileSync(join(repo, ".gitignore"), ".state/\n");
 sh("git", ["init", "-q"], env);
 sh("git", ["-c", "user.name=t", "-c", "user.email=t@t", "add", "."], env);
@@ -112,6 +113,21 @@ const gateway = (() => {
   return null;
 })();
 const codexModel = gateway ? CODEX_MODEL : "gpt-5.6-sol";
+// Claude Code 官方登录失效时（真实出现过：OAuth session expired），改走本机网关的 Anthropic 兼容接口；宿主仍是真实的 Claude Code。
+const CLAUDE_MODEL = process.env.AB_TEAM_CLAUDE_MODEL ?? "codex/gpt-5.6-terra";
+const claudeGateway = (() => {
+  try {
+    if ((JSON.parse(sh("claude", ["auth", "status"], env, 30_000).stdout) as { loggedIn?: boolean }).loggedIn) return null;
+  } catch {}
+  try {
+    const conf = JSON.parse(readFileSync(join(realHome, ".pi/agent/models.json"), "utf8")) as { providers?: Record<string, { baseUrl?: string; apiKey?: string; models?: { id?: string }[] }> };
+    for (const p of Object.values(conf.providers ?? {})) {
+      if (typeof p?.baseUrl !== "string" || typeof p?.apiKey !== "string" || !/^http:\/\/(127\.0\.0\.1|localhost)/.test(p.baseUrl)) continue;
+      if ((p.models ?? []).some((m) => m.id === CLAUDE_MODEL)) return { baseUrl: p.baseUrl.replace(/\/v1\/?$/, ""), apiKey: p.apiKey };
+    }
+  } catch {}
+  return null;
+})();
 writeFileSync(join(codexHome, ".codex/config.toml"), gateway
   ? `model = "${codexModel}"\nmodel_provider = "local"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n[features]\nhooks = true\n[shell_environment_policy]\ninherit = "all"\n[model_providers.local]\nname = "local"\nbase_url = "${gateway.baseUrl}"\nenv_key = "AB_CODEX_KEY"\nwire_api = "responses"\n`
   : `model = "${codexModel}"\nmodel_provider = "custom"\napproval_policy = "never"\nsandbox_mode = "danger-full-access"\n[features]\nhooks = true\n[shell_environment_policy]\ninherit = "all"\n[model_providers.custom]\nname = "OpenAI"\nrequires_openai_auth = true\nsupports_websockets = true\nwire_api = "responses"\n`);
@@ -121,16 +137,16 @@ writeFileSync(piExtension, `import { createExtension, makeExecRunner } from ${JS
 
 const PROMPT = `这是 agentbrain 的验收会话，当前目录是演示项目 team-demo。只用 shell 工具，不改任何文件。按顺序做完下面五步，每一步都把命令的原始输出看完再做下一步：
 1. 开工先执行 \`ab brief\`。
-2. 执行 \`sh scripts/deploy.sh\` 发布。如果失败，按报错提示处理后再执行一次，直到发布成功。不要改仓库里已有的文件。
+2. 执行 \`sh scripts/build.sh\` 做本地构建（只写本目录的 .state/，不联网）。如果失败，按报错提示处理后再执行一次，直到构建成功。不要改仓库里已有的文件。
 3. 执行 \`ab search 灰度开关\`，对命中的那条执行 \`ab get <id>\`。
 4. 执行 \`ab status\`。
 5. 最后用中文回答，分四小段：
    (a) ab brief 里 team-demo 的坑，原样抄一条；
    (b) 灰度开关叫什么、默认比例是多少，以及这条记忆是谁确认的；
-   (c) deploy.sh 第一次的报错原文，以及最后是怎么发布成功的；
+   (c) build.sh 第一次的报错原文，以及最后是怎么构建成功的；
    (d) ab status 输出里以「代码」「库」「备份」开头的行，原样抄出来，没有就写「没有这些行」。
 回答末尾按注入的要求写记忆报告行。
-另外定个规矩：以后 team-demo 发布一律先跑 \`sh scripts/smoke.sh --migrate\`，再跑 deploy.sh。`;
+另外定个规矩：以后 team-demo 本地构建一律先跑 \`sh scripts/smoke.sh --prepare\`，再跑 build.sh。`;
 
 const results: Record<string, unknown>[] = [];
 const sessions = new Set<string>();
@@ -150,7 +166,8 @@ for (const host of selected) {
   const dir = `${host}/`;
   const version = sh(host, ["--version"], env, 30_000);
   const sid = randomUUID();
-  const childEnv = hostEnv({ ...env, HOME: host === "codex" ? codexHome : realHome, ...(gateway ? { AB_CODEX_KEY: gateway.apiKey } : {}) });
+  const childEnv = hostEnv({ ...env, HOME: host === "codex" ? codexHome : realHome, ...(gateway ? { AB_CODEX_KEY: gateway.apiKey } : {}),
+    ...(host === "claude" && claudeGateway ? { ANTHROPIC_BASE_URL: claudeGateway.baseUrl, ANTHROPIC_AUTH_TOKEN: claudeGateway.apiKey, ANTHROPIC_MODEL: CLAUDE_MODEL, ANTHROPIC_SMALL_FAST_MODEL: CLAUDE_MODEL, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" } : {}) });
   const args = host === "claude" ? ["-p", "--setting-sources", "", "--settings", claudeSettings, "--strict-mcp-config", "--tools", "Bash", "--allowedTools", "Bash", "--session-id", sid, "--output-format", "json", PROMPT]
     : host === "codex" ? ["exec", "--dangerously-bypass-hook-trust", "--json", PROMPT]
     : ["-p", "--no-extensions", "--no-mcp", "--no-skills", "--no-context-files", "--no-prompt-templates", "--model", PI_MODEL, "--session-id", sid, "-e", piExtension, "--tools", "bash", "--mode", "json", PROMPT];
@@ -203,7 +220,7 @@ for (const host of selected) {
   const blocked = !!checks.run && /401|usage limit|rate.limit|429|quota|not logged in/i.test(output);
   const ok = Object.values(checks).every((c) => c.ok);
   if (!ok && !blocked) failed = true;
-  const row = { host, model: host === "codex" ? codexModel : host === "pi" ? PI_MODEL : "默认", version: (version.stdout + version.stderr).trim(), session, extract_via: how, status: ok ? "PASS" : blocked ? "BLOCKED" : "FAIL", checks, args: args.slice(0, -1), HOME: childEnv.HOME, AB_HOME: store };
+  const row = { host, model: host === "codex" ? codexModel : host === "pi" ? PI_MODEL : claudeGateway ? `${CLAUDE_MODEL}（本机网关，官方登录失效）` : "官方登录默认模型", version: (version.stdout + version.stderr).trim(), session, extract_via: how, status: ok ? "PASS" : blocked ? "BLOCKED" : "FAIL", checks, args: args.slice(0, -1), HOME: childEnv.HOME, AB_HOME: store };
   results.push(row);
   log(`${dir}result.json`, row);
   console.log(`${host} ${row.status} ${Object.entries(checks).map(([k, c]) => `${k}=${c.ok ? "ok" : "FAIL"}`).join(" ")}`);
