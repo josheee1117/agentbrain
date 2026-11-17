@@ -10,10 +10,36 @@
 import { DatabaseSync } from "node:sqlite";
 import { searchable } from "./visibility.ts";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, statSync } from "node:fs";
+import { hostname, userInfo } from "node:os";
 import { dirname } from "node:path";
 import { cosine, fromBlob, toBlob } from "./embed.ts";
-import { fold, checkDetailBody, checkRememberBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody } from "./l2.ts";
+import { fold, checkDetailBody, checkRememberBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody, type Who } from "./l2.ts";
+
+/**
+ * 库版本号（§12.6.1），存在 store.db 的 PRAGMA user_version。新增事件种类、表或列必须加一。
+ * 库比代码新时这个连接只读。版本 1：events.actor / events.machine / capture_windows.error_detail。
+ */
+export const SCHEMA_VERSION = 1;
+
+/** 权限不对就改（§12.6.5）；文件不存在或改不动时不报错。 */
+export function tighten(path: string, mode: number): void {
+  try {
+    if ((statSync(path).mode & 0o777) !== mode) chmodSync(path, mode);
+  } catch {
+    // 不存在或不是自己的文件
+  }
+}
+
+function localWho(): Who {
+  let actor: string | null = null;
+  try {
+    actor = userInfo().username || null;
+  } catch {
+    actor = process.env.USER ?? null;
+  }
+  return { actor, machine: hostname() || null };
+}
 
 const BUSY_TIMEOUT_MS = 5000;
 export const MAX_EMBED_PER_SYNC = 200;
@@ -80,7 +106,9 @@ CREATE TABLE IF NOT EXISTS events(
   ephemeral INTEGER NOT NULL DEFAULT 0,
   target_id TEXT,
   body TEXT,
-  body_hash TEXT);
+  body_hash TEXT,
+  actor TEXT,
+  machine TEXT);
 CREATE INDEX IF NOT EXISTS events_session ON events(session_id);
 CREATE TABLE IF NOT EXISTS capture_sessions(
   host TEXT NOT NULL, session_id TEXT NOT NULL, transcript TEXT, cwd TEXT, project TEXT,
@@ -90,7 +118,7 @@ CREATE TABLE IF NOT EXISTS capture_sessions(
 CREATE TABLE IF NOT EXISTS capture_windows(
   window_id TEXT PRIMARY KEY, host TEXT NOT NULL, session_id TEXT NOT NULL,
   from_anchor TEXT, to_anchor TEXT NOT NULL, state TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT, error_code TEXT, receipt TEXT, updated_at TEXT NOT NULL);
+  attempts INTEGER NOT NULL DEFAULT 0, next_at TEXT, error_code TEXT, receipt TEXT, updated_at TEXT NOT NULL, error_detail TEXT);
 CREATE TABLE IF NOT EXISTS capture_candidates(candidate_key TEXT PRIMARY KEY, event_id TEXT NOT NULL, window_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS work_lease(name TEXT PRIMARY KEY, holder TEXT NOT NULL, pid INTEGER NOT NULL, expires_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS work_budget(day TEXT PRIMARY KEY, calls INTEGER NOT NULL, tokens INTEGER NOT NULL);
@@ -151,8 +179,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS props USING fts5(
 `;
 
 function openDb(path: string): DatabaseSync {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
+  if (path !== ":memory:") tighten(path, 0o600);
   db.exec(`PRAGMA busy_timeout=${BUSY_TIMEOUT_MS}`);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
   return db;
@@ -188,20 +217,82 @@ function textHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/** VACUUM 加 WAL 截断：把空闲页和日志里的旧内容从文件里去掉。返回空串表示做完，否则是没做完的原因。 */
+function compact(db: DatabaseSync): string {
+  db.exec("VACUUM");
+  const r = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy?: number } | undefined;
+  return r?.busy ? "WAL 没能截断（有别的进程正在读库），等它们结束后重跑 ab purge" : "";
+}
+
+export interface PurgeResult {
+  /** 这次写下的清除声明；会话之前已声明过（重跑、恢复后重做）时为 null。 */
+  purge_event: string | null;
+  /** 被清掉正文的事件 id。 */
+  enumerated: string[];
+  /** 被清除的记忆 id。 */
+  props: string[];
+  /** 逐面结果（§10.2.3 第 4 条）：L1、统计表、索引、两个库文件的空闲页。 */
+  surfaces: { name: string; ok: boolean; detail: string }[];
+}
+
 export class Store {
   private db: DatabaseSync;
   private fts: DatabaseSync;
   private cache: Projection | null = null;
   private cacheSeq = -1;
+  private who: Who;
+  /** 打开时库文件里的版本号；补完列之后等于 SCHEMA_VERSION，比它大说明库是更新的代码写的。 */
+  private version: number;
 
-  constructor(storePath: string, indexPath: string) {
+  constructor(storePath: string, indexPath: string, who: Who = localWho()) {
+    this.who = who;
     this.db = openDb(storePath);
-    dropPreviewTelemetry(this.db);
-    this.db.exec(SCHEMA);
-    const recallCols = this.db.prepare("PRAGMA table_info(recall_runs)").all();
-    if (!recallCols.some((c) => c.name === "transcript")) this.db.exec("ALTER TABLE recall_runs ADD COLUMN transcript TEXT");
+    this.version = Number((this.db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version);
+    if (this.version > SCHEMA_VERSION) {
+      // §14.2：版本不兼容必须拒绝执行。不建表、不补列，这个连接上的写入全部失败
+      this.db.exec("PRAGMA query_only=ON");
+    } else {
+      dropPreviewTelemetry(this.db);
+      this.db.exec(SCHEMA);
+      const recallCols = this.db.prepare("PRAGMA table_info(recall_runs)").all();
+      if (!recallCols.some((c) => c.name === "transcript")) this.db.exec("ALTER TABLE recall_runs ADD COLUMN transcript TEXT");
+      if (this.version < SCHEMA_VERSION) this.migrate();
+    }
     this.fts = openDb(indexPath);
     this.fts.exec(FTS_SCHEMA);
+  }
+
+  /** 旧库补列并写版本号，一个写事务。并发打开时后到的进程在事务里重查列，不会重复加。 */
+  private migrate(): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const has = (table: string, col: string) => (this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
+      for (const [table, col] of [["events", "actor"], ["events", "machine"], ["capture_windows", "error_detail"]]) {
+        if (!has(table, col)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT`);
+      }
+      this.db.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
+      this.db.exec("COMMIT");
+    } catch (e) {
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
+      throw e;
+    }
+    this.version = SCHEMA_VERSION;
+  }
+
+  /** 库版本与代码支持的版本；readOnly 表示库比代码新、拒绝写入。 */
+  get schema(): { version: number; supported: number; readOnly: boolean } {
+    return { version: this.version, supported: SCHEMA_VERSION, readOnly: this.version > SCHEMA_VERSION };
+  }
+
+  private assertWritable(): void {
+    if (this.version > SCHEMA_VERSION) throw new Error(`库版本 ${this.version} 比代码支持的 ${SCHEMA_VERSION} 新，拒绝写入：先更新 ab 的代码`);
+  }
+
+  /** 所有 L1 写入都经这里：统一带上操作者和机器（§12.6.2）。必须在写事务里调用。 */
+  private insertEvent(id: string, kind: EventKind, projectId: string | null, sessionId: string | null, ephemeral: boolean, targetId: string | null, json: string | null): void {
+    this.db
+      .prepare("INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash,actor,machine) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, new Date().toISOString(), kind, projectId, sessionId, ephemeral ? 1 : 0, targetId, json, json === null ? null : createHash("sha256").update(json).digest("hex"), this.who.actor, this.who.machine);
   }
 
   close(): void {
@@ -216,6 +307,7 @@ export class Store {
       this.db.prepare("SELECT id FROM projects WHERE name=?").get(name) as { id: string } | undefined;
     const row = existing();
     if (row) return row.id;
+    this.assertWritable();
     const id = randomUUID();
     try {
       this.db.prepare("INSERT INTO projects(id,name,created_at) VALUES(?,?,?)").run(id, name, new Date().toISOString());
@@ -276,6 +368,7 @@ export class Store {
   lifecycleIf(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object, check: (p: Proposition) => string | null): { id: string } | { skipped: string } {
     const id = randomUUID();
     const json = JSON.stringify(body);
+    this.assertWritable();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const p = this.project().props.get(targetId);
@@ -285,9 +378,7 @@ export class Store {
         return { skipped: why ?? "已不在库里" };
       }
       this.assertSessionOpen(sessionId);
-      this.db
-        .prepare("INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)")
-        .run(id, new Date().toISOString(), kind, p.project_id, sessionId, 0, targetId, json, createHash("sha256").update(json).digest("hex"));
+      this.insertEvent(id, kind, p.project_id, sessionId, false, targetId, json);
       this.db.exec("COMMIT");
     } catch (e) {
       if (this.db.isTransaction) this.db.exec("ROLLBACK");
@@ -392,15 +483,12 @@ export class Store {
         checkDetailBody(target.kind, a.body as DetailBody, target.evidence.length);
       }
     }
-    const ins = this.db.prepare(
-      "INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)",
-    );
+    this.assertWritable();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       appends.forEach((a, i) => {
         this.assertSessionOpen(a.session_id);
-        const json = JSON.stringify(a.body);
-        ins.run(ids[i], new Date().toISOString(), a.kind, a.project_id, a.session_id, 0, a.target_id, json, createHash("sha256").update(json).digest("hex"));
+        this.insertEvent(ids[i], a.kind, a.project_id, a.session_id, false, a.target_id, JSON.stringify(a.body));
       });
       work(this.db, ids);
       this.db.exec("COMMIT");
@@ -421,18 +509,14 @@ export class Store {
   ): string {
     const id = randomUUID();
     const json = body === null ? null : JSON.stringify(body);
-    const hash = json === null ? null : createHash("sha256").update(json).digest("hex");
+    this.assertWritable();
     this.db.exec("BEGIN IMMEDIATE");
     try {
       this.assertSessionOpen(sessionId);
-      this.db
-        .prepare(
-          "INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)",
-        )
-        .run(id, new Date().toISOString(), kind, projectId, sessionId, ephemeral ? 1 : 0, targetId, json, hash);
+      this.insertEvent(id, kind, projectId, sessionId, ephemeral, targetId, json);
       this.db.exec("COMMIT");
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw e;
     }
     return id;
@@ -447,31 +531,171 @@ export class Store {
     if (hit) throw new Error("该会话已清除，不再接受写入");
   }
 
-  // ---------- Purge（§10.2.1/10.2.2：范围 = session；声明 + 枚举同一事务） ----------
+  // ---------- Purge（§10.2.1/10.2.2、§12.6.3：范围 = session；声明 + 枚举同一事务） ----------
 
-  purgeSession(sessionId: string): { purge_event: string; enumerated: string[] } {
+  /**
+   * 清除一个会话。成员是这个会话写的事件，加上指向这些记忆的后续事件（详情、关系判定、代码核验、去留）。
+   * 同一事务清掉正文、哈希、操作者、机器和统计表里的相关行；之后删表重建全文索引，两个库各做 VACUUM 和 WAL 截断，
+   * 否则明文还留在空闲页里。已声明过的会话再跑只补做各面，不重复写声明。
+   */
+  purgeSession(sessionId: string): PurgeResult {
+    this.assertWritable();
+    const members = "kind!='purge' AND (session_id=?1 OR target_id IN (SELECT id FROM events WHERE session_id=?1 AND kind='remember'))";
+    let purgeId: string | null = null;
+    let ids: string[];
+    let props: string[];
     this.db.exec("BEGIN IMMEDIATE");
-    let result: { purge_event: string; enumerated: string[] };
     try {
-      const ids = (
-        this.db.prepare("SELECT id FROM events WHERE session_id=? AND kind!='purge' ORDER BY seq").all(sessionId) as {
-          id: string;
-        }[]
-      ).map((r) => r.id);
-      const purgeId = randomUUID();
-      const decl = JSON.stringify({ range: { session_id: sessionId }, enumerated: ids });
-      this.db
-        .prepare("INSERT INTO events(id,ts,kind,project_id,session_id,ephemeral,target_id,body,body_hash) VALUES(?,?,?,?,?,?,?,?,?)")
-        .run(purgeId, new Date().toISOString(), "purge", null, null, 0, null, decl, createHash("sha256").update(decl).digest("hex"));
-      this.db.prepare("UPDATE events SET body=NULL, body_hash=NULL WHERE session_id=? AND kind!='purge'").run(sessionId);
+      props = (this.db.prepare("SELECT id FROM events WHERE session_id=? AND kind='remember' ORDER BY seq").all(sessionId) as { id: string }[]).map((r) => r.id);
+      ids = (this.db.prepare(`SELECT id FROM events WHERE ${members} ORDER BY seq`).all(sessionId) as { id: string }[]).map((r) => r.id);
+      if (!this.sessionPurged(sessionId)) {
+        purgeId = randomUUID();
+        this.insertEvent(purgeId, "purge", null, null, false, null, JSON.stringify({ range: { session_id: sessionId }, enumerated: ids }));
+      }
+      this.db.prepare(`UPDATE events SET body=NULL, body_hash=NULL, actor=NULL, machine=NULL WHERE ${members}`).run(sessionId);
+      // 统计表：按记忆 id 删（别的会话引用过它的行也删，inject_log.cited_title 是模型抄的标题），再按会话删
+      for (const [table, col] of [["prop_usage", "prop_id"], ["inject_log", "prop_id"], ["verify_attempts", "prop_id"], ["verify_queue", "prop_id"], ["memory_report_ids", "prop_id"]]) {
+        const del = this.db.prepare(`DELETE FROM ${table} WHERE ${col}=?`);
+        for (const id of props) del.run(id);
+      }
+      const delCand = this.db.prepare("DELETE FROM capture_candidates WHERE event_id=?");
+      for (const id of ids) delCand.run(id);
+      this.db.prepare("DELETE FROM capture_candidates WHERE window_id IN (SELECT window_id FROM capture_windows WHERE session_id=?)").run(sessionId);
+      for (const table of ["inject_log", "recall_runs", "memory_queries", "memory_report_ids", "memory_reports", "cite_scan", "capture_windows"]) {
+        this.db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(sessionId);
+      }
+      // 坐标行留着并标记：扫描不会把它当成新会话再登记、再抽取
+      this.db.prepare("UPDATE capture_sessions SET error_code='purged', processed_anchor=NULL WHERE session_id=?").run(sessionId);
       this.db.exec("COMMIT");
-      result = { purge_event: purgeId, enumerated: ids };
     } catch (e) {
-      this.db.exec("ROLLBACK");
+      if (this.db.isTransaction) this.db.exec("ROLLBACK");
       throw e;
     }
-    this.syncIndex();
-    return result;
+    this.cache = null;
+    const surfaces: PurgeResult["surfaces"] = [
+      { name: "L1 正文", ok: true, detail: `${ids.length} 条事件，${props.length} 条记忆` },
+      { name: "统计表", ok: true, detail: "使用计数、注入记录、核验记录、候选键、引用报告" },
+    ];
+    const face = (name: string, fn: () => string) => {
+      try {
+        const partial = fn();
+        surfaces.push({ name, ok: !partial, detail: partial || "已完成" });
+      } catch (e) {
+        surfaces.push({ name, ok: false, detail: e instanceof Error ? e.message : String(e) });
+      }
+    };
+    face("全文索引与向量", () => (this.rebuildIndex(), ""));
+    face("store.db 空闲页", () => compact(this.db));
+    face("index.db 空闲页", () => compact(this.fts));
+    return { purge_event: purgeId, enumerated: ids, props, surfaces };
+  }
+
+  /** 清除范围里还带正文的事件数和记忆 id（给清除前的预览用，只读）。 */
+  purgeMembers(sessionId: string): { events: number; props: string[] } {
+    const members = "kind!='purge' AND body IS NOT NULL AND (session_id=?1 OR target_id IN (SELECT id FROM events WHERE session_id=?1 AND kind='remember'))";
+    const n = this.db.prepare(`SELECT count(*) AS n FROM events WHERE ${members}`).get(sessionId) as { n: number };
+    const props = this.db.prepare("SELECT id FROM events WHERE session_id=? AND kind='remember' AND body IS NOT NULL ORDER BY seq").all(sessionId) as { id: string }[];
+    return { events: Number(n.n), props: props.map((r) => r.id) };
+  }
+
+  sessionHasBodies(sessionId: string): boolean {
+    return this.purgeMembers(sessionId).events > 0;
+  }
+
+  /** 登记表里这个会话的对话文件路径（清除时只报告，不删）。 */
+  sessionTranscripts(sessionId: string): string[] {
+    const rows = this.db.prepare("SELECT DISTINCT transcript FROM capture_sessions WHERE session_id=? AND transcript IS NOT NULL").all(sessionId) as { transcript: string }[];
+    return rows.map((r) => r.transcript);
+  }
+
+  eventCount(): number {
+    return Number((this.db.prepare("SELECT count(*) AS n FROM events").get() as { n: number }).n);
+  }
+
+  /** 两个库文件各做 VACUUM 和 WAL 截断；返回没做完的原因，空数组表示都做完。 */
+  compact(): string[] {
+    const out: string[] = [];
+    for (const [name, db] of [["store.db", this.db], ["index.db", this.fts]] as const) {
+      try {
+        const why = compact(db);
+        if (why) out.push(`${name}: ${why}`);
+      } catch (e) {
+        out.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return out;
+  }
+
+  /** 库里已声明清除的会话（恢复备份后要对恢复出来的内容重做一遍，§12.6.4）。 */
+  purgedSessions(): string[] {
+    const rows = this.db.prepare("SELECT DISTINCT json_extract(body,'$.range.session_id') AS s FROM events WHERE kind='purge' AND body IS NOT NULL").all() as { s: string | null }[];
+    return rows.flatMap((r) => (r.s ? [r.s] : []));
+  }
+
+  /** 删表重建全文索引：DELETE 只写删除标记，旧段里还留着词项。没有对应条目的向量在 writeIndex 里一并删掉。 */
+  private rebuildIndex(): void {
+    this.fts.exec("BEGIN IMMEDIATE");
+    try {
+      this.fts.exec("DROP TABLE IF EXISTS props");
+      this.fts.exec(FTS_SCHEMA);
+      this.fts.exec("DELETE FROM meta WHERE key='seq'");
+      this.fts.exec("COMMIT");
+    } catch (e) {
+      if (this.fts.isTransaction) this.fts.exec("ROLLBACK");
+      throw e;
+    }
+    this.writeIndex(this.watermark(), this.project());
+  }
+
+  // ---------- 备份与恢复（§12.6.4） ----------
+
+  /** 把 store.db 写成一个独立文件（VACUUM INTO：一致快照，不含空闲页）。目标已存在会报错。 */
+  backupTo(path: string): void {
+    this.db.exec(`VACUUM INTO '${path.replaceAll("'", "''")}'`);
+  }
+
+  /**
+   * 把各表内容换成备份文件里的，一个写事务：别的进程要么看到换之前的库，要么看到换之后的，不动库文件本身。
+   * 只拷两边都有的列（旧备份缺的列留空）；备份里没有的表被清空。事件序号只进不退，索引整个重建。
+   */
+  restoreFrom(path: string): { copied: string[]; emptied: string[]; events: number } {
+    this.assertWritable();
+    const before = this.watermark();
+    const copied: string[] = [];
+    const emptied: string[] = [];
+    this.db.exec(`ATTACH DATABASE '${path.replaceAll("'", "''")}' AS bk`);
+    try {
+      this.db.exec("BEGIN IMMEDIATE");
+      try {
+        this.db.exec("PRAGMA defer_foreign_keys=ON");
+        const tables = (schema: string) => (this.db.prepare(`SELECT name FROM ${schema}.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`).all() as { name: string }[]).map((r) => r.name);
+        const cols = (schema: string, table: string) => (this.db.prepare(`PRAGMA ${schema}.table_info("${table}")`).all() as { name: string }[]).map((c) => c.name);
+        const inBackup = new Set(tables("bk"));
+        for (const t of tables("main")) {
+          if (t === "work_lease") continue; // 恢复期间自己拿着租约，不能被备份里的旧行换掉
+          this.db.exec(`DELETE FROM main."${t}"`);
+          if (!inBackup.has(t)) {
+            emptied.push(t);
+            continue;
+          }
+          const theirs = new Set(cols("bk", t));
+          const common = cols("main", t).filter((c) => theirs.has(c)).map((c) => `"${c}"`).join(",");
+          this.db.exec(`INSERT INTO main."${t}"(${common}) SELECT ${common} FROM bk."${t}"`);
+          copied.push(t);
+        }
+        // 序号退回去会让新事件复用旧序号，索引水位就可能误判成“已是最新”
+        this.db.prepare("UPDATE sqlite_sequence SET seq=MAX(seq, ?) WHERE name='events'").run(before);
+        this.db.exec("COMMIT");
+      } catch (e) {
+        if (this.db.isTransaction) this.db.exec("ROLLBACK");
+        throw e;
+      }
+    } finally {
+      this.db.exec("DETACH DATABASE bk");
+    }
+    this.cache = null;
+    this.rebuildIndex();
+    return { copied, emptied, events: Number((this.db.prepare("SELECT count(*) AS n FROM events").get() as { n: number }).n) };
   }
 
   // ---------- L2：纯函数投影；缓存按 L1 水位校验（§7.3） ----------

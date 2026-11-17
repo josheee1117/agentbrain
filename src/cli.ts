@@ -8,7 +8,9 @@ import { homedir } from "node:os";
 import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { Store, type Embedder } from "./store.ts";
+import { Store, tighten, type Embedder } from "./store.ts";
+import { backup, backupDue, inspectDb, listBackups, purge, purgePlan, renderPurge, restore } from "./admin.ts";
+import { createInterface } from "node:readline/promises";
 import { type Alternative, type Host, type PropKind, type Proposition, type Scene, type SourcePointer, SCENES } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandImport, expandSource, latestAnchor } from "./source.ts";
@@ -65,7 +67,12 @@ function home(): string {
 
 function open(): Store {
   const root = home();
-  return new Store(join(root, "store.db"), join(root, "index.db"));
+  const store = new Store(join(root, "store.db"), join(root, "index.db"));
+  // §12.6.5：数据目录和备份目录只有自己能进，日志只有自己能读（库文件在 Store 里收紧）
+  tighten(root, 0o700);
+  tighten(join(root, "backups"), 0o700);
+  tighten(join(root, "work.log"), 0o600);
+  return store;
 }
 
 function createEmbedder(timeoutMs?: number): { embedder: Embedder | null; reason: string | null } {
@@ -1216,6 +1223,16 @@ async function cmdWork(argv: string[]): Promise<void> {
         // 扫描失败不影响整体汇报
       }
     }
+    // §12.6.4：巡检顺手备份，距上次超过 24 小时才做。失败写进这次的汇报，不让巡检失败
+    let backupLine = "";
+    if (values.sweep && !values["dry-run"] && backupDue(home(), new Date())) {
+      try {
+        const b = backup(store, home(), new Date());
+        backupLine = `备份: 已写 ${b.path}（${b.events} 条事件${b.removed.length ? `，删掉 ${b.removed.length} 份旧备份` : ""}）`;
+      } catch (e) {
+        backupLine = `备份: 失败（${e instanceof Error ? e.message : String(e)}）`;
+      }
+    }
     console.log(
       [
         `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : ""}`,
@@ -1227,12 +1244,127 @@ async function cmdWork(argv: string[]): Promise<void> {
         r.topic && r.topic.windows.length
           ? `话题沉淀: 运行 ${r.topic.run}，话题窗口 ${r.topic.windows.length}，写入正式库 ${r.topic.windows.reduce((n, w) => n + w.created.length, 0)} 条（未确认），并入建议 ${r.topic.windows.reduce((n, w) => n + w.merges.length, 0)} 条（只进报告）；报告 ${join(topicReportDir(home()), `${r.topic.run}.json`)}；整次撤销 ab work --undo ${r.topic.run}`
           : "",
+        backupLine,
       ].filter(Boolean).join("\n"),
     );
   } finally {
     store.close();
   }
 
+}
+
+// ---------- 清除、备份、恢复（§12.6.3、§12.6.4） ----------
+
+/** 清除只能由人在终端里发起（§10.2）：标准输入不是终端时只打印范围，不执行；是终端时要手动输入会话 id 前 8 位。 */
+async function cmdPurge(argv: string[]): Promise<void> {
+  const { values } = parseArgs({ args: argv, options: { session: { type: "string" }, "drop-backups": { type: "boolean", default: false } }, strict: true });
+  if (!values.session) die("用法: ab purge --session <宿主:会话id> [--drop-backups]");
+  const sessionId = values.session.includes(":") ? parseSessionKey(values.session, "会话必须写成 claude|codex|pi|opencode:<session_id>").session_id : values.session;
+  const store = open();
+  try {
+    const plan = purgePlan(store, sessionId);
+    console.log(
+      [
+        `将清除会话 ${sessionId}${plan.already ? "（之前已清除过，这次只补做没完成的面）" : ""}：`,
+        `  事件 ${plan.events} 条（这个会话写的，加上指向这些记忆的详情、关系判定、代码核验、去留事件）`,
+        `  记忆 ${plan.props.length} 条${plan.props.length ? "：" : ""}`,
+        ...plan.props.slice(0, 20).map((p) => `    [${short(p.id)}] ${KIND_LABEL[p.kind as PropKind]}: ${p.text}`),
+        ...(plan.props.length > 20 ? [`    …另有 ${plan.props.length - 20} 条`] : []),
+        "  覆盖的面：L1 正文、统计表、全文索引与向量、两个库文件的空闲页、看板 view.html、调试文件",
+        `  只报告不删：备份与库副本（加 --drop-backups 才删含这个会话的）、其他报告文件、宿主的会话文件`,
+        "  清除不能撤销。",
+      ].join("\n"),
+    );
+    if (!plan.events && !plan.already) {
+      console.log("库里没有这个会话的内容，不执行。");
+      process.exitCode = 1;
+      return;
+    }
+    if (!process.stdin.isTTY) {
+      console.log("没有执行：清除只能由人在终端里发起，agent 和脚本不能代做。请用户自己在终端运行这条命令。");
+      process.exitCode = 1;
+      return;
+    }
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    // Ctrl-D / Ctrl-C 会让 question 以 ABORT_ERR 结束：按取消处理
+    const typed = (await rl.question(`输入会话 id 前 8 位（${sessionId.slice(0, 8)}）确认，其他输入取消：`).catch(() => "")).trim();
+    rl.close();
+    if (typed !== sessionId.slice(0, 8)) {
+      console.log("已取消，没有清除。");
+      process.exitCode = 1;
+      return;
+    }
+    // 拿工作租约：后台 ab work 正在往库里写时不清，压实库文件也需要独占
+    const holder = intake.acquireLease(store.workDb, new Date());
+    if (!holder) die("后台 ab work 正在跑，等它跑完再清除（ab status 看进度）。");
+    try {
+      const report = purge(store, home(), sessionId, { dropBackups: values["drop-backups"] === true });
+      console.log(renderPurge(report));
+      if (!report.complete) process.exitCode = 2;
+    } finally {
+      intake.releaseLease(store.workDb, holder!);
+    }
+  } finally {
+    store.close();
+  }
+}
+
+function cmdBackup(argv: string[]): void {
+  const { values } = parseArgs({ args: argv, options: { list: { type: "boolean", default: false } }, strict: true });
+  if (values.list) {
+    const all = listBackups(home());
+    console.log(all.length ? all.map((b) => `${b.at.toISOString()}  ${(b.bytes / 1048576).toFixed(1)} MB  ${b.path}`).join("\n") : "还没有备份。ab backup 做一份。");
+    return;
+  }
+  const store = open();
+  try {
+    const b = backup(store, home(), new Date());
+    console.log(`已备份 ${b.path}（${b.events} 条事件，已核对完整性）${b.removed.length ? `\n删掉 ${b.removed.length} 份旧备份（只留最近 14 份）` : ""}\n恢复用 ab restore <文件> --yes`);
+  } finally {
+    store.close();
+  }
+}
+
+function cmdRestore(argv: string[]): void {
+  const { values, positionals } = parseArgs({ args: argv, options: { yes: { type: "boolean", default: false } }, strict: true, allowPositionals: true });
+  if (!positionals[0]) die("用法: ab restore <备份文件> --yes");
+  let file: string;
+  try {
+    file = realpathSync(positionals[0]);
+  } catch {
+    die(`找不到备份文件: ${positionals[0]}`);
+  }
+  const info = inspectDb(file);
+  if (!info.ok) die(`备份文件不能用：${info.reason}`);
+  const store = open();
+  try {
+    const now = store.eventCount();
+    console.log(`备份 ${file}：${info.events} 条事件，库版本 ${info.version}。现库 ${now} 条事件。`);
+    if (!values.yes) {
+      console.log(`没有执行。恢复会把现库换成备份的内容，备份之后写入的 ${Math.max(0, now - info.events)} 条事件会从现库消失（恢复前会把现库另存一份）。确认要做就加 --yes，并先关掉其他正在用 ab 的会话。`);
+      process.exitCode = 1;
+      return;
+    }
+    // 拿工作租约：后台 ab work 正在写库时不换
+    const holder = intake.acquireLease(store.workDb, new Date());
+    if (!holder) die("后台 ab work 正在跑，等它跑完再恢复（ab status 看进度）。");
+    try {
+      const r = restore(store, home(), file, new Date());
+      console.log(
+        [
+          `已恢复：现库 ${r.events} 条事件。恢复前的库另存在 ${r.saved}`,
+          r.emptied.length ? `备份里没有、已清空的表：${r.emptied.join("、")}` : "",
+          r.repurged.length ? `重做了 ${r.repurged.length} 个会话的清除（清除过的内容不会跟着备份回来）` : "",
+          ...r.partial.map((p) => `没做完：${p}`),
+          "全文索引已重建；向量缺的会在下次 ab search 或 ab work 时补算。",
+        ].filter(Boolean).join("\n"),
+      );
+    } finally {
+      intake.releaseLease(store.workDb, holder!);
+    }
+  } finally {
+    store.close();
+  }
 }
 
 async function cmdImport(argv: string[]): Promise<void> {
@@ -1379,6 +1511,11 @@ const USAGE = `用法:
   ab view [--out <路径>] [--no-open]  生成记忆看板（概览、关联图、记忆详情、注入/引用统计；默认 ~/.agentbrain/view.html）。只手动生成
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
+  ab backup [--list]                备份 store.db 到 ~/.agentbrain/backups/（写完核对完整性，只留最近 14 份；ab work --sweep 每天自动做一次）
+  ab restore <备份文件> --yes       把现库换成备份的内容（先把现库另存一份；清除过的会话不会跟着备份回来）；不加 --yes 只预览
+  ab purge --session <宿主:会话id> [--drop-backups]
+                                    物理清除一个会话写进库的全部内容，不能撤销。只能由用户本人在终端里运行并输入确认，agent 不要代做
+                                    清完逐面报告；--drop-backups 连含这个会话的备份一起删。日常“不要这条了”用 ab archive
   ab capture --hook --host <claude|codex|pi|opencode>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
                                     话题沉淀开着时：PreCompact 记话题边界并拉起 ab work；距上一轮超过 20 分钟也拉起
@@ -1575,11 +1712,27 @@ async function main(): Promise<void> {
     if (cmd === "review") return cmdReview(rest);
     if (cmd === "curate") return await cmdCurate(rest);
     if (cmd === "setup") return await cmdSetup(rest);
+    if (cmd === "purge") return await cmdPurge(rest);
+    if (cmd === "backup") return cmdBackup(rest);
+    if (cmd === "restore") return cmdRestore(rest);
   } catch (e) {
-    if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${USAGE}`);
+    // §12.6.7 T6：参数写错只给这个子命令的用法，不把全部用法倒出来
+    if ((e as { code?: string }).code?.startsWith("ERR_PARSE_ARGS")) die(`${(e as Error).message}\n${usageFor(cmd)}`);
     throw e;
   }
   die(`未知子命令: ${cmd}\n${USAGE}`);
+}
+
+/** USAGE 里某个子命令的那几段（以“  ab <命令>”开头，到下一个命令为止）。 */
+function usageFor(cmd: string): string {
+  const out: string[] = [];
+  let on = false;
+  for (const line of USAGE.split("\n").slice(1)) {
+    const m = /^  ab (\S+)/.exec(line);
+    if (m) on = m[1] === cmd;
+    if (on) out.push(line);
+  }
+  return out.length ? `用法:\n${out.join("\n")}\n全部命令看 ab help` : USAGE;
 }
 
 await main();

@@ -6,6 +6,14 @@ import { sanitize, secretKinds } from "./sanitize.ts";
 
 export type PropKind = "rule" | "decision" | "pitfall" | "note";
 export type EventKind = "remember" | "archive" | "reactivate" | "confirm" | "purge" | "evidence" | "verify" | "relate" | "unconfirm" | "tag" | "stage" | "curate" | "detail";
+/** 本版本认识的事件种类。不在这里的种类不改任何条目，只计数（§12.6.1）。 */
+const KNOWN_KINDS: ReadonlySet<string> = new Set<EventKind>(["remember", "archive", "reactivate", "confirm", "purge", "evidence", "verify", "relate", "unconfirm", "tag", "stage", "curate", "detail"]);
+
+/** 谁、在哪台机器上写的（§12.6.2）。不是身份认证：操作系统登录名和主机名。旧事件两项都是 null。 */
+export interface Who {
+  actor: string | null;
+  machine: string | null;
+}
 
 export const KIND_LABEL: Record<PropKind, string> = { rule: "规则", decision: "决定", pitfall: "坑", note: "事实" };
 
@@ -273,6 +281,10 @@ export interface Proposition {
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
   demoted: UnconfirmBody["reason"] | null;
   value: RememberBody["value"] | null;
+  /** 写入这条的操作者和机器（§12.6.2）。 */
+  written_by: Who;
+  /** 让这条转正的那条事件：谁、哪台机器、经哪个会话、何时。未确认为 null。 */
+  confirmed_event: (Who & { session_id: string | null; ts: string }) | null;
 }
 
 export interface ConflictPair {
@@ -287,6 +299,8 @@ export interface Projection {
   orphans: number;
   /** 被忽略的详情字段数：条目已有 body 或 alternatives 时 detail 不覆盖（§8.11.2，与 orphans 同类诊断）。 */
   detail_ignored: number;
+  /** 本版本不认识的事件种类条数：不改任何条目（§12.6.1）。 */
+  unknown: number;
   ephemeral: number;
   purged: number;
 }
@@ -301,6 +315,8 @@ export interface EventRow {
   ephemeral: number;
   target_id: string | null;
   body: string | null;
+  actor?: string | null;
+  machine?: string | null;
 }
 
 /** 确定性投影：同一事件序列必然产生同一结果；不调用任何外部状态。 */
@@ -315,12 +331,22 @@ export function fold(rows: EventRow[]): Projection {
   };
   let orphans = 0;
   let detail_ignored = 0;
+  let unknown = 0;
   let ephemeral = 0;
   let purged = 0;
+  /** 已清除的记忆：之后再指向它的事件算已清除，不算损坏（§19.1：合法 purge 不当成 unknown parent）。 */
+  const purgedIds = new Set<string>();
   for (const r of rows) {
     if (r.kind === "purge") continue;
+    if (!KNOWN_KINDS.has(r.kind)) {
+      unknown++; // 更新版本写下的事件：fail-closed，不猜它的含义
+      continue;
+    }
+    const who: Who = { actor: r.actor ?? null, machine: r.machine ?? null };
+    const by = { ...who, session_id: r.session_id, ts: r.ts };
     if (r.body === null) {
       purged++;
+      if (r.kind === "remember") purgedIds.add(r.id);
       continue;
     }
     if (r.ephemeral) {
@@ -370,13 +396,17 @@ export function fold(rows: EventRow[]): Projection {
         scenes: Array.isArray(b.scenes) ? b.scenes : [],
         demoted: null,
         value: b.value ?? null,
+        written_by: who,
+        confirmed_event: b.confirmed !== false ? by : null,
       });
       if (b.relation) judgePair(r.id, b.relation.target, b.relation.type, r);
       continue;
     }
     const target = r.target_id ? props.get(r.target_id) : undefined;
     if (!target) {
-      orphans++; // unknown parent / purged target：fail-closed 跳过
+      // 目标已清除算已清除；找不到目标才是 unknown parent。两种都 fail-closed 跳过
+      if (r.target_id && purgedIds.has(r.target_id)) purged++;
+      else orphans++;
       continue;
     }
     if (r.kind === "evidence" || r.kind === "relate" || r.kind === "verify") {
@@ -398,7 +428,10 @@ export function fold(rows: EventRow[]): Projection {
     }
     if (r.kind === "confirm") {
       const b = JSON.parse(r.body) as ConfirmBody;
-      if (!target.confirmed || (b.by ?? "user") === "user") target.confirmed_by = b.by ?? "user"; // 用户确认覆盖自动转正的来源
+      if (!target.confirmed || (b.by ?? "user") === "user") {
+        target.confirmed_by = b.by ?? "user"; // 用户确认覆盖自动转正的来源
+        target.confirmed_event = by;
+      }
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
       if ((b.by ?? "user") === "user") target.demoted = null;
@@ -407,6 +440,7 @@ export function fold(rows: EventRow[]): Projection {
         if (target.confirmed_by !== "user") {
           target.confirmed = false;
           target.confirmed_by = null;
+          target.confirmed_event = null;
         }
       }
       continue;
@@ -416,6 +450,7 @@ export function fold(rows: EventRow[]): Projection {
       if (target.confirmed_by === "user") continue; // 用户确认过的不动：只能进复核清单
       target.confirmed = false;
       target.confirmed_by = null;
+      target.confirmed_event = null;
       target.code_evidence = null;
       target.demoted = b.reason;
       continue;
@@ -445,7 +480,10 @@ export function fold(rows: EventRow[]): Projection {
         target.stale = null;
         if (target.demoted) continue; // 撤销过的条目代码核验也不再转正
         target.code_evidence = { head: b.head, refs: b.refs };
-        if (!target.confirmed) target.confirmed_by = "code";
+        if (!target.confirmed) {
+          target.confirmed_by = "code";
+          target.confirmed_event = by;
+        }
         target.confirmed = true;
       } else {
         target.stale = { head: b.head, refs: b.refs };
@@ -461,6 +499,7 @@ export function fold(rows: EventRow[]): Projection {
       judgePair(target.id, b.target, b.outcome, r);
       continue;
     }
+    // 走到这里的只剩 archive 和 reactivate；其他种类上面都已处理或计入 unknown
     target.state = r.kind === "archive" ? "archived" : "active";
     const ab = r.kind === "archive" ? (JSON.parse(r.body) as ArchiveBody) : null;
     target.expired = ab?.reason === "expired";
@@ -476,7 +515,7 @@ export function fold(rows: EventRow[]): Projection {
       continue;
     }
     if (!target) {
-      orphans++;
+      if (!purgedIds.has(p.supersedes)) orphans++;
       continue;
     }
     target.state = "superseded";
@@ -491,7 +530,7 @@ export function fold(rows: EventRow[]): Projection {
     b.conflicts.push(a.id);
     conflict_pairs.push({ ids: pair.ids, ts: pair.ts });
   }
-  return { props, conflict_pairs, orphans, detail_ignored, ephemeral, purged };
+  return { props, conflict_pairs, orphans, detail_ignored, unknown, ephemeral, purged };
 }
 
 // ---------- 写入 L1 前的统一检查（§8.11.2：种类、长度、密钥只在入口查一次） ----------
