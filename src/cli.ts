@@ -1049,7 +1049,7 @@ function cmdView(argv: string[]): void {
   let scan = { sessions: 0, cited: 0, dropped: 0, unreadable: 0 };
   try {
     scan = refreshCitations(store, new Date());
-    data = buildViewData(store, new Date());
+    data = buildViewData(store, new Date(), { home: home(), code: codeVersion() });
   } finally {
     store.close();
   }
