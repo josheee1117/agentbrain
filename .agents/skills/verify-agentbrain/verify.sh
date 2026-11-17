@@ -194,7 +194,7 @@ MOCK
     step cli-cross-seed-own xp_remember "$REPO" decision "本项目的缓存决定 SIM1.0"
     step cli-cross-search bash -c "(cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '缓存怎么选') > '$EV/cli-cross-search.log' 2>&1"
     step cli-cross-search-section bash -c "grep -qF '其他项目里相近的：' '$EV/cli-cross-search.log'"
-    step cli-cross-search-hit bash -c "grep -qF \"[$XP_SEED_ID] testrepo2 决定: 其他项目的缓存决定 SIM0.92（0.92）\" '$EV/cli-cross-search.log'"
+    step cli-cross-search-hit bash -c "grep -qF \"[$XP_SEED_ID] testrepo2 决定[用户确认]: 其他项目的缓存决定 SIM0.92（0.92）\" '$EV/cli-cross-search.log'"
     step cli-cross-search-threshold bash -c "! grep -qF 'SIM0.30' '$EV/cli-cross-search.log'"
     step cli-cross-search-own-excluded bash -c "! grep -qF '本项目的缓存决定 SIM1.0（' '$EV/cli-cross-search.log'"
     step cli-cross-search-delivered node -e "
@@ -228,7 +228,7 @@ import('$ROOT/src/store.ts').then(({ Store }) => {
 "
     ATTR_UNRESOLVED=$(cut -d' ' -f1 "$EV/cli-attr-seed.log")
     ATTR_CROSS=$(cut -d' ' -f2 "$EV/cli-attr-seed.log")
-    step cli-attr-search bash -c "(cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '归属未定的缓存决定') > '$EV/cli-attr-search.log' 2>&1; grep -qF \"[$ATTR_UNRESOLVED] testrepo 决定[未确认·自动沉淀][归属未定]: 归属未定的缓存决定（verify）\" '$EV/cli-attr-search.log'"
+    step cli-attr-search bash -c "(cd '$REPO' && env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search '归属未定的缓存决定') > '$EV/cli-attr-search.log' 2>&1; grep -qF \"[$ATTR_UNRESOLVED] testrepo 决定[未确认·自动沉淀][归属未定][字面+相似 1.00]: 归属未定的缓存决定（verify）\" '$EV/cli-attr-search.log'"
     step cli-attr-get-unresolved bash -c "env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ATTR_UNRESOLVED' > '$EV/cli-attr-get-unresolved.log' 2>&1; grep -qF '[归属未定]' '$EV/cli-attr-get-unresolved.log' && grep -qF '归属: 会话在 testrepo，抽取没能确认归属' '$EV/cli-attr-get-unresolved.log'"
     step cli-attr-get-cross bash -c "env AB_HOME='$XP_HOME' AGENTBRAIN_HOME='$XP_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ATTR_CROSS' > '$EV/cli-attr-get-cross.log' 2>&1; grep -qF '归属: 会话在 testrepo，抽取判定归属 testrepo2' '$EV/cli-attr-get-cross.log'"
     kill $XP_PID 2>/dev/null

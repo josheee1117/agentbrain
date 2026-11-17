@@ -99,7 +99,7 @@
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentbrain.work.plist
    ```
 
-   日志在 `~/.agentbrain/work.log`。每次 sweep 先处理 hook 登记的会话（每会话最多 6 个窗口），扫描/补登记来的历史会话额外限 10 个窗口。调用次数只在 `ab status` 的“今日用量”里记录，不设日上限（2026-10-13 用户决定）。要重跑某个会话：`ab work --session <host>:<id> --redo`（已入库的同一候选不会重复）。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选“始终允许”；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
+   日志在 `~/.agentbrain/work.log`（权限 0600，超过 5 MB 轮转成 `work.log.1`）。钩子拉起的 `ab work --session` 也写这个文件，出错时末尾有一段“出错明细”。sweep 每天顺手做一次 `ab backup`（留最近 14 份，`ab status` 的“备份”一行能看到）。每次 sweep 先处理 hook 登记的会话（每会话最多 6 个窗口），扫描/补登记来的历史会话额外限 10 个窗口。调用次数只在 `ab status` 的“今日用量”里记录，不设日上限（2026-10-13 用户决定）。要重跑某个会话：`ab work --session <host>:<id> --redo`（已入库的同一候选不会重复）。撤掉：`launchctl bootout gui/$(id -u)/com.agentbrain.work` 并删掉 plist。读钥匙串若弹出授权框，选“始终允许”；`security` 调用有 3 秒超时，钥匙串锁着时本次窗口延后，不会卡住。
 
 ### 装完后的验收
 
