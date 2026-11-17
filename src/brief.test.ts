@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
 import type { RememberBody } from "./l2.ts";
-import { brief, BriefError, BRIEF_MAX_CHARS, SEARCH_HINT } from "./brief.ts";
+import { brief, BriefError, BRIEF_MAX_CHARS, SEARCH_HINT, conflictReminder, expiryReminder } from "./brief.ts";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-brief-")));
 const repos = join(dir, "pm/repos");
@@ -63,6 +63,67 @@ test("超出预算：整条跳过并提示 ab search，总长不超上限", () =
   assert.ok(out.length <= BRIEF_MAX_CHARS);
   assert.match(out, /还有 \d+ 条放不下，用 ab search 查。/);
   assert.ok(out.endsWith("</agentbrain>\n"));
+});
+
+test("§8.13.7：brief 末尾报范围内冲突对数与最老天数；无冲突、或冲突只在外项目时不报", () => {
+  const s = seeded();
+  const pid = s.ensureProject("alpha");
+  const otherPid = s.ensureProject("other");
+  // 没冲突：什么都不报
+  assert.equal(conflictReminder(s, "alpha"), null);
+  assert.doesNotMatch(brief(s, alpha, undefined, false), /冲突 \d+ 对未解决/);
+  // 全局一对冲突：在 alpha 项目、未登记目录、worker 视图都报
+  const g1 = s.remember(null, "s", false, { kind: "rule", text: "全局 G 甲", confirmed: true, source: src });
+  s.remember(null, "s", false, { kind: "rule", text: "全局 G 乙", confirmed: false, source: src, relation: { type: "conflicts", target: g1 } });
+  assert.match(conflictReminder(s, "alpha")!, /冲突 1 对未解决（最老 \d+ 天）/);
+  assert.match(brief(s, alpha, undefined, false), /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。/);
+  assert.match(brief(s, elsewhere, undefined, false), /冲突 1 对未解决/);
+  assert.match(brief(s, alpha, undefined, true), /冲突 1 对未解决/);
+  // alpha 项目内再添一对：alpha 看到 2 对，未登记目录仍只看全局的 1 对
+  const a1 = s.remember(pid, "s", false, { kind: "pitfall", text: "alpha 甲", confirmed: true, source: src });
+  s.remember(pid, "s", false, { kind: "pitfall", text: "alpha 乙", confirmed: false, source: src, relation: { type: "conflicts", target: a1 } });
+  assert.match(conflictReminder(s, "alpha")!, /冲突 2 对未解决/);
+  assert.match(conflictReminder(s, undefined)!, /冲突 1 对未解决/);
+  // other 项目内的冲突不进 alpha 的范围
+  const o1 = s.remember(otherPid, "s", false, { kind: "rule", text: "other 甲", confirmed: true, source: src });
+  s.remember(otherPid, "s", false, { kind: "rule", text: "other 乙", confirmed: false, source: src, relation: { type: "conflicts", target: o1 } });
+  assert.match(conflictReminder(s, "alpha")!, /冲突 2 对未解决/);
+  assert.match(conflictReminder(s, "other")!, /冲突 2 对未解决/);
+});
+
+test("§8.14：brief 末尾报范围内到期未复审条数与最老超期天数；无到期、或只在外项目时不报", () => {
+  const s = seeded();
+  const pid = s.ensureProject("alpha");
+  const otherPid = s.ensureProject("other");
+  // 没到期：什么都不报
+  assert.equal(expiryReminder(s, "alpha"), null);
+  assert.doesNotMatch(brief(s, alpha, undefined, false), /到期未复审/);
+  // 造一条到期条目：直接改 ts 和 said_at 到 200 天前（坑有效期 90 天）
+  const old = s.remember(pid, "s", false, { kind: "pitfall", text: "alpha 老坑", confirmed: false, source: src });
+  const oldTs = new Date(Date.now() - 200 * 86_400_000).toISOString();
+  (s as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } }).db.prepare("UPDATE events SET ts=? WHERE id=?").run(oldTs, old);
+  // 重投影后 alpha 看到 1 条，未登记目录看不到（不是全局）
+  assert.match(expiryReminder(s, "alpha")!, /到期未复审 1 条（最老超期 \d+ 天）/);
+  assert.equal(expiryReminder(s, undefined), null);
+  // other 项目内造一条到期的，不进 alpha 范围
+  const otherOld = s.remember(otherPid, "s", false, { kind: "pitfall", text: "other 老坑", confirmed: false, source: src });
+  (s as unknown as { db: { prepare: (q: string) => { run: (...a: unknown[]) => void } } }).db.prepare("UPDATE events SET ts=? WHERE id=?").run(oldTs, otherOld);
+  assert.match(expiryReminder(s, "alpha")!, /到期未复审 1 条/);
+  assert.match(expiryReminder(s, "other")!, /到期未复审 1 条/);
+  // 完整 brief 输出里有这行，格式对
+  assert.match(brief(s, alpha, undefined, false), /到期未复审 1 条（最老超期 \d+ 天）：ab review 看清单，ab confirm 留用，ab review --archive 归档。/);
+});
+
+test("§8.13.7：条目超预算时先截条目，冲突提醒行仍在且完整", () => {
+  const s = seeded();
+  const pid = s.ensureProject("alpha");
+  const g = s.remember(null, "s", false, { kind: "rule", text: "全局冲突甲", confirmed: true, source: src });
+  s.remember(null, "s", false, { kind: "rule", text: "全局冲突乙", confirmed: false, source: src, relation: { type: "conflicts", target: g } });
+  for (let i = 0; i < 80; i++) s.remember(pid, "s", false, { kind: "pitfall", text: `alpha 很长的坑 ${i} ${"细节".repeat(20)}`, confirmed: true, source: src });
+  const out = brief(s, alpha, undefined, false);
+  assert.ok(out.length <= BRIEF_MAX_CHARS);
+  assert.match(out, /还有 \d+ 条放不下/);
+  assert.match(out, /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。/);
 });
 
 test("§11.5 (i)：主会话和子代理的 brief 都点出该先 ab search 的几类情况；条目超预算时先截条目，这行不截", () => {

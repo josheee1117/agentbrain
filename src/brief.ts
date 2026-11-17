@@ -3,6 +3,7 @@ import type { Store } from "./store.ts";
 import { SCENES, type PropKind, type Proposition, type Scene } from "./l2.ts";
 import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
 import { active, disputed, short } from "./present.ts";
+import { reviewList } from "./expiry.ts";
 
 export const BRIEF_MAX_CHARS = 2000;
 /** 场景段的单独预算（§11.10，写死的常量；整个 brief 的上限是两段之和）。 */
@@ -38,6 +39,46 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
 }
 
 const CLOSE = "\n</agentbrain>\n";
+
+/** 冲突汇总（§8.13.7）：只数与本次 brief 范围（全局 + 当前项目）有关的冲突对，
+ *  报对数和最老天数，不查 inject_log（那是 ab status 的事，brief 每轮都跑，不为它多打数据库）。 */
+export function conflictReminder(store: Store, projectName: string | undefined, now: Date = new Date()): string | null {
+  const proj = store.project();
+  if (!proj.conflict_pairs.length) return null;
+  const pid = projectName ? store.listProjects().find((p) => p.name === projectName)?.id : undefined;
+  const inScope = (id: string): boolean => {
+    const p = proj.props.get(id);
+    if (!p) return false;
+    if (p.project_id === null) return true;
+    return pid !== undefined && p.project_id === pid;
+  };
+  let n = 0;
+  let oldest = 0;
+  for (const pair of proj.conflict_pairs) {
+    if (!pair.ids.some(inScope)) continue;
+    n++;
+    oldest = Math.max(oldest, Math.floor((now.getTime() - Date.parse(pair.ts)) / 86_400_000));
+  }
+  if (!n) return null;
+  return `冲突 ${n} 对未解决（最老 ${oldest} 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。`;
+}
+
+/** 到期复审汇总（§8.14）：只数与本次 brief 范围有关的到期未确认条目。
+ *  用 ownClock（默认时钟，只看条目自身字段，不读 transcript 文件），brief 每轮都跑不能为它还文件。 */
+export function expiryReminder(store: Store, projectName: string | undefined, now: Date = new Date()): string | null {
+  const proj = store.project();
+  const pid = projectName ? store.listProjects().find((p) => p.name === projectName)?.id : undefined;
+  const inScope = (id: string): boolean => {
+    const p = proj.props.get(id);
+    if (!p) return false;
+    if (p.project_id === null) return true;
+    return pid !== undefined && p.project_id === pid;
+  };
+  const due = reviewList(proj.props.values(), store.usage(), now).filter((d) => inScope(d.prop.id));
+  if (!due.length) return null;
+  const oldest = Math.max(...due.map((d) => d.overdueDays));
+  return `到期未复审 ${due.length} 条（最老超期 ${oldest} 天）：ab review 看清单，ab confirm 留用，ab review --archive 归档。`;
+}
 
 /** 什么时候该先搜（§11.5 (i)，2026-10-16 用户批准）。算在固定部分里：超预算时先截条目，不截这行。主会话和子代理都给。 */
 export const SEARCH_HINT = "遇到这几类情况先 ab search <关键词> 再动手：用户提到\"上次/之前/我们定过\"；要改不熟悉的模块或配置；报错看不出原因；要做设计取舍。看一条的来龙去脉用 ab get。";
@@ -158,6 +199,11 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
 
   const candidates = sections.reduce((n, s) => n + s.rows.filter((p) => s.kinds.includes(p.kind)).length, 0);
   const noteReserve = candidates > 0 ? noteFor(candidates) : "";
+  // 冲突提醒和到期摘要算进固定预算，跟 SEARCH_HINT 同级：超预算时先截条目，不截这行（§8.13.7、§8.14）。
+  const conflict = conflictReminder(store, project?.name);
+  if (conflict) tails.push(conflict);
+  const expiry = expiryReminder(store, project?.name);
+  if (expiry) tails.push(expiry);
   // 场景段有单独预算；标题和提示的字符从通用段预算里扣，两段加起来不超总上限。
   const sceneReserve = sceneRows.length ? sceneTitle.length + 1 + SCENE_OVERHEAD_RESERVE : 0;
   const budgets = contentBudgets(
