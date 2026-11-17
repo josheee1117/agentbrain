@@ -18,7 +18,11 @@ const SESSION_RETENTION_DAYS = 90;
 export type WindowState = "deferred" | "done" | "failed";
 
 /** 窗口的未完成原因：模型/资源的错误码，加上进度越过后的 superseded（不是抽取失败）。 */
-export type WindowErrorCode = WorkError | "superseded";
+export type WindowErrorCode = WorkError | "superseded" | "split";
+/** 这两种 failed 不是抽取失败：superseded 是进度越过后的旧积压，split 是拆成两个小窗口重试（§12.6.6）。 */
+export const NOT_A_FAILURE = "('superseded','split')";
+/** 窗口用完重试次数时，多于一轮且超过这么多字就对半拆开重试，不直接跳过。 */
+export const SPLIT_MIN_CHARS = 8000;
 
 export interface SessionRow {
   host: Host;
@@ -48,6 +52,8 @@ export interface WindowRow {
   error_code: WindowErrorCode | null;
   receipt: string | null;
   updated_at: string;
+  /** 失败或延后的原因：HTTP 状态码加脱敏后的上游报错（§12.6.6）。完成的窗口为 null。 */
+  error_detail: string | null;
 }
 
 /** 只有计数，没有正文（§13.2）。 */
@@ -165,12 +171,12 @@ export function getWindow(db: DatabaseSync, id: string): WindowRow | undefined {
 }
 
 /** 窗口完成：写窗口终态 + 推进 checkpoint。必须在 Store.commit 的事务里调用。 */
-export function finishWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, state: "done" | "failed", code: WorkError | null, receipt: Receipt | null, now: Date): void {
+export function finishWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, state: "done" | "failed", code: WorkError | null, receipt: Receipt | null, now: Date, detail: string | null = null): void {
   db.prepare(
-    `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at)
-     VALUES(?,?,?,?,?,?,1,NULL,?,?,?)
-     ON CONFLICT(window_id) DO UPDATE SET state=excluded.state, attempts=attempts+1, next_at=NULL, error_code=excluded.error_code, receipt=excluded.receipt, updated_at=excluded.updated_at`,
-  ).run(w.id, s.host, s.session_id, w.from, w.to, state, code, receipt ? JSON.stringify(receipt) : null, now.toISOString());
+    `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at,error_detail)
+     VALUES(?,?,?,?,?,?,1,NULL,?,?,?,?)
+     ON CONFLICT(window_id) DO UPDATE SET state=excluded.state, attempts=attempts+1, next_at=NULL, error_code=excluded.error_code, receipt=excluded.receipt, updated_at=excluded.updated_at, error_detail=excluded.error_detail`,
+  ).run(w.id, s.host, s.session_id, w.from, w.to, state, code, receipt ? JSON.stringify(receipt) : null, now.toISOString(), state === "done" ? null : detail);
   const moved = db
     .prepare("UPDATE capture_sessions SET processed_anchor=?, error_code=NULL WHERE host=? AND session_id=? AND processed_anchor IS ?")
     .run(w.to, s.host, s.session_id, w.from);
@@ -183,7 +189,7 @@ export function remapCheckpoint(db: DatabaseSync, s: SessionRow, from: string, t
 }
 
 /** 失败或延后。attempts 用完转 failed（终态，checkpoint 跳过这个窗口），返回是否终态。 */
-export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, code: WorkError, now: Date, countAttempt: boolean, until?: Date): boolean {
+export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, code: WorkError, now: Date, countAttempt: boolean, until?: Date, detail: string | null = null): boolean {
   const prev = getWindow(db, w.id);
   const attempts = (prev?.attempts ?? 0) + (countAttempt ? 1 : 0);
   if (attempts >= MAX_ATTEMPTS) return true;
@@ -191,11 +197,39 @@ export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; fr
     ? new Date(Math.min(until.getTime(), now.getTime() + MAX_DEFER_MS))
     : new Date(now.getTime() + BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length - 1)] * 60_000);
   db.prepare(
-    `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at)
-     VALUES(?,?,?,?,?,'deferred',?,?,?,NULL,?)
-     ON CONFLICT(window_id) DO UPDATE SET state='deferred', attempts=excluded.attempts, next_at=excluded.next_at, error_code=excluded.error_code, updated_at=excluded.updated_at`,
-  ).run(w.id, s.host, s.session_id, w.from, w.to, attempts, next.toISOString(), code, now.toISOString());
+    `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at,error_detail)
+     VALUES(?,?,?,?,?,'deferred',?,?,?,NULL,?,?)
+     ON CONFLICT(window_id) DO UPDATE SET state='deferred', attempts=excluded.attempts, next_at=excluded.next_at, error_code=excluded.error_code, updated_at=excluded.updated_at, error_detail=excluded.error_detail`,
+  ).run(w.id, s.host, s.session_id, w.from, w.to, attempts, next.toISOString(), code, now.toISOString(), detail);
   return false;
+}
+
+/**
+ * 窗口用完重试次数后改成拆开重试（§12.6.6）：这一行记为 failed/split，进度不动；切点存在 receipt 里。
+ * 之后切窗口时在 splitAt 和原终点各切一刀，得到两个新窗口，各自从 0 次开始重试。
+ */
+export function splitWindow(db: DatabaseSync, s: SessionRow, w: { id: string; from: string | null; to: string }, splitAt: string, detail: string | null, now: Date): void {
+  db.prepare(
+    `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at,error_detail)
+     VALUES(?,?,?,?,?,'failed',?,NULL,'split',?,?,?)
+     ON CONFLICT(window_id) DO UPDATE SET state='failed', next_at=NULL, error_code='split', receipt=excluded.receipt, updated_at=excluded.updated_at, error_detail=excluded.error_detail`,
+  ).run(w.id, s.host, s.session_id, w.from, w.to, MAX_ATTEMPTS, JSON.stringify({ split_at: splitAt }), now.toISOString(), detail);
+}
+
+/** 这个会话里拆过的窗口留下的切点：每个拆过的窗口给出它的中间切点和原终点。 */
+export function sessionCuts(db: DatabaseSync, host: Host, sessionId: string): Set<string> {
+  const rows = db.prepare("SELECT to_anchor, receipt FROM capture_windows WHERE host=? AND session_id=? AND state='failed' AND error_code='split'").all(host, sessionId) as { to_anchor: string; receipt: string | null }[];
+  const cuts = new Set<string>();
+  for (const r of rows) {
+    cuts.add(r.to_anchor);
+    try {
+      const at = (JSON.parse(r.receipt ?? "{}") as { split_at?: unknown }).split_at;
+      if (typeof at === "string") cuts.add(at);
+    } catch {
+      // 写坏的行只少一个切点
+    }
+  }
+  return cuts;
 }
 
 export function knownCandidates(db: DatabaseSync, keys: string[]): Set<string> {
@@ -316,9 +350,37 @@ export function dequeueReverify(db: DatabaseSync, propId: string): void {
 export function prune(db: DatabaseSync, now: Date): void {
   const w = new Date(now.getTime() - WINDOW_RETENTION_DAYS * 86_400_000).toISOString();
   const s = new Date(now.getTime() - SESSION_RETENTION_DAYS * 86_400_000).toISOString();
-  db.prepare("DELETE FROM capture_candidates WHERE window_id IN (SELECT window_id FROM capture_windows WHERE state IN ('done','failed') AND updated_at < ?)").run(w);
-  db.prepare("DELETE FROM capture_windows WHERE state IN ('done','failed') AND updated_at < ?").run(w);
+  // 真正失败的窗口不跟着 30 天清掉：那段内容没抽取，记录要留到会话坐标过期（§12.6.6）。完成的、拆开的、被越过的照旧
+  const old = `(state='done' OR (state='failed' AND error_code IN ${NOT_A_FAILURE})) AND updated_at < ?`;
+  db.prepare(`DELETE FROM capture_candidates WHERE window_id IN (SELECT window_id FROM capture_windows WHERE ${old})`).run(w);
+  db.prepare(`DELETE FROM capture_windows WHERE ${old}`).run(w);
   db.prepare("DELETE FROM capture_sessions WHERE last_touch < ?").run(s);
+  const gone = "NOT EXISTS (SELECT 1 FROM capture_sessions s WHERE s.host=capture_windows.host AND s.session_id=capture_windows.session_id)";
+  db.prepare(`DELETE FROM capture_candidates WHERE window_id IN (SELECT window_id FROM capture_windows WHERE state='failed' AND ${gone})`).run();
+  db.prepare(`DELETE FROM capture_windows WHERE state='failed' AND ${gone}`).run();
+}
+
+export interface WindowProblem {
+  host: Host;
+  session_id: string;
+  state: "failed" | "deferred";
+  attempts: number;
+  code: string | null;
+  detail: string | null;
+  at: string;
+  next_at: string | null;
+  chars: number | null;
+}
+
+/** 最近没做成的窗口（失败和延后，不含拆开的和被越过的），新的在前。ab status 和看板用。 */
+export function windowProblems(db: DatabaseSync, limit: number): WindowProblem[] {
+  const rows = db
+    .prepare(
+      `SELECT host, session_id, state, attempts, error_code AS code, error_detail AS detail, updated_at AS at, next_at, json_extract(receipt,'$.chars') AS chars
+       FROM capture_windows WHERE state='deferred' OR (state='failed' AND (error_code IS NULL OR error_code NOT IN ${NOT_A_FAILURE})) ORDER BY updated_at DESC LIMIT ?`,
+    )
+    .all(limit) as unknown as WindowProblem[];
+  return rows.map((r) => ({ ...r }));
 }
 
 export interface IntakeStats {
@@ -373,7 +435,7 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
       done: wins.filter((w) => w.state === "done").length,
       deferred: wins.filter((w) => w.state === "deferred").length,
       // superseded 是进度越过后的旧积压清理，不是抽取失败；它照旧出现在 errors 里当未完成原因
-      failed: wins.filter((w) => w.state === "failed" && w.error_code !== "superseded").length,
+      failed: wins.filter((w) => w.state === "failed" && w.error_code !== "superseded" && w.error_code !== "split").length,
       errors: werr,
       nextRetry,
     },

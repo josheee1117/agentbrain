@@ -5,6 +5,7 @@
  * 与 agentbrain-embedding 的 key。不读环境变量，key 不进文件。
  * 可选 fallbacks（备用渠道，按顺序试）：主渠道报网络/超时/限流/HTTP 错误时才换下一个。
  */
+import { sanitize } from "./sanitize.ts";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -60,6 +61,8 @@ export type WorkError =
 
 export class WorkFailure extends Error {
   code: WorkError;
+  /** HTTP 状态码（http_error / http_429 才有）。 */
+  status?: number;
   /** 429 时：建议等多久（毫秒），来自 Retry-After 头或错误正文里的重置时间。 */
   retryAfterMs?: number;
   constructor(code: WorkError, message: string, retryAfterMs?: number) {
@@ -198,18 +201,40 @@ export function chatClient(cfg: ChatConfig, key: string, timeoutMs: number | und
       const name = (e as Error).name;
       throw new WorkFailure(name === "TimeoutError" || name === "AbortError" ? "timeout" : "network", `模型请求失败: ${(e as Error).message}`);
     }
-    const parsed = (await res.json().catch(() => null)) as {
-      choices?: { message?: ChatMessage }[];
-      usage?: { total_tokens?: number };
-      error?: { message?: string };
-    } | null;
-    if (res.status === 429)
-      throw new WorkFailure("http_429", `模型接口限流 429${parsed?.error?.message ? `: ${parsed.error.message.slice(0, 200)}` : ""}`, parseRetryAfterMs(res.headers.get("retry-after"), parsed?.error?.message));
-    if (!res.ok) throw new WorkFailure("http_error", `模型接口 HTTP ${res.status}${parsed?.error?.message ? `: ${parsed.error.message}` : ""}`);
+    const text = await res.text().catch(() => "");
+    let parsed: { choices?: { message?: ChatMessage }[]; usage?: { total_tokens?: number }; error?: { message?: string } } | null = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+    // 上游报错：优先取 JSON 里的 error.message；网关回的不是 JSON 时取正文开头（§12.6.6：失败原因要查得到）
+    const said = (typeof parsed?.error?.message === "string" ? parsed.error.message : parsed?.error ? JSON.stringify(parsed.error) : text).replace(/\s+/g, " ").trim().slice(0, 300);
+    if (res.status === 429) {
+      const f = new WorkFailure("http_429", `模型接口限流 429${said ? `: ${said.slice(0, 200)}` : ""}`, parseRetryAfterMs(res.headers.get("retry-after"), parsed?.error?.message));
+      f.status = 429;
+      throw f;
+    }
+    if (!res.ok) {
+      const f = new WorkFailure("http_error", `模型接口 HTTP ${res.status}${said ? `: ${said}` : ""}`);
+      f.status = res.status;
+      throw f;
+    }
     const message = parsed?.choices?.[0]?.message;
     if (!message || typeof message !== "object") throw new WorkFailure("invalid_output", "模型返回里没有 message");
     return { message, tokens: Number(parsed?.usage?.total_tokens) || 0, model: cfg.model };
   };
+}
+
+/** 存进库和日志的失败原因：脱敏后截到 300 字（§13.2 不写敏感正文；请求内容不在里面）。 */
+export function failureDetail(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return sanitize(raw.replace(/\s+/g, " ").trim()).text.slice(0, 300);
+}
+
+/** 密钥失效或没权限：重试也没用，和没配密钥一样延后、不计失败次数。 */
+export function authFailed(e: unknown): boolean {
+  return e instanceof WorkFailure && (e.status === 401 || e.status === 403);
 }
 
 /** 宽松取 JSON：去掉 ``` 围栏，取第一个 { 到最后一个 }。 */

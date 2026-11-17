@@ -13,7 +13,7 @@ import { checkAlternatives, checkBodyField, checkRememberBody, sameAlternatives,
 import { VEC_MIN_SIM, vectorTextOf, type Store, type Embedder, type PendingAppend } from "./store.ts";
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
-import { WorkFailure, parseJsonLoose, type Chat, type WorkError } from "./llm.ts";
+import { WorkFailure, parseJsonLoose, type Chat, type WorkError, authFailed, failureDetail } from "./llm.ts";
 import { addHits, sanitize, secretKinds } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
@@ -100,6 +100,10 @@ export interface WorkReport {
   verify: { verified: number; contradicted: number; not_verifiable: number; inconclusive: number; errors: number };
   relate: Record<RelateOutcome | "corroborated" | "errors", number>;
   dry: { session: string; windows: number; chars: number }[];
+  /** 这次运行里拆开重试的窗口数（§12.6.6）。 */
+  split: number;
+  /** 出错明细：窗口、关系判定、代码核验各自的失败原因（脱敏、截短），每类最多 PROBLEMS_PER_KIND 行。 */
+  problems: string[];
   /** 话题模式的运行报告（审计记录，可 ab work --undo <run> 整次撤销）。 */
   topic?: TopicRunReport;
 }
@@ -266,8 +270,29 @@ function progressPassed(host: Host, turns: Turn[], processed: string, to: string
   return end <= at;
 }
 
-/** 从 checkpoint 之后按轮次边界切块，每块 ≤ WINDOW_MAX_CHARS；单轮超长时截断并计数（不静默）。 */
-export function chunk(host: Host, sessionId: string, all: Turn[], from: string | null, settled: boolean): Chunk[] | "anchor_missing" {
+/** 出错明细每类最多记几行。 */
+const PROBLEMS_PER_KIND = 10;
+
+function problem(report: WorkReport, kind: string, text: string): void {
+  if (report.problems.filter((p) => p.startsWith(`${kind} `)).length < PROBLEMS_PER_KIND) report.problems.push(`${kind} ${text}`);
+}
+
+/** 拆窗口的切点：前一半最后一轮的定位点，按字数对半。只有一轮或不够大时不拆，返回 null。 */
+export function splitPoint(c: Pick<Chunk, "turns" | "chars">): string | null {
+  if (c.turns.length < 2 || c.chars <= intake.SPLIT_MIN_CHARS) return null;
+  let sum = 0;
+  for (let i = 0; i < c.turns.length - 1; i++) {
+    sum += c.turns[i].text.length;
+    if (sum >= c.chars / 2) return c.turns[i].anchor;
+  }
+  return c.turns[c.turns.length - 2].anchor;
+}
+
+/**
+ * 从 checkpoint 之后按轮次边界切块，每块 ≤ WINDOW_MAX_CHARS；单轮超长时截断并计数（不静默）。
+ * cuts 是拆过的窗口留下的切点：到这些定位点一定切一刀，拆出来的小窗口才不会又被拼回大窗口。
+ */
+export function chunk(host: Host, sessionId: string, all: Turn[], from: string | null, settled: boolean, cuts: ReadonlySet<string> = new Set()): Chunk[] | "anchor_missing" {
   let start = 0;
   if (from !== null) {
     const i = all.findIndex((t) => t.anchor === from);
@@ -308,6 +333,7 @@ export function chunk(host: Host, sessionId: string, all: Turn[], from: string |
     if (cur.length && chars + t.text.length > WINDOW_MAX_CHARS) flush(i);
     cur.push(t);
     chars += t.text.length;
+    if (cuts.has(t.anchor)) flush(i + 1);
   }
   if (settled) flush(all.length);
   return chunks;
@@ -821,7 +847,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     }
   }
   if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
-  const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
+  const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now), intake.sessionCuts(db, s.host, s.session_id));
   if (chunks === "anchor_missing") {
     if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
     return;
@@ -857,14 +883,24 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       adm = await extractWindow(deps, c, row, projectId, receipt, worker);
     } catch (e) {
       const code: WorkError = e instanceof WorkFailure ? e.code : "network";
-      const config = code === "no_config" || code === "no_key";
+      // 密钥失效（401/403）和没配密钥一样：重试没用，不计失败次数，否则所有窗口 4 次后都被永久跳过（§12.6.6）
+      const config = code === "no_config" || code === "no_key" || authFailed(e);
       // 额度/限流不算一次失败尝试：额度要几小时才恢复，不能因此把窗口判成失败、跳过这段内容
       const limited = code === "http_429";
       const after = e instanceof WorkFailure ? e.retryAfterMs : undefined;
       const until = limited && typeof after === "number" ? new Date(deps.now().getTime() + after) : undefined;
-      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until);
+      const detail = failureDetail(e);
+      problem(report, "窗口", `${row.host}:${row.session_id.slice(0, 8)} ${c.chars} 字 ${code}: ${detail}`);
+      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until, detail);
       if (terminal) {
-        deps.store.commit([], (tx) => intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now()));
+        // 用完重试次数：够大就对半拆开各自重试，不直接跳过这段内容；拆到不能再拆仍失败才是终态
+        const at = splitPoint(c);
+        if (at) {
+          intake.splitWindow(db, row, c, at, detail, deps.now());
+          report.split++;
+          return processSession(deps, row, opts, report, holder, backlog);
+        }
+        deps.store.commit([], (tx) => intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now(), detail));
         report.windows.failed++;
         row = { ...row, processed_anchor: c.to };
         continue;
@@ -999,7 +1035,7 @@ async function processTopicSession(
       adm = await onePassWindow(deps, t, c, row, projectId, receipt, worker, holder, wr);
     } catch (e) {
       const code: WorkError = e instanceof WorkFailure ? e.code : "network";
-      const config = code === "no_config" || code === "no_key";
+      const config = code === "no_config" || code === "no_key" || authFailed(e);
       // 额度/限流不算一次失败尝试：额度用完要等几小时，不能因此把话题判成终态失败丢掉（§8.6 第 6 点）
       const limited = code === "http_429";
       const after = e instanceof WorkFailure ? e.retryAfterMs : undefined;
@@ -1013,14 +1049,16 @@ async function processTopicSession(
         cooldown.set(s.host, iso);
         intake.setMeta(db, `topic_cooldown:${s.host}`, iso);
       }
-      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until);
+      const detail = failureDetail(e);
+      problem(report, "窗口", `${row.host}:${row.session_id.slice(0, 8)} ${c.chars} 字 ${code}: ${detail}`);
+      const terminal = intake.deferWindow(db, row, c, code, deps.now(), !config && !limited, until, detail);
       wr.error = sanitize(`${code}: ${(e as Error).message ?? ""}`).text.slice(0, 300);
       wr.outcome = terminal ? "failed" : "deferred";
       saveReport();
       if (terminal) {
         deps.store.commit([], (tx) => {
           holdsLease(tx, holder, deps.now());
-          intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now());
+          intake.finishWindow(tx, row, c, "failed", code, receipt, deps.now(), detail);
         });
         report.windows.failed++;
         row = { ...row, processed_anchor: c.to };
@@ -1185,8 +1223,9 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
   const db = deps.store.workDb;
   try {
     await deps.store.syncVectors(deps.embedder, deps.embedder.model!);
-  } catch {
+  } catch (e) {
     report.relate.errors++;
+    problem(report, "关系判定", `向量没更新，这一轮没判: ${failureDetail(e)}`);
     return;
   }
   const todo = relateTodo(deps.store);
@@ -1200,8 +1239,9 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       if (r.model) model = r.model;
       intake.spend(db, deps.now(), 1, r.tokens);
       verdicts = parseRelate(parseJsonLoose(r.message.content), batch);
-    } catch {
+    } catch (e) {
       report.relate.errors++;
+      problem(report, "关系判定", `${batch.length} 条这一批没判（${batch.map((b) => b.prop.id.slice(0, 8)).join("、")}）: ${failureDetail(e)}`);
       break;
     } finally {
       intake.renewLease(db, holder, deps.now());
@@ -1210,6 +1250,7 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
       const v = verdicts[k];
       if (!v) {
         report.relate.errors++;
+        problem(report, "关系判定", `[${batch[k].prop.id.slice(0, 8)}] 模型的回复里没有这一条的结论`);
         continue;
       }
       // 同一批里前面的结论可能已经归档了本条或目标：以当前投影为准，目标不在了就留到下次
@@ -1276,6 +1317,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     } catch (e) {
       intake.recordVerify(db, p.id, head, `error:${e instanceof WorkFailure ? e.code : "network"}`, deps.now());
       report.verify.errors++;
+      problem(report, "代码核验", `[${p.id.slice(0, 8)}] ${e instanceof WorkFailure ? e.code : "network"}: ${failureDetail(e)}`);
       // 额度用完：后面的条目也会撞上，本轮停下，下次 ab work 从这条接着核验
       if (e instanceof WorkFailure && e.code === "http_429") break;
       continue;
@@ -1307,6 +1349,8 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
     relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
+    split: 0,
+    problems: [],
     ...(deps.topic ? { topic: { run: deps.topic.run, at: deps.now().toISOString(), windows: [] } } : {}),
   };
   const db = deps.store.workDb;

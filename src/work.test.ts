@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { Store, type Embedder } from "./store.ts";
-import { WorkFailure, fallbackChat, type Chat, type ChatMessage } from "./llm.ts";
+import { WorkFailure, chatClient, fallbackChat, type Chat, type ChatMessage } from "./llm.ts";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
 import { allowedTranscript } from "./transcript-file.ts";
 import { expandSource } from "./source.ts";
@@ -1734,4 +1736,183 @@ test("清理越过的旧行不算抽取失败：report.windows.failed 不增，�
     embedder: null, embedReason: "未配置", chatConfig: { error: "没有 extract.json" }, now: new Date(),
   });
   assert.match(line, /失败 0；未完成原因 superseded 1/, "ab status 里 superseded 照常出现在未完成原因");
+});
+
+// ---------- §12.6.6 后台可查错：错误详情、失败窗口拆分、失败记录保留 ----------
+
+/** 本机假模型服务：真实 HTTP、真实 chatClient，只有模型是假的。handler 决定每个请求回什么。 */
+async function fakeModelServer(handler: (body: string) => { status: number; body: string; type?: string }): Promise<{ chat: Chat; requests: string[]; close: () => Promise<void> }> {
+  const requests: string[] = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      requests.push(body);
+      const r = handler(body);
+      res.statusCode = r.status;
+      res.setHeader("Content-Type", r.type ?? "application/json");
+      res.end(r.body);
+    });
+  });
+  await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    chat: chatClient({ model: "fake-http", baseUrl: `http://127.0.0.1:${port}/v1`, keyService: "x" }, "test-key", undefined),
+    requests,
+    close: () => new Promise<void>((ok) => server.close(() => ok())),
+  };
+}
+const okReply = (candidates: object[]) => ({ status: 200, body: JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify({ candidates }) } }], usage: { total_tokens: 10 } }) });
+const winRow = (e: Env) => ({ ...e.store.workDb.prepare("SELECT state,attempts,error_code,error_detail FROM capture_windows ORDER BY updated_at DESC, rowid DESC").get() }) as { state: string; attempts: number; error_code: string; error_detail: string | null };
+
+test("§12.6.6 模型接口回 4xx：库里查得到状态码和上游报错，密钥和主目录已脱敏；出错明细进运行报告", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const srv = await fakeModelServer(() => ({ status: 413, body: JSON.stringify({ error: { message: "Request too large for /Users/alice/proj: token=abcdefghijklmnop1234 max 32000 tokens" } }) }));
+  try {
+    const r = await runWork(e.deps(srv.chat), { sweep: false, dryRun: false });
+    assert.equal(r.windows.deferred, 1);
+    const w = winRow(e);
+    assert.deepEqual({ state: w.state, attempts: w.attempts, error_code: w.error_code }, { state: "deferred", attempts: 1, error_code: "http_error" });
+    assert.match(w.error_detail!, /模型接口 HTTP 413: Request too large for ~\/proj: token=\[SECRET:credential\] max 32000 tokens/);
+    assert.ok(!w.error_detail!.includes("abcdefghijklmnop1234") && !w.error_detail!.includes("/Users/alice"));
+    assert.equal(r.problems.length, 1);
+    assert.match(r.problems[0], /^窗口 claude:s1 \d+ 字 http_error: 模型接口 HTTP 413/);
+    assert.deepEqual(intake.windowProblems(e.store.workDb, 10).map((p) => [p.state, p.code, p.detail]), [["deferred", "http_error", w.error_detail]]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("§12.6.6 模型接口回 5xx 且正文不是 JSON：状态码和正文开头照样记下；窗口完成后详情清空", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  let up = false;
+  const srv = await fakeModelServer(() => (up ? okReply([RULE]) : { status: 502, body: "<html><body>Bad Gateway: upstream connect error</body></html>", type: "text/html" }));
+  let t = Date.now();
+  try {
+    const deps = e.deps(srv.chat, { now: () => new Date(t) });
+    await runWork(deps, { sweep: false, dryRun: false });
+    assert.match(winRow(e).error_detail!, /模型接口 HTTP 502: <html><body>Bad Gateway: upstream connect error/);
+    up = true;
+    t += 3 * 3_600_000;
+    const r = await runWork(deps, { sweep: false, dryRun: false });
+    assert.equal(r.windows.done, 1);
+    assert.deepEqual(winRow(e), { state: "done", attempts: 2, error_code: null, error_detail: null });
+    assert.deepEqual(intake.windowProblems(e.store.workDb, 10), []);
+    assert.equal(props(e.store).length, 1);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("§12.6.6 密钥失效（401）：和没配密钥一样延后，不消耗重试次数，窗口不会被跳过", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const srv = await fakeModelServer(() => ({ status: 401, body: JSON.stringify({ error: { message: "Invalid API key" } }) }));
+  let t = Date.now();
+  try {
+    const deps = e.deps(srv.chat, { now: () => new Date(t) });
+    for (let i = 0; i < intake.MAX_ATTEMPTS + 2; i++) {
+      t += 3 * 3_600_000;
+      await runWork(deps, { sweep: false, dryRun: false });
+    }
+    const w = winRow(e);
+    assert.deepEqual({ state: w.state, attempts: w.attempts }, { state: "deferred", attempts: 0 });
+    assert.match(w.error_detail!, /HTTP 401: Invalid API key/);
+    assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, null, "进度没有越过这个窗口");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("§12.6.6 超大窗口被上游稳定拒绝：用完重试次数后对半拆开，两半各自成功，内容不丢、不算失败", async () => {
+  const e = env();
+  const filler = (tag: string) => `${tag} 讨论部署流程的一长段说明。`.repeat(260); // 每轮约 4000 多字
+  const lines = [user("u1", filler("甲")), asst("a1", filler("乙")), user("u2", "以后 hook 命令都写 node 绝对路径"), asst("a2", filler("丙"))];
+  e.register("s1", e.transcript("s1", lines));
+  // 上游对超过 9000 字的请求稳定回 413：同样的请求重发多少次都一样
+  const LIMIT = 9000;
+  const srv = await fakeModelServer((body) => {
+    const input = (JSON.parse(body) as { messages: { content: string }[] }).messages[1].content;
+    const win = input.slice(input.lastIndexOf("<transcript>"));
+    if (win.length > LIMIT) return { status: 413, body: JSON.stringify({ error: { message: `input too long: ${win.length} > ${LIMIT}` } }) };
+    const m = /\[#(\d+) user\] 以后 hook 命令都写 node 绝对路径/.exec(win);
+    return okReply(m ? [{ ...RULE, evidence: [{ anchor: `#${m[1]}`, role: "user", quote: "以后 hook 命令都写 node 绝对路径" }] }] : []);
+  });
+  let t = Date.now();
+  try {
+    const deps = e.deps(srv.chat, { now: () => new Date(t) });
+    let last = await runWork(deps, { sweep: false, dryRun: false });
+    for (let i = 1; i < intake.MAX_ATTEMPTS; i++) {
+      assert.equal(last.split, 0);
+      t += 3 * 3_600_000;
+      last = await runWork(deps, { sweep: false, dryRun: false });
+    }
+    assert.equal(last.split, 1, "第 4 次仍被拒：拆开");
+    assert.deepEqual(last.windows, { done: 2, deferred: 0, failed: 0, skipped: 0 });
+    const rows = e.store.workDb.prepare("SELECT state, error_code, from_anchor, to_anchor, error_detail FROM capture_windows ORDER BY rowid").all().map((r) => ({ ...r }));
+    assert.deepEqual(rows.map((r) => [r.state, r.error_code, r.from_anchor, r.to_anchor]), [
+      ["failed", "split", null, "a2"],
+      ["done", null, null, "a1"],
+      ["done", null, "a1", "a2"],
+    ]);
+    assert.match(String(rows[0].error_detail), /HTTP 413: input too long/);
+    assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "a2");
+    assert.deepEqual(props(e.store).map((p) => p.text), [RULE.text], "后一半里的规则抽出来了");
+    assert.equal(intake.stats(e.store.workDb, new Date(t)).windows.failed, 0, "拆开不算失败");
+    assert.equal(statusLine(e.store, new Date(t)).work_failed, 0);
+    assert.deepEqual(intake.windowProblems(e.store.workDb, 10), []);
+    // 再跑一次：没有新内容，不再调模型，也不会把两个小窗口拼回大窗口
+    const n = srv.requests.length;
+    await runWork(deps, { sweep: false, dryRun: false });
+    assert.equal(srv.requests.length, n);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("§12.6.6 拆到不能再拆仍失败才是终态；这种失败记录过了 30 天也留着，拆开的和完成的照常清", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const srv = await fakeModelServer(() => ({ status: 400, body: JSON.stringify({ error: { message: "content policy" } }) }));
+  let t = Date.now();
+  try {
+    const deps = e.deps(srv.chat, { now: () => new Date(t) });
+    let r = await runWork(deps, { sweep: false, dryRun: false });
+    for (let i = 1; i < intake.MAX_ATTEMPTS; i++) {
+      t += 3 * 3_600_000;
+      r = await runWork(deps, { sweep: false, dryRun: false });
+    }
+    assert.equal(r.split, 0, "只有一轮、又很短：不拆");
+    assert.equal(r.windows.failed, 1);
+    const w = winRow(e);
+    assert.deepEqual({ state: w.state, error_code: w.error_code }, { state: "failed", error_code: "http_error" });
+    assert.match(w.error_detail!, /HTTP 400: content policy/);
+    const db = e.store.workDb;
+    db.prepare("INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,error_code,updated_at) VALUES('w-split','claude','s1',NULL,'x','failed',4,'split',?)").run(new Date(t).toISOString());
+    db.prepare("INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,updated_at) VALUES('w-done','claude','s1',NULL,'y','done',1,?)").run(new Date(t).toISOString());
+    intake.prune(db, new Date(t + 40 * 86_400_000));
+    assert.deepEqual(db.prepare("SELECT error_code FROM capture_windows").all().map((x) => x.error_code), ["http_error"], "40 天后：真失败还在");
+    intake.prune(db, new Date(t + 100 * 86_400_000));
+    assert.equal(db.prepare("SELECT count(*) AS n FROM capture_windows").get()!.n, 0, "会话坐标 90 天过期后一起清");
+  } finally {
+    await srv.close();
+  }
+});
+
+test("§12.6.6 关系判定和代码核验出错：原因进运行报告，不只是计数", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]));
+  const a = e.store.remember(e.pid, null, false, { kind: "rule", text: "hook 命令写 node 绝对路径，不依赖 PATH 变量", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "已有" } });
+  await e.store.syncVectors(fakeEmbed, "fake-embed");
+  const chat = fakeChat(() => json({ candidates: [{ ...RULE, text: "hook 命令写 node 绝对路径，不依赖 PATH 环境" }] }), () => {
+    throw new WorkFailure("http_error", "模型接口 HTTP 503: upstream overloaded");
+  });
+  const r = await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  assert.ok(e.store.project().props.has(a));
+  if (chat.relateCalls.length) {
+    assert.equal(r.relate.errors, 1);
+    assert.match(r.problems.join("\n"), /^关系判定 1 条这一批没判（[0-9a-f]{8}）: 模型接口 HTTP 503: upstream overloaded$/m);
+  } else assert.fail("夹具没有触发关系判定");
 });

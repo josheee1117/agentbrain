@@ -5,7 +5,7 @@
  */
 import { parseArgs } from "node:util";
 import { homedir } from "node:os";
-import { chmodSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, tighten, type Embedder } from "./store.ts";
@@ -1036,14 +1036,38 @@ function cmdView(argv: string[]): void {
 
 // ---------- capture / work（切片 3） ----------
 
-/** SessionEnd 后拉起分离的 ab work，只处理这一个会话。宿主等不到它，它自己有租约。 */
+/** work.log 超过这么大就改名成 work.log.1 再写，只留一份旧的。 */
+const WORK_LOG_MAX_BYTES = 5 * 1024 * 1024;
+
+function rotateWorkLog(root: string): void {
+  const log = join(root, "work.log");
+  try {
+    if (statSync(log).size > WORK_LOG_MAX_BYTES) renameSync(log, `${log}.1`);
+  } catch {
+    // 还没有日志
+  }
+}
+
+/**
+ * SessionEnd 后拉起分离的 ab work，只处理这一个会话。宿主等不到它，它自己有租约。
+ * 输出追加到 work.log（§12.6.6）：以前直接丢掉，近一半的窗口由这种进程处理，出了错没有任何记录。
+ */
 function spawnWork(key: string): void {
+  let out: number | "ignore" = "ignore";
+  try {
+    mkdirSync(home(), { recursive: true, mode: 0o700 });
+    rotateWorkLog(home());
+    out = openSync(join(home(), "work.log"), "a", 0o600);
+  } catch {
+    // 日志打不开不能挡住抽取
+  }
   const child = spawn(process.execPath, [...process.execArgv, process.argv[1], "work", "--session", key], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", out, out],
     env: process.env,
   });
   child.unref();
+  if (typeof out === "number") closeSync(out);
 }
 
 /**
@@ -1208,7 +1232,7 @@ async function cmdWork(argv: string[]): Promise<void> {
       redo: values.redo === true,
     });
     if (r.busy) {
-      console.log("另一个 ab work 正在运行，本次跳过。");
+      console.log(`${new Date().toISOString()} ab work${values.sweep ? " --sweep" : values.session ? ` --session ${values.session}` : ""}：另一个 ab work 正在运行，本次跳过。`);
       return;
     }
     if (values["dry-run"]) {
@@ -1235,8 +1259,8 @@ async function cmdWork(argv: string[]): Promise<void> {
     }
     console.log(
       [
-        `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : ""}`,
-        `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}${r.backlogLeft ? `；补登记会话留到下次 ${r.backlogLeft}（每次 sweep 最多 ${BACKLOG_WINDOWS_PER_SWEEP} 个窗口）` : ""}`,
+        `${new Date().toISOString()} ab work${values.sweep ? " --sweep" : values.session ? ` --session ${values.session}` : ""}`,
+        `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.split ? `，拆开重试 ${r.split}` : ""}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}${r.backlogLeft ? `；补登记会话留到下次 ${r.backlogLeft}（每次 sweep 最多 ${BACKLOG_WINDOWS_PER_SWEEP} 个窗口）` : ""}`,
         `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
         Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
@@ -1245,6 +1269,7 @@ async function cmdWork(argv: string[]): Promise<void> {
           ? `话题沉淀: 运行 ${r.topic.run}，话题窗口 ${r.topic.windows.length}，写入正式库 ${r.topic.windows.reduce((n, w) => n + w.created.length, 0)} 条（未确认），并入建议 ${r.topic.windows.reduce((n, w) => n + w.merges.length, 0)} 条（只进报告）；报告 ${join(topicReportDir(home()), `${r.topic.run}.json`)}；整次撤销 ab work --undo ${r.topic.run}`
           : "",
         backupLine,
+        ...(r.problems.length ? ["出错明细:", ...r.problems.map((p) => `  ${p}`)] : []),
       ].filter(Boolean).join("\n"),
     );
   } finally {
