@@ -162,3 +162,32 @@ test("工具输出里提到 <agentbrain-recall> 的源码不整段丢：没闭�
     ["r2", "Error: 断言 `<agentbrain-recall>` 开头失败"],
   ]);
 });
+
+test("截断报错输出不会切出孤立代理字符", () => {
+  // 复现 pm 里 claude 会话 4bbd4b46 的抽取失败：尾部恰好切在 emoji 代理对中间，
+  // JSON.stringify 写出 \ude9e，网关 utf-8 编码报 surrogates not allowed，整窗 502。
+  const emoji = "󰪞"; // U+E9E，代理对
+  // slice(-300) 的起点必须正好落在代理对的低位码元上：高位在 index 400，总长 701
+  const err = `${"a".repeat(400)}${emoji}${"b".repeat(299)}`;
+  const p = file("tool-surrogate.jsonl", [
+    { type: "session", id: "h", cwd: "/repo" },
+    { type: "message", id: "u", parentId: "h", message: { role: "user", content: "跑一下" } },
+    { type: "message", id: "a1", parentId: "u", message: { role: "assistant", content: [{ type: "toolCall", id: "k1", name: "bash", arguments: { command: "ccline" } }] } },
+    { type: "message", id: "r1", parentId: "a1", isError: true, message: { role: "toolResult", toolCallId: "k1", isError: true, content: [{ type: "text", text: err }] } },
+  ]);
+  const tool = cleanTranscript("pi", p).turns.find((t) => t.role === "tool");
+  assert.ok(tool, "应当有工具输出");
+  const text = tool.text;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const n = text.charCodeAt(i + 1);
+      assert.ok(n >= 0xdc00 && n <= 0xdfff, `位置 ${i} 有孤立的高位代理`);
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) {
+      const prev = text.charCodeAt(i - 1);
+      assert.ok(prev >= 0xd800 && prev <= 0xdbff, `位置 ${i} 有孤立的低位代理`);
+    }
+  }
+  assert.ok(Buffer.byteLength(JSON.stringify({ text }), "utf8") > 0, "JSON 必须能编码成 utf-8");
+});

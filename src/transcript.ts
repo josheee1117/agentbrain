@@ -110,12 +110,18 @@ export function stripInjected(text: string): { text: string; stripped: number } 
   return { text: out.trim(), stripped };
 }
 
+/** 按字符数截断，但不从代理对中间切开：切出一个孤立代理后 JSON.stringify 会写出 \udXXX 转义，下游编码直接报 surrogates not allowed。 */
+function sliceKeepingPairs(s: string, from: number, to?: number): string {
+  const cut = s.slice(from, to).toWellFormed();
+  return cut;
+}
+
 function compressOutput(output: string, isError: boolean): string {
   const t = output.trim();
   if (!t) return "";
   if (!isError && !ERRORISH.test(t)) return `（工具输出 ${t.length} 字，已省略）`;
   if (t.length <= TOOL_KEEP_CHARS * 2) return t;
-  return `${t.slice(0, TOOL_KEEP_CHARS)}\n…\n${t.slice(-TOOL_KEEP_CHARS)}`;
+  return `${sliceKeepingPairs(t, 0, TOOL_KEEP_CHARS)}\n…\n${sliceKeepingPairs(t, -TOOL_KEEP_CHARS)}`;
 }
 
 function callLine(name: string, input: unknown): { line: string; ab: boolean } {
@@ -133,7 +139,7 @@ function callLine(name: string, input: unknown): { line: string; ab: boolean } {
   if (cmdText && isAbCommand(cmdText)) return { line: `调用 ab（agentbrain 自身的命令，已省略）`, ab: true };
   const path = parsed.file_path ?? parsed.path;
   const what = cmdText || (typeof path === "string" ? path : JSON.stringify(parsed));
-  return { line: `调用 ${name}: ${what.slice(0, TOOL_CALL_CHARS)}`, ab: false };
+  return { line: `调用 ${name}: ${sliceKeepingPairs(what, 0, TOOL_CALL_CHARS)}`, ab: false };
 }
 
 function blockText(c: unknown): string {
