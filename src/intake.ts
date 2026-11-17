@@ -10,10 +10,15 @@ import type { WorkError } from "./llm.ts";
 export const LEASE_TTL_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 4;
 const BACKOFF_MIN = [1, 5, 30, 120];
+/** 一次延后最多等一小时：429 的 Retry-After 会报“额度 8 天后重置”这种远超实际的等待，等太久窗口就几天不重试。 */
+export const MAX_DEFER_MS = 60 * 60_000;
 const WINDOW_RETENTION_DAYS = 30;
 const SESSION_RETENTION_DAYS = 90;
 
 export type WindowState = "deferred" | "done" | "failed";
+
+/** 窗口的未完成原因：模型/资源的错误码，加上进度越过后的 superseded（不是抽取失败）。 */
+export type WindowErrorCode = WorkError | "superseded";
 
 export interface SessionRow {
   host: Host;
@@ -40,7 +45,7 @@ export interface WindowRow {
   state: WindowState;
   attempts: number;
   next_at: string | null;
-  error_code: WorkError | null;
+  error_code: WindowErrorCode | null;
   receipt: string | null;
   updated_at: string;
 }
@@ -108,9 +113,33 @@ export function dueDeferredSessions(db: DatabaseSync, now: Date, except: { host:
   return db
     .prepare(
       `SELECT DISTINCT s.* FROM capture_sessions s JOIN capture_windows w ON w.host=s.host AND w.session_id=s.session_id
-       WHERE w.state='deferred' AND (w.next_at IS NULL OR w.next_at <= ?) AND NOT (s.host=? AND s.session_id=?) ORDER BY s.last_touch`,
+       WHERE w.state='deferred' AND (w.next_at IS NULL OR w.next_at <= ? OR (w.error_code='http_429' AND w.updated_at <= ?)) AND NOT (s.host=? AND s.session_id=?) ORDER BY s.last_touch`,
     )
-    .all(now.toISOString(), except.host, except.session_id) as unknown as SessionRow[];
+    .all(now.toISOString(), new Date(now.getTime() - MAX_DEFER_MS).toISOString(), except.host, except.session_id) as unknown as SessionRow[];
+}
+
+/** 延后窗口现在到期了吗。429 的历史行里存过远超上限的 next_at，按延后时间封顶算，不用一次性改库。 */
+export function deferDue(w: Pick<WindowRow, "next_at" | "error_code" | "updated_at">, now: Date): boolean {
+  if (!w.next_at || Date.parse(w.next_at) <= now.getTime()) return true;
+  return w.error_code === "http_429" && now.getTime() - Date.parse(w.updated_at) >= MAX_DEFER_MS;
+}
+
+/**
+ * 宿主冷却（话题模式 429）到期了吗。新版本写入时已按 MAX_DEFER_MS 封顶，比这更远的截止时间只可能来自旧版本未封顶的写入，
+ * 无须查库核对来源，按到期处理；不必为此改库。
+ */
+export function cooldownDue(until: string, now: Date): boolean {
+  if (until <= now.toISOString()) return true;
+  return Date.parse(until) > now.getTime() + MAX_DEFER_MS;
+}
+
+export function deferredWindows(db: DatabaseSync, host: Host, sessionId: string): WindowRow[] {
+  return db.prepare("SELECT * FROM capture_windows WHERE host=? AND session_id=? AND state='deferred'").all(host, sessionId) as unknown as WindowRow[];
+}
+
+/** 进度已越过的延后行不会再被切出来。标 failed 留痕，不删、不推进 checkpoint：finishWindow 的 CAS 要求进度仍停在窗口 from 上，这里对不上。 */
+export function failSuperseded(db: DatabaseSync, windowId: string, now: Date): void {
+  db.prepare("UPDATE capture_windows SET state='failed', next_at=NULL, error_code='superseded', updated_at=? WHERE window_id=? AND state='deferred'").run(now.toISOString(), windowId);
 }
 
 export function knownSession(db: DatabaseSync, host: Host, sessionId: string): boolean {
@@ -158,7 +187,9 @@ export function deferWindow(db: DatabaseSync, s: SessionRow, w: { id: string; fr
   const prev = getWindow(db, w.id);
   const attempts = (prev?.attempts ?? 0) + (countAttempt ? 1 : 0);
   if (attempts >= MAX_ATTEMPTS) return true;
-  const next = until ?? new Date(now.getTime() + BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length - 1)] * 60_000);
+  const next = until
+    ? new Date(Math.min(until.getTime(), now.getTime() + MAX_DEFER_MS))
+    : new Date(now.getTime() + BACKOFF_MIN[Math.min(attempts, BACKOFF_MIN.length - 1)] * 60_000);
   db.prepare(
     `INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at)
      VALUES(?,?,?,?,?,'deferred',?,?,?,NULL,?)
@@ -341,7 +372,8 @@ export function stats(db: DatabaseSync, now: Date): IntakeStats {
     windows: {
       done: wins.filter((w) => w.state === "done").length,
       deferred: wins.filter((w) => w.state === "deferred").length,
-      failed: wins.filter((w) => w.state === "failed").length,
+      // superseded 是进度越过后的旧积压清理，不是抽取失败；它照旧出现在 errors 里当未完成原因
+      failed: wins.filter((w) => w.state === "failed" && w.error_code !== "superseded").length,
       errors: werr,
       nextRetry,
     },

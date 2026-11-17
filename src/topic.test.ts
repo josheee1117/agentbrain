@@ -14,7 +14,7 @@ import * as intake from "./intake.ts";
 import type { Turn } from "./transcript.ts";
 import {
   addTopicMark, PROMPT_VERSION, pruneTopicMarks, TOPIC_CONTEXT_MAX_CHARS, TOPIC_CONTEXT_TURNS, TOPIC_IDLE_MS, TOPIC_MAX_CHARS,
-  topicChatFor, topicChunks, topicEnabled, topicMarks, undoTopicRun, type TopicRunReport,
+  topicChatFor, topicChunks, topicEnabled, topicMarks, undoTopicRun, windowId, type TopicRunReport,
 } from "./topic.ts";
 import type { RunResult } from "./clireviewer.ts";
 
@@ -281,7 +281,7 @@ test("额度用完：窗口延后到恢复时间、不算失败尝试；同一�
   const w = e.store.workDb.prepare("SELECT state,attempts,error_code,next_at FROM capture_windows").all() as any[];
   assert.equal(w.length, 1);
   assert.deepEqual([w[0].state, w[0].attempts, w[0].error_code], ["deferred", 0, "http_429"]);
-  assert.equal(w[0].next_at, new Date(T0 + 120 * MIN + hours).toISOString());
+  assert.equal(w[0].next_at, new Date(T0 + 120 * MIN + 3_600_000).toISOString(), "429 的等待封顶 1 小时，不照搬 10 小时");
   // 恢复前再跑：不调模型
   await runWork(e.deps(topicDeps(chat)), { sweep: false, dryRun: false });
   assert.equal(chat.calls.length, 1);
@@ -602,4 +602,72 @@ test("§8.7：一步式上限 8 条在话题沉淀里生效（多出的计 too_m
   assert.equal(e.store.project().props.size, 8);
   assert.ok([...e.store.project().props.values()].every((p) => p.guidance === true), "A 类一律 guidance（模型标 false 也一样）");
   assert.deepEqual(saved.at(-1)!.windows[0].invalid, { too_many: 2 });
+});
+
+// ---------- review 修复：话题模式的宿主冷却与窗口延后用同一个封顶 ----------
+
+test("话题模式 429 报八天后重置：一小时后就能再次调用模型（宿主冷却按封顶算）", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const t0 = T0 + 120 * MIN;
+  const eightDays = 8 * 86_400_000;
+  const limitChat = () => fakeChat(() => {
+    throw new WorkFailure("http_429", "claude 审稿失败：You've hit your weekly limit · resets in 8 days", eightDays);
+  });
+  const first = limitChat();
+  await runWork(e.deps(topicDeps(first), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  assert.equal(first.calls.length, 1);
+  const win = e.store.workDb.prepare("SELECT next_at FROM capture_windows").get() as { next_at: string };
+  assert.equal(win.next_at, new Date(t0 + 3_600_000).toISOString(), "窗口延后封顶一小时");
+  assert.equal(intake.meta(e.store.workDb, "topic_cooldown:claude"), new Date(t0 + 3_600_000).toISOString(), "宿主冷却与窗口同一个封顶");
+  // 满一小时后窗口到期，冷却也到期，模型可以再调一次
+  const second = limitChat();
+  await runWork(e.deps(topicDeps(second), { now: () => new Date(t0 + 3_600_001) }), { sweep: false, dryRun: false });
+  assert.equal(second.calls.length, 1, "一小时后照常重试，不再被“八天后”的冷却挡住");
+  // 半小时前还没到期，不调
+  const third = fakeChat(() => ({ items: [ITEM] }));
+  await runWork(e.deps(topicDeps(third), { now: () => new Date(t0 + 3_600_001 + 30 * MIN) }), { sweep: false, dryRun: false });
+  assert.equal(third.calls.length, 0, "新一轮 429 又把冷却推到一小时后");
+});
+
+test("话题模式：库里已存的远期宿主冷却按到期算，不改库", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const t0 = T0 + 120 * MIN;
+  // 修之前写下的行：冷却到八天后，窗口 next_at 也到八天后；updated_at 是延后那一刻
+  const far = new Date(t0 + 8 * 86_400_000).toISOString();
+  intake.setMeta(e.store.workDb, "topic_cooldown:claude", far);
+  e.store.workDb.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES('old429','claude','s1',NULL,'a1','deferred',0,?,?,NULL,?)",
+  ).run(far, "http_429", new Date(t0).toISOString());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor=NULL WHERE session_id='s1'").run();
+  // 新写入都封顶一小时，比一小时还远的只可能是旧版本没封顶的原值：按到期算，不再等
+  const chat = fakeChat(() => ({ items: [ITEM] }));
+  await runWork(e.deps(topicDeps(chat), { now: () => new Date(t0 + 2 * MIN) }), { sweep: false, dryRun: false });
+  assert.ok(chat.calls.length >= 1, `远期冷却按到期算，照常调模型，实际 ${chat.calls.length} 次`);
+  assert.equal(intake.meta(e.store.workDb, "topic_cooldown:claude"), far, "读的时候不改库，远期值原样留着");
+});
+
+test("话题模式：别的会话新来的 429 不会把历史八天的冷却重新起算，到期照常调模型", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", TWO_TOPICS));
+  const t0 = T0 + 120 * MIN;
+  const db = e.store.workDb;
+  // 旧版本在话题模式里留下的冷却和窗口：都到八天后，延后发生在 t0
+  const far = new Date(t0 + 8 * 86_400_000).toISOString();
+  intake.setMeta(db, "topic_cooldown:claude", far);
+  db.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES(?,?,?,?,?,'deferred',0,?,?,NULL,?)",
+  ).run(windowId("claude", "s1", null, "a1"), "claude", "s1", null, "a1", far, "http_429", new Date(t0).toISOString());
+  db.prepare("UPDATE capture_sessions SET processed_anchor=NULL WHERE session_id='s1'").run();
+  // 另一个会话在 t0+59 分钟撞上 429，一分钟后重试：跟 s1 的历史冷却无关
+  db.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES(?,?,?,?,?,'deferred',0,?,?,NULL,?)",
+  ).run(windowId("claude", "other", null, "x1"), "claude", "other", null, "x1", new Date(t0 + 60 * MIN).toISOString(), "http_429", new Date(t0 + 59 * MIN).toISOString());
+  // t0+61 分钟：历史窗口和冷却都已到期，不能因为那条 429 只过了两分钟就被挡住
+  const chat = fakeChat(() => ({ items: [ITEM] }));
+  const r = await runWork(e.deps(topicDeps(chat), { now: () => new Date(t0 + 61 * MIN) }), { sweep: false, dryRun: false });
+  assert.ok(chat.calls.length >= 1, `历史冷却已到期，照常调模型，实际 ${chat.calls.length} 次`);
+  assert.equal(r.windows.deferred, 0, "没有窗口因为冷却被延后");
+  assert.equal(intake.meta(db, "topic_cooldown:claude"), far, "读的时候不改库");
 });

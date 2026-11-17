@@ -17,6 +17,7 @@ import { allowedTranscript } from "./transcript-file.ts";
 import { expandSource } from "./source.ts";
 import * as intake from "./intake.ts";
 import { sha256, validate } from "./extract.ts";
+import { statusLine, statusReport } from "./status.ts";
 import type { Proposition, RememberBody } from "./l2.ts";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "ab-work-")));
@@ -55,7 +56,10 @@ interface Env {
   registryDir: string;
   deps: (chat: Chat | null, extra?: Partial<WorkDeps>) => WorkDeps;
   transcript: (sid: string, lines: object[], idle?: boolean) => string;
-  codexTranscript: (sid: string, lines: object[], idle?: boolean) => string;  register: (sid: string, file: string, ended?: boolean) => void;
+  codexTranscript: (sid: string, lines: object[], idle?: boolean) => string;
+  /** 同一条 Codex 会话的另一个 rollout 文件（编辑旧消息后宿主另起文件），文件名带不同的时间与后缀。 */
+  codexRollout: (sid: string, name: string, lines: object[], idle?: boolean) => string;
+  register: (sid: string, file: string, ended?: boolean) => void;
   pid: string;
 }
 
@@ -103,6 +107,14 @@ function env(): Env {
       const d = join(dir, ".codex/sessions/fixture");
       mkdirSync(d, { recursive: true });
       const p = join(d, `rollout-2026-10-08T10-45-49-${sid}.jsonl`);
+      writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+      return p;
+    },
+    codexRollout: (sid, name, lines, idle = true) => {
+      const d = join(dir, ".codex/sessions/fixture");
+      mkdirSync(d, { recursive: true });
+      const p = join(d, `rollout-${name}-${sid}.jsonl`);
       writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
       if (idle) utimesSync(p, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
       return p;
@@ -1466,4 +1478,260 @@ test("升级兼容：证据按旧键跳过时，confirm 也跳过，目标条目
   const stat = (kind: string) => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind=? AND target_id=?").get(kind, target)!.n;
   assert.deepEqual([stat("evidence"), stat("confirm")], [0, 0], "证据被旧键判成已处理时，confirm 不能单独写进去");
   assert.equal(e.store.project().props.get(target)!.confirmed, false, "目标条目不能靠没写进去的证据转正");
+});
+
+const codexTurn = (ordinal: number, role: "user" | "assistant", text: string) => ({
+  ordinal,
+  type: "response_item",
+  payload: { type: "message", role, content: [{ type: role === "user" ? "input_text" : "output_text", text }] },
+});
+
+function insertDeferred(e: Env, id: string, host: string, sid: string, to: string, nextAt: string, from: string | null = null): void {
+  e.store.workDb.prepare(
+    "INSERT INTO capture_windows(window_id,host,session_id,from_anchor,to_anchor,state,attempts,next_at,error_code,receipt,updated_at) VALUES(?,?,?,?,?,'deferred',1,?,?,NULL,?)",
+  ).run(id, host, sid, from, to, nextAt, "http_429", nextAt);
+}
+
+test("进度已越过的延后行退出为 superseded，同会话还没处理的窗口照常完成", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "旧要求"), asst("a1", "好"), user("u2", "以后 hook 命令都写 node 绝对路径")]);
+  e.register("s1", f, true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='a1' WHERE session_id='s1'").run();
+  const past = "2026-10-14T10:03:43.000Z";
+  insertDeferred(e, "passed-before", "claude", "s1", "u1", past);
+  insertDeferred(e, "passed-equal", "claude", "s1", "a1", past);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: true, dryRun: false });
+  const row = (id: string) => e.store.workDb.prepare("SELECT state, error_code, attempts FROM capture_windows WHERE window_id=?").get(id) as { state: string; error_code: string; attempts: number };
+  for (const id of ["passed-before", "passed-equal"]) {
+    const got = row(id);
+    assert.equal(got.state, "failed", id);
+    assert.equal(got.error_code, "superseded", id);
+    assert.equal(got.attempts, 1, id);
+  }
+  assert.equal(r.windows.done, 1, "进度之后的窗口照常完成");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u2");
+  const live = e.store.workDb.prepare("SELECT state FROM capture_windows WHERE to_anchor='u2'").get() as { state: string };
+  assert.equal(live.state, "done");
+});
+
+test("进度没越过、只是没到期的延后行保持不动，到期后照常重试", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "先记下这件事")]), true);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
+  const f = e.transcript("s1", [user("u1", "先记下这件事"), user("u2", "以后 hook 命令都写 node 绝对路径")]);
+  utimesSync(f, new Date(Date.now() - 3_600_000), new Date(Date.now() - 3_600_000));
+  const t0 = Date.parse("2026-11-09T00:00:00.000Z");
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流", 60_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  const before = e.store.workDb.prepare("SELECT state, attempts, next_at, error_code, to_anchor FROM capture_windows WHERE state='deferred'").get() as { state: string; attempts: number; next_at: string; error_code: string; to_anchor: string };
+  assert.equal(before.to_anchor, "u2");
+  assert.equal(before.state, "deferred");
+  const held = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t0 + 1_000) }), { sweep: false, dryRun: false });
+  assert.equal(held.windows.done, 0, "没到期不重试");
+  const mid = e.store.workDb.prepare("SELECT state, attempts, next_at, error_code FROM capture_windows WHERE to_anchor='u2'").get() as { state: string; attempts: number; next_at: string; error_code: string };
+  assert.equal(mid.state, before.state);
+  assert.equal(mid.attempts, before.attempts);
+  assert.equal(mid.next_at, before.next_at);
+  assert.equal(mid.error_code, before.error_code);
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u1");
+  const retried = await runWork(e.deps(fakeChat(() => json({ candidates: [] })), { now: () => new Date(t0 + 60_001) }), { sweep: false, dryRun: false });
+  assert.equal(retried.windows.done, 1, "到期后照常重试");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u2");
+  assert.equal((e.store.workDb.prepare("SELECT state FROM capture_windows WHERE to_anchor='u2'").get() as { state: string }).state, "done");
+});
+
+test("判不出锚点顺序时延后行不动", async () => {
+  const e = env();
+  const f = e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径")]);
+  e.register("s1", f, true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='missing' WHERE session_id='s1'").run();
+  const past = "2026-10-14T10:03:43.000Z";
+  insertDeferred(e, "unknown-order", "claude", "s1", "also-missing", past);
+  await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: false, dryRun: false });
+  const row = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='unknown-order'").get() as { state: string; error_code: string };
+  assert.equal(row.state, "deferred");
+  assert.equal(row.error_code, "http_429");
+  assert.equal(intake.sessions(e.store.workDb)[0].error_code, "source_unavailable");
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "missing");
+});
+
+test("Codex 换文件：旧进度找不到且新文件第一轮更大时，从第一轮切，窗口 from 仍是旧进度", () => {
+  const turns = [
+    { anchor: "642", role: "user" as const, text: "以后 hook 命令都写 node 绝对路径" },
+    { anchor: "643", role: "assistant" as const, text: "好" },
+  ];
+  const chunks = chunk("codex", "s", turns, "635", true) as any[];
+  assert.notEqual(chunks, "anchor_missing");
+  assert.equal(chunks.length, 1);
+  assert.equal(chunks[0].from, "635");
+  assert.deepEqual(chunks[0].turns.map((t: any) => t.anchor), ["642", "643"]);
+  assert.equal(chunk("codex", "s", turns, "700", true), "anchor_missing", "新文件第一轮不大于旧进度时仍算锚点缺失");
+  assert.equal(chunk("claude", "s", turns, "635", true), "anchor_missing", "别的宿主不按数字锚点接文件");
+});
+
+test("Codex 换文件后接着处理：窗口 from 是旧进度，进度向前推进，被越过的延后行退出", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-000000000001";
+  const f = e.codexTranscript(sid, [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+    codexTurn(643, "assistant", "好"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='635', error_code='source_unavailable' WHERE session_id=?").run(sid);
+  const past = "2026-11-04T00:00:00.000Z";
+  insertDeferred(e, "old-633", "codex", sid, "633", past);
+  const chat = fakeChat(() => json({ candidates: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const old = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='old-633'").get() as { state: string; error_code: string };
+  assert.equal(old.state, "failed", "两个数字锚点都不在新文件里时按大小判断");
+  assert.equal(old.error_code, "superseded");
+  const win = e.store.workDb.prepare("SELECT from_anchor, to_anchor, state, receipt FROM capture_windows WHERE window_id!='old-633'").get() as { from_anchor: string; to_anchor: string; state: string; receipt: string };
+  assert.equal(win.state, "done");
+  assert.equal(win.from_anchor, "635", "窗口 from 仍是旧进度，CAS 才能通过");
+  assert.equal(win.to_anchor, "643");
+  assert.equal(JSON.parse(win.receipt).turns, 2, "从新文件第一轮开始切，不重跑旧内容");
+  const session = intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0];
+  assert.equal(session.processed_anchor, "643");
+  assert.equal(session.error_code, null);
+  assert.equal(chat.calls.length, 1);
+});
+
+test("Codex 新文件第一轮不大于旧进度：仍记 source_unavailable，进度不动", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-000000000002";
+  const f = e.codexTranscript(sid, [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: f, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='700' WHERE session_id=?").run(sid);
+  const chat = fakeChat(() => json({ candidates: [] }));
+  await runWork(e.deps(chat), { sweep: false, dryRun: false });
+  const session = intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0];
+  assert.equal(session.error_code, "source_unavailable");
+  assert.equal(session.processed_anchor, "700");
+  assert.equal(chat.calls.length, 0);
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows").get()!.n, 0);
+});
+
+test("429 报的 Retry-After 远超实际（网关说 8 天后才重置）：延后有上限，额度恢复后一小时内就能重试", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH")]), true);
+  const t0 = Date.now();
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "模型接口限流 429: reset at 2026-11-06 23:59:59+08:00", 8 * 86_400_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  const w = e.store.workDb.prepare("SELECT state, next_at FROM capture_windows").get() as { state: string; next_at: string };
+  assert.equal(w.state, "deferred");
+  assert.ok(Date.parse(w.next_at) - t0 <= 3_600_000, `延后到 ${w.next_at}，超过一小时上限`);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] })), { now: () => new Date(t0 + 3_600_001) }), { sweep: false, dryRun: false });
+  assert.equal(r.windows.done, 1);
+  assert.equal(intake.sessions(e.store.workDb)[0].processed_anchor, "u1");
+});
+
+test("历史行里 next_at 已被 429 推到几天后：按延后时间封顶算到期，hook 拉起的单会话运行也会重试", async () => {
+  const e = env();
+  e.register("old", e.transcript("old", [user("u1", "以后 hook 命令都写 node 绝对路径，别依赖 PATH")]), true);
+  const t0 = Date.now();
+  await runWork(e.deps(fakeChat(() => {
+    throw new WorkFailure("http_429", "限流", 8 * 86_400_000);
+  }), { now: () => new Date(t0) }), { sweep: false, dryRun: false });
+  // 修之前写下的行：next_at 在 8 天后，updated_at 是延后那一刻
+  e.store.workDb.prepare("UPDATE capture_windows SET next_at=?").run(new Date(t0 + 8 * 86_400_000).toISOString());
+  e.register("new", e.transcript("new", [user("u2", "随便聊聊天气")]), true);
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] })), { now: () => new Date(t0 + 3_600_000) }), { sweep: false, dryRun: false, session: { host: "claude", session_id: "new" } });
+  assert.equal(r.windows.done, 2, "新会话 + 旧会话里被推到几天后的延后窗口");
+  assert.equal(intake.sessions(e.store.workDb, { host: "claude", session_id: "old" })[0].processed_anchor, "u1");
+});
+
+// ---------- review 修复：重放不重复记证据、清理复核租约与进度、superseded 不算失败 ----------
+
+test("Codex 编辑旧消息换了文件：重放已抽过的原话不再追加来源，之后的新内容照常抽取", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-0000000000aa";
+  const repeated = "以后 hook 命令都写 node 绝对路径";
+  const oldFile = e.codexRollout(sid, "2026-11-04T16-12-10", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(635, "user", repeated),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: oldFile, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  await runWork(e.deps(fakeChat(() => json({ candidates: [RULE] }))), { sweep: false, dryRun: false });
+  const prop = props(e.store).find((p) => p.text === RULE.text)!;
+  assert.equal(prop.evidence[0].anchor, "635");
+  // 编辑旧消息后宿主另起文件：642 重放 635 的原话，644 之后是新内容
+  const forked = e.codexRollout(sid, "2026-11-04T17-14-37", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", repeated),
+    codexTurn(643, "assistant", "好"),
+    codexTurn(644, "user", "提交前先跑 tsc"),
+  ]);
+  e.store.workDb.prepare("UPDATE capture_sessions SET transcript=?, ended_at=? WHERE session_id=?").run(forked, new Date().toISOString(), sid);
+  const dup = { ...RULE, relation: { type: "duplicate", target: "m1" } };
+  // 新文件的三轮：1=642 重放，2=643 回答，3=644 新内容
+  const fresh = { ...RULE, text: "提交前先跑 tsc", why: "上次漏跑 tsc，CI 上才报类型错误", evidence: [{ anchor: "#3", role: "user", quote: "提交前先跑 tsc" }] };
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [dup, fresh] }))), { sweep: false, dryRun: false });
+  assert.deepEqual(e.store.project().props.get(prop.id)!.extra_sources, [], "同一会话同一句原话不再追加第二份来源");
+  assert.equal(r.receipt.attached, 0);
+  assert.ok(props(e.store).some((p) => p.text === "提交前先跑 tsc"), "重放之后的新内容照常抽取");
+  assert.equal(intake.sessions(e.store.workDb, { host: "codex", session_id: sid })[0].processed_anchor, "644");
+});
+
+test("别的会话里出现同一句原话照常追加来源：去重不扩到跨会话", async () => {
+  const e = env();
+  const quote = "以后 hook 命令都写 node 绝对路径";
+  const old = e.store.remember(e.pid, null, false, {
+    kind: "rule", text: RULE.text, confirmed: false, basis: "user_directive",
+    evidence: [{ anchor: "u1", role: "user", quote_sha256: sha256(quote) }],
+    source: { host: "claude", session_id: "s0", transcript: null, anchor: "u1", summary: "x" },
+  });
+  e.register("s1", e.transcript("s1", [user("u1", quote)]));
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [{ ...RULE, relation: { type: "duplicate", target: "m1" } }] }))), { sweep: false, dryRun: false });
+  assert.equal(r.receipt.attached, 1);
+  assert.deepEqual(e.store.project().props.get(old)!.extra_sources.map((s) => s.session_id), ["s1"]);
+});
+
+test("旧进程被接管后恢复：新进程正常排队的行仍是 deferred，不被改成 superseded", async () => {
+  const e = env();
+  const sid = "01a1a59d-9571-7000-8000-0000000000bb";
+  // 旧进程启动时读到的进度是 635，B 会话里有一条它以为被越过的延后行（to=633）
+  const target = e.codexRollout(sid, "2026-11-04T16-12-10", [
+    { type: "session_meta", payload: { cwd: e.repo, source: "vscode" } },
+    codexTurn(642, "user", "以后 hook 命令都写 node 绝对路径"),
+  ]);
+  intake.upsertSession(e.store.workDb, { host: "codex", session_id: sid, transcript: target, cwd: e.repo, ended: true, ephemeral: false, via: "hook" }, () => "alpha", new Date());
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='635' WHERE session_id=?").run(sid);
+  insertDeferred(e, "stale-633", "codex", sid, "633", "2026-11-04T00:00:00.000Z");
+  // A 先处理：模型调用期间，新进程接管租约、对 B 做 --redo 并把 NULL→635 正常延后
+  e.register("a", e.transcript("a", [user("u1", "以后 hook 命令都写 node 绝对路径")], true));
+  e.store.workDb.prepare("UPDATE capture_sessions SET last_touch='2000-01-01T00:00:00.000Z' WHERE session_id='a'").run();
+  const chat = fakeChat(() => {
+    e.store.workDb.prepare("INSERT OR REPLACE INTO work_lease(name,holder,pid,expires_at) VALUES('work','new-process',?,?)").run(process.pid, new Date(Date.now() + 3_600_000).toISOString());
+    e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor=NULL WHERE session_id=?").run(sid);
+    e.store.workDb.prepare("DELETE FROM capture_windows WHERE window_id='stale-633'").run();
+    insertDeferred(e, "live-635", "codex", sid, "635", new Date(Date.now() + 600_000).toISOString());
+    return json({ candidates: [] });
+  });
+  await assert.rejects(runWork(e.deps(chat), { sweep: false, dryRun: false }), /租约已被接管/, "旧进程领不清租约就停下，不写库");
+  const row = e.store.workDb.prepare("SELECT state, error_code FROM capture_windows WHERE window_id='live-635'").get() as { state: string; error_code: string };
+  assert.equal(row.state, "deferred", "别人正常排队的行仍是 deferred");
+  assert.equal(row.error_code, "http_429", "错误码没被改成 superseded");
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE error_code='superseded'").get()!.n, 0);
+});
+
+test("清理越过的旧行不算抽取失败：report.windows.failed 不增，状态栏和 ab status 都排除 superseded", async () => {
+  const e = env();
+  e.register("s1", e.transcript("s1", [user("u1", "旧要求"), asst("a1", "好"), user("u2", "以后 hook 命令都写 node 绝对路径")]), true);
+  e.store.workDb.prepare("UPDATE capture_sessions SET processed_anchor='a1' WHERE session_id='s1'").run();
+  insertDeferred(e, "stale-row", "claude", "s1", "u1", "2026-10-14T10:03:43.000Z");
+  const r = await runWork(e.deps(fakeChat(() => json({ candidates: [] }))), { sweep: true, dryRun: false });
+  assert.equal(r.windows.failed, 0, "清理旧行不算抽取失败");
+  assert.equal(e.store.workDb.prepare("SELECT COUNT(*) AS n FROM capture_windows WHERE error_code='superseded'").get()!.n, 1, "行照常留痕");
+  assert.equal(statusLine(e.store, new Date()).work_failed, 0, "状态栏不把 superseded 当抽取失败");
+  const line = statusReport(e.store, {
+    cwd: e.repo, userHome: e.dir, storeHome: e.dir, host: { ok: true, detection: null } as never,
+    embedder: null, embedReason: "未配置", chatConfig: { error: "没有 extract.json" }, now: new Date(),
+  });
+  assert.match(line, /失败 0；未完成原因 superseded 1/, "ab status 里 superseded 照常出现在未完成原因");
 });
