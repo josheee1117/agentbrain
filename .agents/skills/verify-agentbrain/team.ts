@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
@@ -68,8 +68,8 @@ const ab = (args: string[], cwd = repo) => {
 writeFileSync(join(repo, "README.md"), "# team-demo\n\n验收用的演示项目。本地构建脚本在 scripts/ 下，只写本目录的 .state/。\n");
 // 每个宿主会话开始前删掉 .state，保证 build.sh 第一次一定失败。
 // 夹具只做本地构建：叫 deploy 会被 Claude Code 的权限分类器当成没有预览的生产发布拦下（基线实测）
-writeFileSync(join(repo, "scripts/build.sh"), "#!/bin/sh\n# 只在本目录生成 .state/build.txt，不联网、不碰别的目录\nif [ ! -f .state/prepared ]; then\n  echo 'ERROR: 本地缓存 .state/prepared 不存在，构建中止（退出码 3）。build.sh 不会自动准备，先执行 sh scripts/smoke.sh --prepare 再重试。' >&2\n  exit 3\nfi\necho built > .state/build.txt\necho 'build ok: 本地构建完成'\n", { mode: 0o755 });
-writeFileSync(join(repo, "scripts/smoke.sh"), "#!/bin/sh\nif [ \"$1\" = --prepare ]; then mkdir -p .state && touch .state/prepared && echo 'prepared local cache'; fi\necho smoke ok\n", { mode: 0o755 });
+writeFileSync(join(repo, "scripts/build.sh"), "#!/bin/sh\n# 只在本目录生成 .state/build.txt，不联网、不碰别的目录\nif [ -f .state/build.lock ]; then\n  echo 'ERROR: 另一个构建正在运行（.state/build.lock 存在），构建中止，退出码 3。' >&2\n  exit 3\nfi\nmkdir -p .state && echo built > .state/build.txt\necho 'build ok: 本地构建完成'\n", { mode: 0o755 });
+writeFileSync(join(repo, "scripts/smoke.sh"), "#!/bin/sh\n# 用法: sh scripts/smoke.sh [--unlock]\n#   --unlock  清掉上次构建被中断后残留的 .state/build.lock（没有构建在跑时它也会留着）\nif [ \"$1\" = --unlock ]; then rm -f .state/build.lock && echo 'unlocked: 已清掉残留的构建锁'; fi\necho smoke ok\n", { mode: 0o755 });
 writeFileSync(join(repo, ".gitignore"), ".state/\n");
 sh("git", ["init", "-q"], env);
 sh("git", ["-c", "user.name=t", "-c", "user.email=t@t", "add", "."], env);
@@ -82,7 +82,18 @@ const idOf = (out: string) => {
 };
 const pit = idOf(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", PIT_TEXT, "--summary", "验收用：发布顺序"]));
 const dec = idOf(ab(["remember", "--confirmed", "--kind", "decision", "--text", `team-demo 的灰度开关叫 ${FLAG}，默认比例是 ${FLAG_VALUE}%。`, "--why", "验收用的预设答案", "--summary", "验收用：灰度开关"]));
-log("run.json", { cli: CLI, scratch, store, registry, repo, hosts: selected, pit, dec, label: values.label });
+const CODE_PIT = "team-demo 的单测用 node --test 跑，仓库里没有装 jest。";
+let codePit: string | null = null;
+{
+  const { Store } = (await import(join(CLI, "../store.ts"))) as typeof import("../../../src/store.ts");
+  const st = new Store(join(store, "store.db"), join(store, "index.db"));
+  const pid = st.ensureProject("team-demo");
+  codePit = st.remember(pid, "seed-extract", false, { kind: "pitfall", text: CODE_PIT, confirmed: false, origin: "extract", source: { host: "claude", session_id: "seed-extract", transcript: null, anchor: null, summary: "验收用：代码核验转正的坑" } });
+  st.commit([{ kind: "verify", project_id: pid, session_id: null, target_id: codePit, body: { outcome: "verified", head: "seed", refs: [], model: "seed" } }], () => {});
+  st.close();
+}
+const ME = userInfo().username;
+log("run.json", { cli: CLI, scratch, store, registry, repo, hosts: selected, pit, dec, codePit, label: values.label });
 
 const db = new DatabaseSync(join(store, "store.db"), { readOnly: true });
 const q = (sql: string, ...args: (string | number | null)[]) => db.prepare(sql).all(...args) as Record<string, unknown>[];
@@ -137,16 +148,44 @@ writeFileSync(piExtension, `import { createExtension, makeExecRunner } from ${JS
 
 const PROMPT = `这是 agentbrain 的验收会话，当前目录是演示项目 team-demo。只用 shell 工具，不改任何文件。按顺序做完下面五步，每一步都把命令的原始输出看完再做下一步：
 1. 开工先执行 \`ab brief\`。
-2. 执行 \`sh scripts/build.sh\` 做本地构建（只写本目录的 .state/，不联网）。如果失败，按报错提示处理后再执行一次，直到构建成功。不要改仓库里已有的文件。
+2. 执行 \`sh scripts/build.sh\` 做本地构建（只写本目录的 .state/，不联网）。如果失败，先查清原因（可以读 scripts/ 下的脚本）再处理，直到构建成功。不要改仓库里已有的文件。
 3. 执行 \`ab search 灰度开关\`，对命中的那条执行 \`ab get <id>\`。
 4. 执行 \`ab status\`。
-5. 最后用中文回答，分四小段：
+5. 最后用中文回答，分五小段：
    (a) ab brief 里 team-demo 的坑，原样抄一条；
-   (b) 灰度开关叫什么、默认比例是多少，以及这条记忆是谁确认的；
-   (c) build.sh 第一次的报错原文，以及最后是怎么构建成功的；
-   (d) ab status 输出里以「代码」「库」「备份」开头的行，原样抄出来，没有就写「没有这些行」。
+   (b) 灰度开关叫什么、默认比例是多少；按 ab get 的输出，这条记忆是谁（操作者@机器）确认的、是不是在 agent 会话里执行的；
+   (c) build.sh 第一次的报错原文、真实原因，以及最后是怎么构建成功的；
+   (d) ab status 输出里以「代码」「库」「备份」开头的行，原样抄出来，没有就写「没有这些行」；
+   (e) ab brief 里有没有标了（代码核验）的条目，有就抄一条，并说明这个标注是什么意思。
 回答末尾按注入的要求写记忆报告行。
-另外定个规矩：以后 team-demo 本地构建一律先跑 \`sh scripts/smoke.sh --prepare\`，再跑 build.sh。`;
+另外定个规矩：以后 team-demo 的本地构建产物一律放 .state/ 下，不许写到仓库其他目录。这条不用你执行 ab remember，后台会自动抽取。`;
+
+/** 宿主最后一条回复的正文（不含工具输出）：claude 取 result，codex 取最后一条 agent_message，pi 取 agent_end 里最后一条助手消息。 */
+function finalAnswer(host: Host, stdout: string): string {
+  if (host === "claude") {
+    try {
+      return String((JSON.parse(stdout) as { result?: string }).result ?? "");
+    } catch {
+      return "";
+    }
+  }
+  let last = "";
+  for (const l of stdout.split("\n")) {
+    let d: any;
+    try {
+      d = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (host === "codex" && d?.type === "item.completed" && d.item?.type === "agent_message" && typeof d.item.text === "string") last = d.item.text;
+    if (host === "pi" && d?.type === "agent_end" && Array.isArray(d.messages)) {
+      const a = d.messages.filter((m: any) => m?.role === "assistant").pop();
+      const c = a?.content;
+      last = typeof c === "string" ? c : Array.isArray(c) ? c.filter((x: any) => x?.type === "text").map((x: any) => x.text).join("\n") : last;
+    }
+  }
+  return last;
+}
 
 const results: Record<string, unknown>[] = [];
 const sessions = new Set<string>();
@@ -175,6 +214,8 @@ for (const host of selected) {
   const maxSeq = Number(q("SELECT max(seq) AS n FROM events")[0].n);
   console.log(`${host} 开始`);
   sh("rm", ["-rf", join(repo, ".state")], env, 10_000);
+  mkdirSync(join(repo, ".state"));
+  writeFileSync(join(repo, ".state/build.lock"), "stale\n");
   const r = sh(host, args, childEnv);
   const output = r.stdout + "\n" + r.stderr;
   log(`${dir}host-output.log`, output);
@@ -196,7 +237,7 @@ for (const host of selected) {
       log(`${dir}manual-work.log`, [m1.stdout, m1.stderr, m2.stdout, m2.stderr].join("\n"));
       waitWork(host, session, 30_000);
     }
-    const final = host === "claude" ? String((JSON.parse(r.stdout) as { result?: string }).result ?? "") : output;
+    const final = finalAnswer(host, r.stdout);
     const transcript = String(q("SELECT transcript FROM capture_sessions WHERE host=? AND session_id=?", host, session)[0]?.transcript ?? "");
     const raw = transcript && existsSync(transcript) ? readFileSync(transcript, "utf8") : "";
     log(`${dir}transcript-path.txt`, transcript);
@@ -208,10 +249,17 @@ for (const host of selected) {
     const events = q(`SELECT seq, kind, substr(id,1,8) AS id, ${ec.has("actor") ? "actor" : "NULL AS actor"}, ${ec.has("machine") ? "machine" : "NULL AS machine"}, json_extract(body,'$.text') AS text, json_extract(body,'$.basis') AS basis FROM events WHERE seq>? AND session_id=? ORDER BY seq`, maxSeq, session);
     checks.brief = { ok: deliveries.some((d) => d.path === "brief" && String(d.prop_id).startsWith(pit)) && (raw || output).includes("集成测试库端口是 15432"), detail: deliveries.filter((d) => d.path === "brief").length + " 条经 brief 交付" };
     checks.prefs_injected = { ok: (raw || output).includes("agentbrain-recall"), detail: "每轮注入块出现在会话记录里" };
+    const seen = raw || output;
     checks.search_get = { ok: queries.some((x) => x.path === "search") && queries.some((x) => x.path === "get") && final.includes(FLAG) && final.includes(FLAG_VALUE), detail: queries };
+    checks.get_who = { ok: /确认: 用户确认 · /.test(seen) && /写入: /.test(seen) && final.includes(ME), detail: `会话里 ab get 有“确认”“写入”两行，最终回答里写出了操作者 ${ME}` };
+    checks.brief_trust = { ok: seen.includes(`${CODE_PIT}（代码核验）`) && seen.includes("没标注的条目是用户确认过的"), detail: "会话里 ab brief 把代码核验转正的坑标出来，并有说明行" };
+    checks.search_marks = { ok: /决定\[用户确认\]\[[^\]]*(字面|相似)[^\]]*\]: team-demo 的灰度开关/.test(seen), detail: "会话里 ab search 的结果带确认来源和命中方式" };
     checks.extract = { ok: windows.some((w) => w.state === "done") && events.some((e) => e.kind === "remember" || e.kind === "evidence"), detail: { how, windows, events } };
     checks.actor_machine = { ok: events.length > 0 && events.every((e) => e.actor && e.machine), detail: events.map((e) => ({ id: e.id, kind: e.kind, actor: e.actor, machine: e.machine })) };
-    checks.status = { ok: /(^|\n|\\n)\s*代码[:：]/.test(raw || output) && /(^|\n|\\n)\s*备份[:：]/.test(raw || output), detail: "会话记录里有 ab status 的「代码」「备份」行" };
+    // 行首：真换行、JSON 里转义的换行，或工具输出字符串的开头（"text":"要处理…）
+    const line = (label: string) => new RegExp(`(^|\\n|\\\\n|")${label}`).test(seen);
+    const missing = ["要处理", "代码: ", "库: 版本 ", "备份: ", "失败窗口: "].filter((l) => !line(l));
+    checks.status = { ok: !missing.length, detail: missing.length ? `会话里的 ab status 缺这些行：${missing.join("、")}` : "会话里的 ab status 有 要处理、代码、库、备份、失败窗口 各行" };
     log(`${dir}final-answer.txt`, final.slice(-6000));
     log(`${dir}sql.json`, { session, deliveries, queries, windows, events });
   } catch (e) {

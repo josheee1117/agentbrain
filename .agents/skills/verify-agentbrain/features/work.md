@@ -13,6 +13,10 @@
 - 模型产出留痕（§8.10）：普通抽取、一步式话题、重复追加证据、关系判定、代码核验写下的 L1 事件都带 `model` 与 `prompt_version`（实发系统提示词全文的 SHA-256 前 12 位），`ab get` 按事件逐条列出
 - 转正只有三条路：用户 confirm / 代码核验 / 跨会话印证；跨会话印证要求两个以上会话各自有用户原话，关系未判定（`[关系未判定]`）或带冲突、待确认纠正、替代关系的条目不转正
 
+- 失败原因存库（§12.6.6）：`capture_windows.error_detail` 是 HTTP 状态码加脱敏后的上游报错；`ab work` 输出末尾有「出错明细」
+- 钩子拉起的 `ab work --session` 输出追加到 `<AB_HOME>/work.log`（超过 5 MB 轮转一份）
+- 窗口用完重试次数时，多于一轮且超过 8000 字就对半拆开重试（原窗口记 `failed/split`，不算失败）；401/403 和没配密钥一样延后不计次数
+
 ## How to get to it (user POV)
 - 系统守护进程（如 launchd `agentbrain.work`）或宿主 SessionEnd 事件在后台自动调用 `ab work`
 - 用户可手动运行 `ab work --sweep` 核验待定记忆，或通过 `ab work --dry-run` 预览积压情况

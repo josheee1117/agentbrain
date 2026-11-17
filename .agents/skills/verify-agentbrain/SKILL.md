@@ -28,12 +28,16 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 - `cli-cross-*`: cross-project section in `ab search` (other projects' similar entries, sim >=0.65, max 3) using a mock embedding endpoint; asserts it is suppressed for `--project` / `--all` / pm dir / `--scene`, records delivery in `inject_log`, and explains itself when vectors are unavailable (see [features/cross-project.md](features/cross-project.md))
 - `cli-attr-*`: attribution display (see [features/attribution.md](features/attribution.md)) — a `project_unresolved` entry is marked 「[归属未定]」 in `ab search` and `ab get`, and `ab get` spells out 「会话在 X，抽取判定归属 Y」 for a successful cross-project attribution
 - `cli-view`: `view --no-open --out <evidence>/view.html`
+- `cli-backup*` / `cli-restore*` / `cli-purge-refused` / `cli-admin-status` / `cli-admin-perms` / `cli-usage-scoped`: `backup` → `restore` preview → `restore --yes`, `purge` refused without a terminal, the new `status` lines (要处理 / 代码 / 库 / 备份 / 失败窗口), 0700 / 0600 permissions, and per-command usage on a bad flag (see [features/admin.md](features/admin.md))
 - `cli-staging-report`: `scripts/staging-report.ts` on a seeded legacy candidate event
 
 Run all: `.agents/skills/verify-agentbrain/verify.sh run` (`--dry-run` prints the commands without running).
 
 ## Real hosts
 `.agents/skills/verify-agentbrain/verify.sh hosts [claude codex pi opencode]` runs `.agents/skills/verify-agentbrain/hosts.ts` against the real hosts with an isolated test store. It asserts per scenario: host exit code, `memory_reports` status / queried, `memory_report_ids` verified, plus a read-only `sqlite3` check that none of this run's session ids reached `~/.agentbrain/store.db`. Scenarios: `search-used`, `preference`, `unused`, `unreported`, `empty-search`, and (Pi only) `progress-then-model-error` via a local mock provider. Hosts that are not logged in, or that hit quota, are reported BLOCKED rather than FAIL. Evidence: `~/.cache/verify-evidence/agentbrain/<timestamp>-hosts/`. Details and gotchas in [features/hosts.md](features/hosts.md).
+
+## Real hosts, one full round
+`.agents/skills/verify-agentbrain/verify.sh team [pi codex claude]` runs `team.ts`: one real session per host against a copy of the production store (brief → build failure → search + get → status → answer), then asserts injection, read-path labels, extraction into the copy with operator and machine on the new events, the new `status` lines, and that nothing reached `~/.agentbrain/store.db`. Costs real model quota. Details in [features/team.md](features/team.md).
 
 ## Evidence
 Logs per step + JSON status lines land in `/Users/hejiayuan/.cache/verify-evidence/agentbrain/<timestamp>/`. Cite that path. Proof standards: drive the real user path (CLI/HTTP/UI), not internal setters; capture action + resulting state; check side effects; mock only at existing production boundaries (repo fakes). Never use real secrets or prod endpoints from this skill.

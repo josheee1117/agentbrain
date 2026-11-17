@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-agentbrain control script. Usage: verify.sh doctor|run|hosts [claude codex pi opencode]|cleanup [--dry-run]
+# verify-agentbrain control script. Usage: verify.sh doctor|run|hosts [claude codex pi opencode]|team [pi codex claude]|cleanup [--dry-run]
 # Output: one JSON object per line. Evidence: /Users/hejiayuan/.cache/verify-evidence/agentbrain/<ts>/ (survives cleanup).
 set -u
 ROOT="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"; cd "$ROOT"
@@ -298,6 +298,29 @@ db.close();
     step cli-guidance-off env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID" --off
     step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\"}\n' '$REPO' | env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
 
+    # 10. 数据安全（admin.md，设计 §12.6）：单独一个库，备份 → 再写一条 → 恢复预览 → 恢复 → 清除被拒 → status 新增各行 → 权限
+    ADM="$S/admin_home"; A="env AB_HOME=$ADM AB_REGISTRY=$AB_REGISTRY HOME=$FAKE_HOME node $ROOT/src/cli.ts"
+    step cli-admin-seed $A remember --kind rule --text "备份前就有的规则 ADMINKEEP" --summary "数据安全" --global --confirmed
+    step cli-backup $A backup
+    BK=$(sed -n 's/^已备份 \(.*\.db\)（.*/\1/p' "$EV/cli-backup.log" 2>/dev/null | head -1)
+    step cli-backup-verified bash -c "grep -qF '（1 条事件，已核对完整性）' '$EV/cli-backup.log' && [ -s '$BK' ]"
+    step cli-admin-later $A remember --kind rule --text "备份之后才写的规则 ADMINLATER" --summary "数据安全" --global --confirmed
+    step cli-restore-preview bash -c "$A restore '$BK' > '$EV/cli-restore-preview.out' 2>&1; [ \$? = 1 ] && grep -qF '没有执行。恢复会把现库换成备份的内容，备份之后写入的 1 条事件会从现库消失' '$EV/cli-restore-preview.out' && $A search ADMINLATER | grep -qF ADMINLATER"
+    step cli-restore $A restore "$BK" --yes
+    step cli-restore-state bash -c "grep -qF '已恢复：现库 1 条事件' '$EV/cli-restore.log' && $A search ADMINLATER | grep -qF '没有匹配的记忆' && $A search ADMINKEEP | grep -qF ADMINKEEP"
+    step cli-purge-seed node -e "
+import('$ROOT/src/store.ts').then(({ Store }) => {
+  const s = new Store('$ADM/store.db', '$ADM/index.db');
+  s.remember(null, 'verify-purge-sess', false, { kind: 'note', text: '要清除的内容 ADMINPURGE', confirmed: true, source: { host: 'claude', session_id: 'verify-purge-sess', transcript: null, anchor: null, summary: 'x' } });
+  s.close();
+});"
+    # 不是终端（脚本、agent）时只打印范围、不执行，内容还在
+    step cli-purge-refused bash -c "$A purge --session claude:verify-purge-sess < /dev/null > '$EV/cli-purge-refused.out' 2>&1; [ \$? = 1 ] && grep -qF '没有执行：清除只能由人在终端里发起' '$EV/cli-purge-refused.out' && $A search ADMINPURGE | grep -qF ADMINPURGE"
+    step cli-admin-status bash -c "$A status > '$EV/cli-admin-status.out' 2>&1 && grep -q '^要处理' '$EV/cli-admin-status.out' && grep -q '^代码: ' '$EV/cli-admin-status.out' && grep -q '^库: 版本 1（代码支持 1）；事件 [0-9]* 条；不认识的事件 0 条' '$EV/cli-admin-status.out' && grep -q '^备份: 最近一次 ' '$EV/cli-admin-status.out' && grep -q '^失败窗口: ' '$EV/cli-admin-status.out'"
+    step cli-admin-perms bash -c "[ \"\$(stat -f %Lp '$ADM')\" = 700 ] && [ \"\$(stat -f %Lp '$ADM/store.db')\" = 600 ] && [ \"\$(stat -f %Lp '$ADM/index.db')\" = 600 ] && [ \"\$(stat -f %Lp '$ADM/backups')\" = 700 ] && [ \"\$(stat -f %Lp '$BK')\" = 600 ]"
+    # 参数写错只给该子命令的用法
+    step cli-usage-scoped bash -c "$A remember --confirmed 位置参数 > '$EV/cli-usage.out' 2>&1; grep -q '^  ab remember --kind' '$EV/cli-usage.out' && ! grep -q 'ab curate' '$EV/cli-usage.out'"
+
     ls -laR "$S" > "$EV/scratch-tree.txt" 2>&1
     emit evidence info "$EV"; exit $FAIL ;;
   hosts)
@@ -310,8 +333,17 @@ db.close();
     tail -20 "$EV/hosts.log"
     emit hosts "$([ $c = 0 ] && echo pass || echo fail)" "$EV/hosts.log"
     exit $c ;;
+  team)
+    # 真实宿主一轮四步（Pi / Codex / Claude Code）：正式库副本 + 临时项目 team-demo，见 features/team.md。会花真实模型额度。
+    shift || true
+    mkdir -p "$EV"
+    if [ $DRY = 1 ]; then emit team dry-run "node .agents/skills/verify-agentbrain/team.ts --evidence $EV $*"; exit 0; fi
+    node .agents/skills/verify-agentbrain/team.ts --evidence "$EV" "$@" >"$EV/team.log" 2>&1; c=$?
+    tail -8 "$EV/team.log"
+    emit team "$([ $c = 0 ] && echo pass || echo fail)" "$EV/team.log"
+    exit $c ;;
   cleanup)
     # kills nothing by name; only removes scratch dirs this script created. Evidence kept.
     [ -f "${TMPDIR:-/tmp}/verify-agentbrain.scratch" ] && { d=$(cat "${TMPDIR:-/tmp}/verify-agentbrain.scratch"); [ $DRY = 1 ] && emit cleanup dry-run "rm -r $d" || { rm -rf "$d"; rm "${TMPDIR:-/tmp}/verify-agentbrain.scratch"; emit cleanup pass "removed $d"; }; } || emit cleanup pass nothing-to-clean ;;
-  *) echo "usage: verify.sh doctor|run|hosts [claude codex pi opencode]|cleanup [--dry-run]" >&2; exit 2 ;;
+  *) echo "usage: verify.sh doctor|run|hosts [claude codex pi opencode]|team [pi codex claude]|cleanup [--dry-run]" >&2; exit 2 ;;
 esac

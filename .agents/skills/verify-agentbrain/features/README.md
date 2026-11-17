@@ -15,4 +15,6 @@
 | work | [work.md](work.md) | 后台会话自动抽取、单实例租约调度、代码核验与转正、跨会话印证、模型产出留痕；Codex 压缩会话 `.jsonl.zst` 读时解析（§7.6） |
 | curate / review | [curate.md](curate.md) | 未确认条目审稿建议、审稿回滚、worker 原话审计与到期复审；旧候选区条目只读对照 |
 | view | [view.md](view.md) | 手动生成本地 HTML 记忆看板（概览、关联图、注入/引用统计） |
+| purge / backup / restore | [admin.md](admin.md) | 清除一个会话（只能由人在终端发起，逐面报告）、备份与恢复、库版本号与只读保护、操作者和机器、文件权限 |
+| team | [team.md](team.md) | 真实宿主一轮四步：Pi / Codex / Claude Code 各跑一轮，正式库副本，逐项断言与正式库核对 |
 | hosts | [hosts.md](hosts.md) | 真实宿主隔离闭环：Claude Code / Codex / Pi / opencode 逐场景断言与正式库核对 |
