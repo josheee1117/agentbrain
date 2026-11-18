@@ -12,13 +12,13 @@ const END_RE = /^<!-- agentbrain:end managed -->$/;
 const HEADING = "## 记忆（agentbrain）";
 
 const BASE = [
-  "- 记忆在本机 agentbrain 库（`~/.agentbrain/`）。按范围分全局和项目（项目即 pm 的 `repos/<项目>.md`），按种类分规则、决定、坑、事实；用户的干活偏好每轮常驻注入（`<agentbrain-prefs>`）。",
+  "- 记忆在本机 agentbrain 库（`~/.agentbrain/`）。按范围分全局和项目（项目即 pm_new 的 `repos/<项目>.md`），按种类分规则、决定、坑、事实；用户的干活偏好每轮常驻注入（`<agentbrain-prefs>`）。",
   "- 怎么用：开工先跑 `ab brief`（子代理跑 `ab brief --worker`）；何时查历史记忆由你判断（`<agentbrain-recall>` 提醒）；要查用 `ab search <关键词>`、`ab get <id>`。与现场证据冲突时信现场。",
   "- 干活时不写记忆：后台会从会话里自动抽取，直接生效并标未确认；审稿是可选的手动操作。只有用户明确要你记某件事时，才用 `ab remember --confirmed`（参数见 `ab --help`）。",
 ];
 
 const LEGACY_BASE = [
-  "- 记忆在本机 agentbrain 库（`~/.agentbrain/`）。按范围分全局和项目（项目即 pm 的 `repos/<项目>.md`），按种类分规则、决定、坑、事实；用户的干活偏好每轮常驻注入（`<agentbrain-prefs>`）。",
+  "- 记忆在本机 agentbrain 库（`~/.agentbrain/`）。按范围分全局和项目（项目即 pm_new 的 `repos/<项目>.md`），按种类分规则、决定、坑、事实；用户的干活偏好每轮常驻注入（`<agentbrain-prefs>`）。",
   "- 怎么用：开工先跑 `ab brief`（子代理跑 `ab brief --worker`）；每轮相关记忆自动注入（`<agentbrain-recall>`）；要查用 `ab search <关键词>`、`ab get <id>`。与现场证据冲突时信现场。",
   "- 干活时不写记忆：后台会从会话里自动抽取候选，由审稿模型决定去留。只有用户明确要你记某件事时，才用 `ab remember --confirmed`（参数见 `ab --help`）。",
 ];
