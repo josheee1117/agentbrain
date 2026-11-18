@@ -356,9 +356,9 @@ test("会话解析：各入口保留原报错，首个冒号之后都是 session
   const remember = ["remember", "--kind", "note", "--text", "子代理证据", "--summary", "解析测试", "--from-worker"];
   for (const raw of ["nope:abc", "pi", ":abc", "pi:"]) {
     for (const [args, message] of [
-      [[...remember, raw], `--from-worker 必须是 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
-      [["capture", raw], `会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
-      [["work", "--session", raw, "--dry-run"], `会话必须写成 claude|codex|pi|opencode:<session_id>，收到: ${raw}`],
+      [[...remember, raw], `--from-worker 必须是 claude|codex|pi|opencode|agy:<session_id>，收到: ${raw}`],
+      [["capture", raw], `会话必须写成 claude|codex|pi|opencode|agy:<session_id>，收到: ${raw}`],
+      [["work", "--session", raw, "--dry-run"], `会话必须写成 claude|codex|pi|opencode|agy:<session_id>，收到: ${raw}`],
     ] as const) {
       const r = ab([...args], alpha, h);
       assert.equal(r.code, 1);

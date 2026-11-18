@@ -23,6 +23,7 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 - `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)
 - `cli-recall-hook`: `recall --hook` via stdin JSON
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
+- `cli-agy`: agy session capture from the truncated `transcript.jsonl` path (registered as `transcript_full.jsonl`) and `work --dry-run` (see [features/agy-host.md](features/agy-host.md))
 - `cli-curate`: `review` and `audit worker-quotes`
 - `cli-detail`: `remember --body-file/--alternative` → `get` shows body + rejected options → `search` body hint → rule-with-body rejected → `correct` does not copy detail (see [features/detail.md](features/detail.md))
 - `cli-cross-*`: cross-project section in `ab search` (other projects' similar entries, sim >=0.65, max 3) using a mock embedding endpoint; asserts it is suppressed for `--project` / `--all` / pm dir / `--scene`, records delivery in `inject_log`, and explains itself when vectors are unavailable (see [features/cross-project.md](features/cross-project.md))

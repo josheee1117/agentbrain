@@ -44,9 +44,10 @@
 | Claude Code | `UserPromptSubmit`：`ab capture --hook --host claude` | `SessionEnd`：同一条命令，拉起分离的 `ab work --session` |
 | Codex | `UserPromptSubmit`：`ab capture --hook --host codex` | `SessionEnd`：同上 |
 | Pi | 扩展的 `before_agent_start` | 扩展的 `session_shutdown` |
+| agy | 插件的 `PreInvocation`（新用户消息） | 插件的 `Stop`（不再继续时） |
 | 定时 | launchd 每 30 分钟 `ab work --sweep` | |
 
-`ab capture --hook` 从 stdin 读宿主给的 `session_id`、`transcript_path`、`cwd`、`hook_event_name`，只把这几个坐标写进 `~/.agentbrain/store.db`，不输出、不报错，退出码总是 0。transcript 路径必须在该宿主自己的会话目录下（`~/.claude/projects`、`~/.codex/sessions`、`~/.codex/archived_sessions`、`~/.pi/agent/sessions`；opencode 写 `opencode://session/<id>`），否则不登记，防止借它把任意文件送出本机。2026-10-12 在 Linux box 上测 30 次，单次耗时（含 Node 启动）p50 120 ms、最大 155 ms。
+`ab capture --hook` 从 stdin 读宿主给的 `session_id`、`transcript_path`、`cwd`、`hook_event_name`，只把这几个坐标写进 `~/.agentbrain/store.db`，不输出、不报错，退出码总是 0。transcript 路径必须在该宿主自己的会话目录下（`~/.claude/projects`、`~/.codex/sessions`、`~/.codex/archived_sessions`、`~/.pi/agent/sessions`、agy 的 `brain/<id>/.system_generated/logs/transcript_full.jsonl`；opencode 写 `opencode://session/<id>`），否则不登记，防止借它把任意文件送出本机。2026-10-12 在 Linux box 上测 30 次，单次耗时（含 Node 启动）p50 120 ms、最大 155 ms。
 
 `ab work --sweep` 做三件事：处理静置 30 分钟或已结束的会话；扫描近 7 天的会话目录，补登记 hook 没生效的会话（Claude Code、Codex、Pi 扫文件，opencode 读它的 SQLite；只补 cwd 在已登记项目里的）；按仓库代码核验未确认的坑和事实（每次最多 3 条）。hook 拉起的分离进程即使被宿主杀掉，定时任务也会接上（租约 10 分钟过期后可被接管）。
 
@@ -157,6 +158,27 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 - `ab doctor` 的 opencode 行检查插件路径和 SQLite 读取。它不证明当前已启动的后台服务成功加载了插件，模型回答和 store 登记才是端到端证据。本机默认共享后台服务仍缓存安装中第一次失败的模块，`opencode reload` 和更换链接名没有解决。不能据 doctor 显示正常就当成共享服务接线通过。当前真实通过的是新起的 `opencode --standalone`。重启共享服务需要先处理其中的其他活动会话，本次未重启。
 
 2026-10-20 最终安装项的真实验收在 Herdr 新 tab 中运行 `opencode --standalone`。会话 `ses_ea7463e1dffetnDViut8I7eJLc` 的助手消息 `msg_158b9c245001EhW5HTgFbbQxKr` 输出了包含 `[873b78e2]` 的 `<agentbrain-recall>` 块。`capture_sessions` 登记 host=opencode、project=agentbrain、via=hook。退出后后台完成一个窗口，处理了 2 轮、84 字，6245 token，零候选、无错误，处理进度到该助手消息的 `:1` 文本。测试 tab 已关闭。
+
+## Antigravity CLI（agy）
+
+本机验证版本是 agy 1.5.10 / 1.5.11。插件在 `integrations/agy/`，负责注入和会话登记；抽取由 `ab work` 读 agy 自己的记录（设计 §7.7）。
+
+- `SessionStart`：在会话的工作目录跑 `ab brief`，包成 `<agentbrain-brief>` 作为系统消息注入，末尾附一句何时查、何时记。
+- `PreInvocation`：agy 每次调模型前都跑。脚本按 `conversationId` 记住上一条 `lastUserInput`，只在用户发了新消息时跑一次 `ab recall --hook`，把 `additionalContext` 注入。注入的系统消息会留在对话里，工具循环中不重复注入。
+- 登记：用户发新消息时（同一个去重分支）跑 `ab capture --hook --host agy`，事件记为 `UserPromptSubmit`。`Stop` 且 `continuationActive` 不为真时再登记一次，事件记为 `SessionEnd`，`ab` 拉起分离的 `ab work --session agy:<id>`。agy 没有会话结束事件，每轮结束都算一次；用户接着发消息后不再算结束。
+- 读哪份记录：`~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl`。钩子给的 `transcript.jsonl` 会截断约 1800 字以上的字段，`ab` 自动换成完整版；其他路径（`chunks/`、`scratch/`）一律拒绝。注入的系统消息不进抽取。
+- 兜底：`ab work --sweep` 从 `~/.gemini/antigravity-cli/conversation_summaries.db` 只读取会话的工作目录，补登记近 7 天、不是子会话的 agy 会话。
+- 环境里有 `PM_JOB_ID`（pm_new 队列派到 agy 的任务）时按子代理处理：`ab brief --worker`，recall 传 `worker: true`。
+- `ab` 默认是 `~/.local/bin/ab`，可用 `AGENTBRAIN_AB` 改。钩子命令在插件目录里跑，用 PATH 里的 `node`（要 ≥ 22.18）。任何失败都输出 `{}`，不挡 agy。
+
+安装（agy 把插件复制到 `~/.gemini/config/plugins/agentbrain`，改了脚本要重装）：
+
+```sh
+agy plugin validate integrations/agy
+agy plugin install "$PWD/integrations/agy"
+```
+
+2026-11-18 真实验收：在 pm_new 目录跑 `agy --print=…` 问模型上下文里有没有两个块。会话 `e86ab86d-aab1-406c-ae92-e3e19be73677` 的 transcript 里有 SessionStart 注入的 `<agentbrain-brief>`（`<agentbrain project="pm_new">`）和 PreInvocation 注入的 `<agentbrain-prefs>`，模型逐字引用了两块的首行。
 
 ## 每轮注入装完后的验收（设计 §15.3）
 

@@ -283,6 +283,67 @@ function readPi(lines: any[], b: Builder): void {
   }
 }
 
+/** agy 用户原话在 <USER_REQUEST> 里；后面的 <ADDITIONAL_METADATA>、<USER_SETTINGS_CHANGE> 等是宿主块。 */
+const AGY_USER_REQUEST = /<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/;
+const AGY_HOST_BLOCK = /<([A-Z][A-Z_]*)>[\s\S]*?<\/\1>/g;
+/** 插件在 pm 队列任务里跑 `ab brief --worker`，注入的头带 worker（§7.7）。 */
+const AGY_WORKER_BRIEF = /<agentbrain project="[^"]*" worker>/;
+
+function agyUserText(content: unknown): string {
+  const text = typeof content === "string" ? content : "";
+  const m = AGY_USER_REQUEST.exec(text);
+  return m ? m[1] : text.replace(AGY_HOST_BLOCK, "");
+}
+
+/** agy 的工具参数：`CommandLine` 当命令、`Path` 当路径；有的值被多包了一层 JSON 字符串。 */
+function agyArgs(args: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args && typeof args === "object" ? args : {})) {
+    let val = v;
+    if (typeof v === "string" && v.startsWith('"')) {
+      try {
+        val = JSON.parse(v);
+      } catch {
+        /* 原样保留 */
+      }
+    }
+    out[k === "CommandLine" ? "command" : k === "Path" ? "path" : k] = val;
+  }
+  return out;
+}
+
+/** agy 每行一步，定位点是 step_index。工具输出没有 call id，按先进先出配上前面的调用。系统消息（钩子注入、宿主通知）整条不读。 */
+function readAgy(lines: any[], b: Builder): void {
+  const pending: string[] = [];
+  for (const e of lines) {
+    if (typeof e?.step_index !== "number") continue;
+    const anchor = String(e.step_index);
+    if (e.type === "USER_INPUT") {
+      pending.length = 0;
+      b.push(anchor, "user", [agyUserText(e.content)], e.created_at);
+    } else if (e.type === "PLANNER_RESPONSE") {
+      const calls: any[] = Array.isArray(e.tool_calls) ? e.tool_calls : [];
+      const text = typeof e.content === "string" ? e.content : "";
+      const parts: Part[] = [text];
+      calls.forEach((c, i) => {
+        const id = `${anchor}:${i}`;
+        pending.push(id);
+        parts.push(b.call(id, String(c?.name ?? "tool"), agyArgs(c?.args)));
+      });
+      b.push(anchor, "assistant", parts, e.created_at, !calls.length && !!text.trim() && e.status === "DONE");
+    } else if (e.type === "GENERIC") {
+      b.push(anchor, "tool", [b.output(pending.shift(), typeof e.content === "string" ? e.content : "", !!e.error)], e.created_at);
+    } else if (e.type === "SYSTEM_MESSAGE") {
+      b.stripped++;
+    }
+  }
+}
+
+function isAgyWorker(lines: any[], turns: Turn[]): boolean {
+  return lines.some((e) => e?.type === "SYSTEM_MESSAGE" && typeof e.content === "string" && AGY_WORKER_BRIEF.test(e.content)) ||
+    WORKER_PROMPT_MARK.test(turns.find((t) => t.role === "user")?.text ?? "");
+}
+
 /** 文件读不了时抛错，由调用方记为 source_unavailable。 */
 export function cleanTranscript(host: Host, file: string): Cleaned {
   if (host === "opencode") {
@@ -303,6 +364,10 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
   }
   const lines = linesOf(file) as any[];
   const b = new Builder();
+  if (host === "agy") {
+    readAgy(lines, b);
+    return { turns: b.turns, stripped: b.stripped, cwd: null, subagent: false, worker: isAgyWorker(lines, b.turns) };
+  }
   if (host === "claude") readClaude(lines, b);
   else if (host === "codex") readCodex(lines, b);
   else readPi(lines, b);

@@ -18,6 +18,7 @@ import { addHits, sanitize, secretKinds } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
 import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
+import { agyConversations, agyTranscriptPath } from "./agy.ts";
 import { allowedTranscript, readTranscript, resolveTranscript } from "./transcript-file.ts";
 import { EXTRACT_PROMPT_VERSION, buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
@@ -144,7 +145,7 @@ export function sessionStart(file: string, head?: any[]): number | null {
     }
   }
   for (const e of head ?? headLines(file)) {
-    const t = typeof e?.timestamp === "string" ? e.timestamp : typeof e?.payload?.timestamp === "string" ? e.payload.timestamp : null;
+    const t = typeof e?.timestamp === "string" ? e.timestamp : typeof e?.payload?.timestamp === "string" ? e.payload.timestamp : typeof e?.created_at === "string" ? e.created_at : null;
     const ms = t ? Date.parse(t) : NaN;
     if (Number.isFinite(ms)) return ms;
   }
@@ -215,6 +216,32 @@ export function scan(deps: WorkDeps): number {
       intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
       if (project) added++;
     }
+  }
+  try {
+    // agy 的记录里没有 cwd，从它的会话库取；子会话不补登记（§7.7）
+    for (const c of agyConversations(since)) {
+      if (c.parent || intake.knownSession(db, "agy", c.id)) continue;
+      const f = agyTranscriptPath(c.id);
+      let mtime: number;
+      try {
+        mtime = statSync(f!).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (mtime < since) continue;
+      let project: { name: string } | null = null;
+      try {
+        project = deps.resolveProject(c.cwd);
+      } catch {
+        project = null;
+      }
+      const started = sessionStart(f!);
+      const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
+      intake.upsertSession(db, { host: "agy", session_id: c.id, transcript: realpathSync(f!), cwd: c.cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
+      if (project) added++;
+    }
+  } catch {
+    // agy 未安装或会话库不可读时不影响其他宿主的扫描。
   }
   try {
     for (const s of recentOpencodeSessions(since)) {
@@ -848,7 +875,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
       throw e;
     }
   }
-  if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
+  if (deps.topic && s.host !== "opencode" && s.host !== "agy") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now), intake.sessionCuts(db, s.host, s.session_id));
   if (chunks === "anchor_missing") {
     if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");

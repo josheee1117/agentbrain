@@ -10,6 +10,7 @@ import { sanitize } from "./sanitize.ts";
 import type { SourcePointer, Host } from "./l2.ts";
 import { opencodeId, opencodeParts } from "./opencode.ts";
 import { allowedTranscript, readTranscript } from "./transcript-file.ts";
+import { cleanTranscript } from "./transcript.ts";
 
 const MAX_ENTRIES = 30;
 const MAX_CHARS_PER_ENTRY = 600;
@@ -137,6 +138,15 @@ function readCodex(file: string, anchor: string): string | null {
   return budget(segs.slice(-MAX_ENTRIES));
 }
 
+/** agy：读法与抽取共用 cleanTranscript（注入的系统消息、宿主块不展开），只展开用户原话和助手回答。 */
+function readAgy(file: string, anchor: string): string | null {
+  const turns = cleanTranscript("agy", file).turns;
+  const end = turns.findIndex((t) => t.anchor === anchor);
+  if (end < 0) return null;
+  const segs = turns.slice(0, end + 1).flatMap((t) => (t.role === "user" ? [{ role: "user" as Role, text: t.text }] : t.role === "assistant" && t.reply ? [{ role: "assistant" as Role, text: t.reply }] : []));
+  return budget(segs.slice(-MAX_ENTRIES));
+}
+
 /** 返回按时间顺序的对话片段；transcript 不存在或指针无效时返回 null（显式不可用，不伪装成空）。 */
 export function expandSource(src: SourcePointer): string | null {
   if (src.host === "opencode") {
@@ -155,7 +165,9 @@ export function expandSource(src: SourcePointer): string | null {
   if (!allowed) return null; // L1 里的路径不算可信，每次读都先过准入（§7.6）
   try {
     const text =
-      src.host === "pi"
+      src.host === "agy"
+        ? readAgy(allowed, src.anchor)
+        : src.host === "pi"
         ? readPi(allowed, src.anchor)
         : src.host === "claude"
           ? readClaude(allowed, src.anchor)
@@ -183,6 +195,7 @@ export function latestAnchor(host: Host, transcriptPath: string): string | null 
   } catch {
     return null; // 读不了＝显式不可用
   }
+  if (host === "agy") return cleanTranscript("agy", allowed).turns.filter((t) => t.role !== "tool").at(-1)?.anchor ?? null;
   if (host === "pi") {
     let id: string | null = null;
     for (const e of lines as PiEntry[]) if (e.type === "message" && e.id) id = e.id;

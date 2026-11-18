@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Host } from "./l2.ts";
 import { opencodeRef, opencodeSession } from "./opencode.ts";
+import { agyTranscriptPath } from "./agy.ts";
 import { resolveTranscript } from "./transcript-file.ts";
 
 const MAX_ANCESTORS = 20;
@@ -27,6 +28,7 @@ const SESSION_ENV: Record<Host, string> = {
   codex: "CODEX_THREAD_ID",
   pi: "PI_SESSION_ID",
   opencode: "OPENCODE_SESSION_ID",
+  agy: "ANTIGRAVITY_CONVERSATION_ID",
 };
 
 /** chain 从最近的父进程开始。第一个命中的进程决定 host。 */
@@ -37,6 +39,7 @@ export function pickHost(chain: Proc[], env: Record<string, string | undefined>)
     if (name === "claude") host = "claude";
     else if (name === "codex") host = "codex";
     else if (name === "opencode") host = "opencode";
+    else if (name === "agy") host = "agy";
     else if (name === "pi" || (name === "node" && p.args.includes("pi-coding-agent"))) host = "pi";
     if (host) return { host, session_id: env[SESSION_ENV[host]] || null };
   }
@@ -85,6 +88,10 @@ export function locateTranscript(host: Host, sessionId: string): string | null {
     } catch {
       return null;
     }
+  }
+  if (host === "agy") {
+    const path = agyTranscriptPath(sessionId);
+    return path ? resolveTranscript(path) : null;
   }
   const home = homedir();
   // 先 sessions 后 archived_sessions；每个目录先精确找 `.jsonl`，再找 `.jsonl.zst`，不靠目录遍历顺序（§7.6）

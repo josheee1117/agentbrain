@@ -6,9 +6,10 @@
 import { realpathSync, readFileSync, readSync, openSync, closeSync, statSync } from "node:fs";
 import { zstdDecompressSync } from "node:zlib";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { Host } from "./l2.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
+import { agyBrainDir, agySessionId } from "./agy.ts";
 
 /** `.jsonl.zst` 读全文时的解压上限（字节）：实测最大约 66 MB，4 倍余量（§7.6）。 */
 const ZST_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
@@ -107,6 +108,7 @@ const TRANSCRIPT_ROOTS: Record<Host, string[]> = {
   codex: [".codex/sessions", ".codex/archived_sessions"],
   pi: [".pi/agent/sessions"],
   opencode: [],
+  agy: [],
 };
 
 /**
@@ -125,6 +127,7 @@ export function allowedTranscript(host: Host, path: string, sessionId?: string):
       return null;
     }
   }
+  if (host === "agy") return allowedAgy(path, sessionId);
   if (!path.endsWith(".jsonl") && !path.endsWith(".jsonl.zst")) return null;
   if (host !== "codex" && path.endsWith(".jsonl.zst")) return null;
   const inRoot = (real: string) =>
@@ -153,4 +156,30 @@ export function allowedTranscript(host: Host, path: string, sessionId?: string):
   }
   if (!real.endsWith(".jsonl") && !(host === "codex" && real.endsWith(".jsonl.zst"))) return null;
   return inRoot(real) ? real : null;
+}
+
+/**
+ * agy（§7.7）：只认 `brain/<id>/.system_generated/logs/transcript_full.jsonl` 这一种形状，真实路径必须正好落在那里。
+ * 给的是同目录的截断版 `transcript.jsonl` 时换成完整版。文件还没写出来时按字面路径放行（同 Claude）。
+ */
+function allowedAgy(path: string, sessionId?: string): string | null {
+  const id = agySessionId(path);
+  if (!id || (sessionId !== undefined && id !== sessionId)) return null;
+  const rel = join(id, ".system_generated", "logs", "transcript_full.jsonl");
+  const root = agyBrainDir();
+  let rootReal = root;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    /* 目录不存在时按字面比较 */
+  }
+  const full = join(dirname(resolve(path)), "transcript_full.jsonl");
+  if (!isFile(full)) return full === join(root, rel) || full === join(rootReal, rel) ? full : null;
+  let real: string;
+  try {
+    real = realpathSync(full);
+  } catch {
+    return null;
+  }
+  return real === join(rootReal, rel) ? real : null;
 }
