@@ -158,6 +158,24 @@ ln -s "$PWD/integrations/opencode/agentbrain-v2.js" ~/.config/opencode/plugins/a
 
 2026-10-20 最终安装项的真实验收在 Herdr 新 tab 中运行 `opencode --standalone`。会话 `ses_ea7463e1dffetnDViut8I7eJLc` 的助手消息 `msg_158b9c245001EhW5HTgFbbQxKr` 输出了包含 `[873b78e2]` 的 `<agentbrain-recall>` 块。`capture_sessions` 登记 host=opencode、project=agentbrain、via=hook。退出后后台完成一个窗口，处理了 2 轮、84 字，6245 token，零候选、无错误，处理进度到该助手消息的 `:1` 文本。测试 tab 已关闭。
 
+## Antigravity CLI（agy）
+
+本机验证版本是 agy 1.5.10。插件在 `integrations/agy/`，只做注入，不做 capture 和抽取（agy 还不是 `ab capture` 认的宿主）。
+
+- `SessionStart`：在会话的工作目录跑 `ab brief`，包成 `<agentbrain-brief>` 作为系统消息注入，末尾附一句何时查、何时记。
+- `PreInvocation`：agy 每次调模型前都跑。脚本按 `conversationId` 记住上一条 `lastUserInput`，只在用户发了新消息时跑一次 `ab recall --hook`，把 `additionalContext` 注入。注入的系统消息会留在对话里，工具循环中不重复注入。
+- 环境里有 `PM_JOB_ID`（pm_new 队列派到 agy 的任务）时按子代理处理：`ab brief --worker`，recall 传 `worker: true`。
+- `ab` 默认是 `~/.local/bin/ab`，可用 `AGENTBRAIN_AB` 改。钩子命令在插件目录里跑，用 PATH 里的 `node`（要 ≥ 22.18）。任何失败都输出 `{}`，不挡 agy。
+
+安装（agy 把插件复制到 `~/.gemini/config/plugins/agentbrain`，改了脚本要重装）：
+
+```sh
+agy plugin validate integrations/agy
+agy plugin install "$PWD/integrations/agy"
+```
+
+2026-11-18 真实验收：在 pm_new 目录跑 `agy --print=…` 问模型上下文里有没有两个块。会话 `e86ab86d-aab1-406c-ae92-e3e19be73677` 的 transcript 里有 SessionStart 注入的 `<agentbrain-brief>`（`<agentbrain project="pm_new">`）和 PreInvocation 注入的 `<agentbrain-prefs>`，模型逐字引用了两块的首行。
+
 ## 每轮注入装完后的验收（设计 §15.3）
 
 在宿主里各做一次：在已登记仓库里 `ab remember --confirmed --global --kind rule --text … --summary …` 记一条全局规则，再 `ab guidance <id>` 标成干活偏好（或直接 `ab remember --confirmed --global --kind rule --text "汇报直接写回复正文" --summary …` 后打 guidance），开新会话，确认模型收到了 `<agentbrain-prefs>` 块里的这条偏好。钩子不再自动检索，所以“发一句和某个坑相关的话看它会不会被注入”这种验证已经不成立；要验检索，直接发 `ab search`。
