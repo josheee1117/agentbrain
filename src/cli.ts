@@ -30,6 +30,7 @@ import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
+import { agySessionId } from "./agy.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
 import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor, topicEnabled, TOPIC_IDLE_MS, topicReportDir, undoTopicRun } from "./topic.ts";
@@ -341,7 +342,7 @@ function telemetryCtx(store: Store, raw: Record<string, unknown>, cwd: string): 
       if (!ok) continue;
       host = h;
       transcript = ok;
-      session_id = h === "opencode" ? opencodeId(given) : h === "pi" ? piSessionId(ok) : sid ?? codexOrClaudeId(ok);
+      session_id = h === "opencode" ? opencodeId(given) : h === "pi" ? piSessionId(ok) : h === "agy" ? agySessionId(ok) : sid ?? codexOrClaudeId(ok);
       break;
     }
   }
@@ -407,7 +408,7 @@ function cmdBrief(argv: string[]): void {
   }
 }
 
-const HOSTS: Host[] = ["claude", "codex", "pi", "opencode"];
+const HOSTS: Host[] = ["claude", "codex", "pi", "opencode", "agy"];
 
 function parseSessionKey(raw: string, errorMessage: string): { host: Host; session_id: string } {
   const i = raw.indexOf(":");
@@ -425,7 +426,7 @@ function relayedBy(): { host: Host; session_id: string | null } | null {
 
 /** 来源指向子代理。找不到它的 transcript 时 transcript 与 anchor 为 null，并提示。 */
 function workerSource(raw: string, summary: string): { source: SourcePointer; missing: boolean } {
-  const w = parseSessionKey(raw, "--from-worker 必须是 claude|codex|pi|opencode:<session_id>");
+  const w = parseSessionKey(raw, "--from-worker 必须是 claude|codex|pi|opencode|agy:<session_id>");
   const found = locateTranscript(w.host, w.session_id);
   const transcript = found ? (w.host === "opencode" ? found : realpathSync(found)) : null;
   const anchor = transcript ? latestAnchor(w.host, transcript) : null;
@@ -1114,8 +1115,8 @@ async function cmdCapture(argv: string[]): Promise<void> {
     }
     return;
   }
-  if (!positionals[0]) die("用法: ab capture <claude|codex|pi|opencode>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
-  const key = parseSessionKey(positionals[0], "会话必须写成 claude|codex|pi|opencode:<session_id>");
+  if (!positionals[0]) die("用法: ab capture <claude|codex|pi|opencode|agy>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
+  const key = parseSessionKey(positionals[0], "会话必须写成 claude|codex|pi|opencode|agy:<session_id>");
   const found = values.transcript ?? locateTranscript(key.host, key.session_id);
   if (!found) die("找不到这个会话的 transcript，用 --transcript 指定");
   const transcript = allowedTranscript(key.host, found, key.session_id);
@@ -1196,7 +1197,7 @@ async function cmdWork(argv: string[]): Promise<void> {
   const store = open();
   try {
     const r = await runWork(workDeps(store), {
-      session: values.session ? parseSessionKey(values.session, "会话必须写成 claude|codex|pi|opencode:<session_id>") : undefined,
+      session: values.session ? parseSessionKey(values.session, "会话必须写成 claude|codex|pi|opencode|agy:<session_id>") : undefined,
       sweep: values.sweep === true,
       dryRun: values["dry-run"] === true,
       redo: values.redo === true,
@@ -1345,7 +1346,7 @@ const USAGE = `用法:
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--body-file <文件>] [--alternative "<方案>::<否掉的原因>"]…
-              [--from-worker <claude|codex|pi|opencode>:<session_id>] [--scene design,code,review]
+              [--from-worker <claude|codex|pi|opencode|agy>:<session_id>] [--scene design,code,review]
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
                                     --kind note 即事实
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
@@ -1356,7 +1357,7 @@ const USAGE = `用法:
                                     --scene 只用于规则：按场景打标签，brief 按场景加载
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--body-file <文件>] [--alternative "<方案>::<原因>"]…
-              [--from-worker <claude|codex|pi|opencode>:<session_id>]
+              [--from-worker <claude|codex|pi|opencode|agy>:<session_id>]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
                                     不继承旧条目的正文和否掉的方案，要沿用就显式重给
   ab recall [--hook] [文本…]            每轮钩子（--hook 时注入常驻偏好与提醒，不再自动检索）或按文本检索相关记忆
@@ -1380,7 +1381,7 @@ const USAGE = `用法:
   ab view [--out <路径>] [--no-open]  生成记忆看板（概览、关联图、记忆详情、注入/引用统计；默认 ~/.agentbrain/view.html）。只手动生成
   ab status | ab doctor             当前项目、宿主、接线自检，沉淀积压、失败与转正
   ab status --line                  一行 JSON {review, work_failed}：到期待复审数、近 7 天失败窗口数（宿主状态栏用）
-  ab capture --hook --host <claude|codex|pi|opencode>
+  ab capture --hook --host <claude|codex|pi|opencode|agy>
                                     宿主 hook 用：从 stdin 登记会话坐标；SessionEnd 时拉起分离的 ab work
                                     话题沉淀开着时：PreCompact 记话题边界并拉起 ab work；距上一轮超过 20 分钟也拉起
   ab capture <host>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]
@@ -1393,7 +1394,7 @@ const USAGE = `用法:
   ab setup --notes [--dry-run] [--adopt]  安装/更新宿主指令文件里的 agentbrain 托管块（写前备份，先打印 diff）
   ab setup --remove-notes [--dry-run]     只删托管块
                                     上手向导：快模型、按宿主的审稿人（默认 Claude Haiku max）、主审稿配置、key 进钥匙串、接哪些宿主、连通测试；可重复运行
-  ab curate [--apply] [--host claude|codex|pi|opencode] [--limit N] | ab curate --undo <run>
+  ab curate [--apply] [--host claude|codex|pi|opencode|agy] [--limit N] | ab curate --undo <run>
                                     审稿（review.json：primary 一位主审 / panel 投票+仲裁；成员可以是 API，也可以是宿主命令行 claude -p / codex exec / pi -p）按《好记忆的标准》审已生效的未确认条目，给出归档建议
                                     只手动跑；自动抽取和 agent 自记的条目直接生效（未确认），不靠它转正
                                     默认 dry-run 只写报告（~/.agentbrain/curate/）；--apply 才写库，只动未确认条目，用户确认过的不动；--undo 整次撤销

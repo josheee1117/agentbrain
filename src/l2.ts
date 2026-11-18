@@ -14,7 +14,7 @@ export const BODY_KINDS: readonly PropKind[] = ["decision", "note", "pitfall"];
 export const BODY_MAX_CHARS = 40000;
 export const ALTERNATIVES_MAX = 5;
 export const ALTERNATIVE_FIELD_MAX_CHARS = 200;
-export type Host = "claude" | "codex" | "pi" | "opencode";
+export type Host = "claude" | "codex" | "pi" | "opencode" | "agy";
 /** 只表示条目还在不在用；可信程度另看 confirmed / confirmed_by（visibility.ts 的 trustOf）。候选区已去掉（§8.8）。 */
 export type PropState = "active" | "archived" | "superseded";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */

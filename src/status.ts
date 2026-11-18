@@ -1,5 +1,5 @@
 /** ab status / ab doctor：自检报告。只拼文本；宿主检测、向量、模型配置由调用方给。 */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Embedder, Store } from "./store.ts";
 import type { HostResult } from "./host.ts";
@@ -106,6 +106,16 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         opencode = "插件在位，但 SQLite 不可读取";
       }
     }
+    const agyBrain = join(userHome, ".gemini/antigravity-cli/brain");
+    let agy = "未安装插件";
+    if (existsSync(join(userHome, ".gemini/config/plugins/agentbrain/hooks.json"))) {
+      try {
+        readdirSync(agyBrain);
+        agy = `正常（插件在位，会话目录可读，${agyBrain}）`;
+      } catch {
+        agy = `插件在位，但会话目录不可读（${agyBrain}）`;
+      }
+    }
     const { embedder, embedReason: reason } = ctx;
     const vectors = store.vectorStatus();
     const vectorLine = embedder
@@ -121,6 +131,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         `doctor: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `opencode: ${opencode}`,
+        `agy: ${agy}`,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
         ...sedimentLines(store, ctx.chatConfig, ctx.now),
         ...(orphans.length ? [orphans.join("\n")] : []),

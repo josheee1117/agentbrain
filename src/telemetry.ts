@@ -154,7 +154,8 @@ export function modelOf(host: Host, file: string): string | null {
   }
   for (const e of lines) {
     const m =
-      host === "claude" ? (e?.type === "assistant" ? e?.message?.model : undefined)
+      host === "agy" ? (e?.type === "PLANNER_RESPONSE" ? e?.model : undefined)
+      : host === "claude" ? (e?.type === "assistant" ? e?.message?.model : undefined)
       : host === "codex" ? (e?.type === "turn_context" ? e?.payload?.model : undefined)
       : e?.type === "model_change" ? join2(e?.provider, e?.modelId) : e?.message?.role === "assistant" ? join2(e?.message?.provider, e?.message?.model) : undefined;
     if (typeof m === "string" && m && m !== "<synthetic>") model = m;
