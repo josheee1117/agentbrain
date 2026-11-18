@@ -1,4 +1,4 @@
-// agentbrain 接 Antigravity CLI（agy）的钩子脚本，SessionStart 和 PreInvocation 都调它。
+// agentbrain 接 Antigravity CLI（agy）的钩子脚本，SessionStart、PreInvocation 和 Stop 都调它。
 // agy 从 stdin 给驼峰 JSON（hookEventName、conversationId、cwd、lastUserInput …），从 stdout 读
 // {"injectSteps":[{"systemMessage":{"systemMessage":"…"}}]}。任何失败都回答 {}，不挡 agy。
 import { execFileSync } from "node:child_process";
@@ -31,9 +31,19 @@ function recall(hook) {
   try { if (readFileSync(file, "utf8") === key) return ""; } catch {}
   mkdirSync(dir, { recursive: true });
   writeFileSync(file, key);
+  capture(hook, "UserPromptSubmit");
   const raw = ab(["recall", "--hook"], hook.cwd, JSON.stringify({ prompt, cwd: hook.cwd, worker }));
   const context = raw && JSON.parse(raw)?.hookSpecificOutput?.additionalContext;
   return typeof context === "string" ? context : "";
+}
+
+// 登记会话（设计 §7.7）：转成 ab capture --hook 认的 snake_case。agy 没有会话结束事件，
+// Stop 且不再继续时按 SessionEnd 登记，ab 会拉起分离的 ab work --session；登记失败不影响注入。
+function capture(hook, event) {
+  if (!hook.conversationId) return;
+  try {
+    ab(["capture", "--hook", "--host", "agy"], hook.cwd, JSON.stringify({ session_id: hook.conversationId, transcript_path: hook.transcriptPath, cwd: hook.cwd, hook_event_name: event }));
+  } catch {}
 }
 
 let out = {};
@@ -42,6 +52,7 @@ try {
   if (!process.env.AGENTBRAIN_REVIEWER) {
     if (hook.hookEventName === "SessionStart") out = inject(brief(hook));
     if (hook.hookEventName === "PreInvocation") out = inject(recall(hook));
+    if (hook.hookEventName === "Stop" && hook.continuationActive !== true) capture(hook, "SessionEnd");
   }
 } catch {
   out = {};

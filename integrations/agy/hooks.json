@@ -1,6 +1,7 @@
 {
   "agentbrain": {
     "SessionStart": [{ "type": "command", "command": "node ./agentbrain-agy.mjs", "timeout": 10 }],
-    "PreInvocation": [{ "type": "command", "command": "node ./agentbrain-agy.mjs", "timeout": 10 }]
+    "PreInvocation": [{ "type": "command", "command": "node ./agentbrain-agy.mjs", "timeout": 10 }],
+    "Stop": [{ "type": "command", "command": "node ./agentbrain-agy.mjs", "timeout": 10 }]
   }
 }

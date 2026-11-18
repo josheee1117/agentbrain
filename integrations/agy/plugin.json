@@ -1,5 +1,5 @@
 {
   "name": "agentbrain",
-  "version": "0.1.0",
-  "description": "agentbrain 记忆：会话开始注入 ab brief，用户每发一条消息注入偏好与提醒（ab recall --hook）"
+  "version": "0.2.0",
+  "description": "agentbrain 记忆：会话开始注入 ab brief，用户每发一条消息注入偏好与提醒（ab recall --hook），并登记会话供后台抽取记忆（ab capture --hook）"
 }
