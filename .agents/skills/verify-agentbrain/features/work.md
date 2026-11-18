@@ -16,6 +16,7 @@
 - 失败原因存库（§12.6.6）：`capture_windows.error_detail` 是 HTTP 状态码加脱敏后的上游报错；`ab work` 输出末尾有「出错明细」
 - 钩子拉起的 `ab work --session` 输出追加到 `<AB_HOME>/work.log`（超过 5 MB 轮转一份）
 - 窗口用完重试次数时，多于一轮且超过 8000 字就对半拆开重试（原窗口记 `failed/split`，不算失败）；401/403 和没配密钥一样延后不计次数
+- 代码核验（§12.6.12）：「无法核验」只核一次；「证据不足」要等提交变了，再按 1、2、4、8 天退避。出错照旧下次重试。从没核过的排在重核前面
 
 ## How to get to it (user POV)
 - 系统守护进程（如 launchd `agentbrain.work`）或宿主 SessionEnd 事件在后台自动调用 `ab work`

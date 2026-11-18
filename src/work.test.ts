@@ -14,7 +14,7 @@ import { Store, type Embedder } from "./store.ts";
 import { WorkFailure, chatClient, fallbackChat, type Chat, type ChatMessage } from "./llm.ts";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, runWork, scan, type WorkDeps } from "./work.ts";
+import { admit, BACKLOG_WINDOWS_PER_SWEEP, chunk, nextVerifyOutcome, runWork, scan, skipVerify, type WorkDeps } from "./work.ts";
 import { allowedTranscript } from "./transcript-file.ts";
 import { expandSource } from "./source.ts";
 import * as intake from "./intake.ts";
@@ -1163,6 +1163,41 @@ test("代码核验 not_verifiable 记在 work store，不写 L1；待确认的�
   const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
   assert.equal(r.verify.not_verifiable, 1);
   assert.equal(e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='verify'").get()!.n, 0);
+});
+
+test("§12.6.12 无法核验只核一次；证据不足要等提交变了且过了退避才重核；没核过的排前面", async () => {
+  assert.equal(skipVerify(undefined, "h1", new Date()), false);
+  assert.equal(skipVerify({ head: "h1", outcome: "error:network", at: new Date().toISOString() }, "h2", new Date()), false, "出错照旧重试");
+  assert.equal(skipVerify({ head: "h1", outcome: "not_verifiable", at: "2026-01-01T00:00:00Z" }, "h2", new Date("2026-04-01T00:00:00Z")), true);
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive:1", at: "2026-11-01T00:00:00Z" }, "h1", new Date("2026-11-03T00:00:00Z")), true, "同一提交不重核");
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive:1", at: "2026-11-01T00:00:00Z" }, "h2", new Date("2026-11-01T12:00:00Z")), true, "第 1 次要等 1 天");
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive:1", at: "2026-11-01T00:00:00Z" }, "h2", new Date("2026-11-02T00:00:01Z")), false);
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive:2", at: "2026-11-02T00:00:00Z" }, "h2", new Date("2026-11-03T00:00:00Z")), true, "第 2 次要等 2 天");
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive", at: "2026-11-01T00:00:00Z" }, "h2", new Date("2026-11-03T00:00:00Z")), true, "旧记录按 8 天算");
+  assert.equal(skipVerify({ head: "h1", outcome: "inconclusive", at: "2026-11-01T00:00:00Z" }, "h2", new Date("2026-11-09T00:00:01Z")), false);
+  assert.equal(nextVerifyOutcome("error:network", "inconclusive"), "inconclusive:1");
+  assert.equal(nextVerifyOutcome("inconclusive", "inconclusive"), "inconclusive:5");
+  assert.equal(nextVerifyOutcome("inconclusive:1", "not_verifiable"), "not_verifiable");
+
+  const e = env();
+  const old = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
+  let t = Date.now();
+  const chat = verifierChat({ verdict: "inconclusive" });
+  const deps = e.deps(chat, { now: () => new Date(t) });
+  assert.equal((await runWork(deps, { sweep: true, dryRun: false })).verify.inconclusive, 1);
+  const afterFirst = chat.calls.length;
+  writeFileSync(join(e.repo, "store.ts"), "const VEC_MIN_SIM = 0.5;\n");
+  execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump"]);
+  t += 12 * 3_600_000;
+  await runWork(deps, { sweep: true, dryRun: false });
+  assert.equal(chat.calls.length, afterFirst, "没到 1 天，提交变了也不重核");
+  const fresh = unconfirmed(e, "另一条还没核过的坑，代码里写着 VEC_MIN_SIM");
+  t += 14 * 3_600_000;
+  const r = await runWork(deps, { sweep: true, dryRun: false });
+  assert.equal(r.verify.inconclusive, 2, "新条目和到期的旧条目都核了");
+  const firstNew = JSON.stringify(chat.calls[afterFirst]);
+  assert.match(firstNew, /另一条还没核过的坑/);
+  assert.doesNotMatch(firstNew, new RegExp(old.slice(0, 8)), "没核过的排在重核前面");
 });
 
 test("到期不再自动归档：sweep 后未确认提议仍 active，只进到期复审清单（§21 2026-10-14）", async () => {

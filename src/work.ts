@@ -47,6 +47,8 @@ const REGISTRY_MAX_CHARS = 3000;
 const CONFIRMED_MAX_CHARS = 3000;
 export const MAX_VERIFY_PER_RUN = 3;
 const VERIFY_RECHECK_MS = 24 * 3_600_000;
+/** 证据不足后再核的间隔：第 1 次 1 天，然后 2、4 天，之后保持 8 天（§12.6.12）。 */
+export const VERIFY_BACKOFF_DAYS = [1, 2, 4, 8];
 const SCAN_DAYS = 7;
 const SCAN_HEAD_BYTES = 64 * 1024;
 const CODE_VERIFIABLE = new Set(["pitfall", "note"]);
@@ -1270,6 +1272,39 @@ async function relatePass(deps: WorkDeps, report: WorkReport, holder: string): P
   }
 }
 
+/** 这次改动之前留下的「证据不足」没有次数，按已经重复过算，等满 8 天。 */
+function inconclusiveTries(outcome: string): number {
+  if (outcome === "inconclusive") return VERIFY_BACKOFF_DAYS.length;
+  return Number(/^inconclusive:(\d+)$/.exec(outcome)?.[1] ?? 0);
+}
+
+function verifyWaitMs(outcome: string): number {
+  const n = inconclusiveTries(outcome);
+  const days = VERIFY_BACKOFF_DAYS[Math.min(Math.max(n, 1), VERIFY_BACKOFF_DAYS.length) - 1];
+  return days * 86_400_000;
+}
+
+/** 没出错的核验还要不要再花一次（§12.6.12）。出错的不跳过。 */
+export function skipVerify(last: { head: string; outcome: string; at: string } | undefined, head: string, now: Date): boolean {
+  if (!last || last.outcome.startsWith("error:")) return false;
+  if (last.outcome === "not_verifiable" || last.outcome.startsWith("not_verifiable:")) return true;
+  if (last.head === head) return true;
+  if (last.outcome === "inconclusive" || last.outcome.startsWith("inconclusive:")) return now.getTime() - Date.parse(last.at) < verifyWaitMs(last.outcome);
+  return now.getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS;
+}
+
+/** 记下这次没结论的结果，次数加一。无法核验不记次数。 */
+export function nextVerifyOutcome(previous: string | undefined, verdict: string): string {
+  if (verdict !== "inconclusive") return verdict;
+  const prev = previous && (previous === "inconclusive" || previous.startsWith("inconclusive:")) ? inconclusiveTries(previous) : 0;
+  return `inconclusive:${prev + 1}`;
+}
+
+function seenVerify(db: DatabaseSync, id: string): boolean {
+  const last = intake.lastVerify(db, id);
+  return !!last && !last.outcome.startsWith("error:");
+}
+
 /** 按代码核验：只核验项目范围、未确认、可由代码证明的种类（坑、事实），且不是待确认的纠正。 */
 async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
   if ("error" in deps.chat) return;
@@ -1285,7 +1320,8 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     ...requeued.sort((a, b) => a.seq - b.seq),
     ...all
       .filter((p) => p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
-      .sort((a, b) => a.seq - b.seq),
+      // 从没核过（或上次只是出错）的排前面，别让反复重核的旧条目占住每次 3 条的名额
+      .sort((a, b) => Number(seenVerify(db, a.id)) - Number(seenVerify(db, b.id)) || a.seq - b.seq),
   ];
   let done = 0;
   for (const p of todo) {
@@ -1302,7 +1338,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
         intake.dequeueReverify(db, p.id);
         continue;
       }
-    } else if (last && !last.outcome.startsWith("error:") && (last.head === head || deps.now().getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS)) continue;
+    } else if (skipVerify(last, head, deps.now())) continue;
     done++;
     let result;
     // 核验可能落到备用渠道：记下最后一次真正回话的模型名
@@ -1334,7 +1370,7 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
         intake.recordVerify(tx, p.id, head, result.verdict, deps.now()),
       );
     } else {
-      intake.recordVerify(db, p.id, head, result.verdict, deps.now());
+      intake.recordVerify(db, p.id, head, nextVerifyOutcome(last?.outcome, result.verdict), deps.now());
     }
   }
 }
