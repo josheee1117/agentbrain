@@ -1,8 +1,8 @@
 /**
- * 项目清单（设计 §6.1）：pm 的 repos/*.md。
+ * 项目清单（设计 §6.1）：pm_new 的 repos/*.md（2026-11-18 从 pm 迁来；没有 pm_new 的机器仍读旧 pm 的）。
  * 文件名（去掉 .md）是项目名，"- 路径：`...`" 行是主执行根。README.md 不是项目。
  */
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -12,8 +12,10 @@ export interface RegistryEntry {
   path: string | null; // null = 档案没有路径行
 }
 
-export function registryDir(env: Record<string, string | undefined> = process.env): string {
-  return env.AB_REGISTRY || join(homedir(), "code_me/pm/repos");
+export function registryDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
+  if (env.AB_REGISTRY) return env.AB_REGISTRY;
+  const moved = join(home, "code_me/pm_new/repos");
+  return existsSync(moved) ? moved : join(home, "code_me/pm/repos");
 }
 
 function expandHome(p: string): string {
