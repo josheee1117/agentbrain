@@ -572,7 +572,7 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
 - 正式库副本：`ab work --dry-run` 的窗口数和上面的数字同一量级；`ab get --expand` 抽 5 条真实 Codex 记忆能展开；正式库不变。
 - `node --test`、类型检查、`verify.sh run` 通过，功能地图加上这条。
 
-### 7.7 Antigravity CLI（agy）接线（CANDIDATE，2026-11-18，待用户授权实现）
+### 7.7 Antigravity CLI（agy）接线（已授权，2026-11-18 用户授权实现）
 
 **结论。** agy 是第五个宿主（`Host` 加 `"agy"`）。注入已经由插件做完（`integrations/agy/`，c736bdf）；本节补上登记、抽取、来源展开和 `ab doctor` 一行，做法和 Pi 一样：读 agy 自己落盘的 JSONL，不导出、不加表、不加配置键。
 
@@ -585,6 +585,7 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
 | 每行一步 | `step_index`、`type`、`source`、`created_at`、`content`。`USER_INPUT`：用户原话在 `<USER_REQUEST>…</USER_REQUEST>` 里，后面跟 `<ADDITIONAL_METADATA>`、`<USER_SETTINGS_CHANGE>` 等宿主块。`PLANNER_RESPONSE`：`content` 是回答，`tool_calls` 是 `[{name,args}]`（无 call id），`thinking`、`model` 另列。`GENERIC`：工具输出，按顺序跟在调用后面，可带 `error`。`SYSTEM_MESSAGE`：钩子注入（`<agentbrain-brief>`、`<agentbrain-prefs>`）和宿主通知 |
 | cwd | transcript 里没有。钩子 stdin 给 `cwd`；`~/.gemini/antigravity-cli/conversation_summaries.db` 的 `workspace_uris` 有，`parent_conversation_id` 标子会话 |
 | 钩子事件 | `SessionStart`、`PreInvocation`（每次调模型前）、`Stop`（每轮结束，`continuationActive` 为真表示还会接着跑）、工具前后。没有会话结束事件 |
+| 钩子给的路径 | `transcriptPath` 实测就是 `transcript_full.jsonl`（1.5.11，会话 `d98cb742-…`）；准入仍把截断版换成完整版，防宿主改动 |
 
 **决定。**
 
@@ -610,7 +611,7 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
    | `telemetry.ts` 的 `modelOf` | 取 `PLANNER_RESPONSE.model` |
    | `status.ts`（doctor） | 加一行 `agy: 插件在位 / 未安装`，在位时再报 brain 目录可读与否 |
 
-**明确不做。** 不给 agy 加话题模式的命令行子模型（同 opencode，话题模式默认关）；不读 `chunks/`、截断版和 `conversation_summaries.db` 里的对话正文；钩子路径不查子会话（`parent_conversation_id` 只在 sweep 补登记时用，钩子登记的子会话按普通会话抽）；不改 `ab setup` 的宿主安装步骤（插件仍手动 `agy plugin install`）。
+**明确不做。** 不给 agy 加话题模式的命令行子模型：话题模式打开时 agy 会话退回普通抽取（同 opencode，`work.ts` 的分流处）；不读 `chunks/`、截断版和 `conversation_summaries.db` 里的对话正文；钩子路径不查子会话（`parent_conversation_id` 只在 sweep 补登记时用，钩子登记的子会话按普通会话抽）；不改 `ab setup` 的宿主安装步骤（插件仍手动 `agy plugin install`）。
 
 **验收。**
 
@@ -2659,6 +2660,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-18 用户授权实现 §7.7（"按你说的干"）。实现后实测：钩子给的 `transcriptPath` 已是完整版；隔离库真实会话登记 host=agy、窗口完成 1。
 - 2026-11-18 新增 §7.7（CANDIDATE，待用户授权）：agy 作为第五个宿主接入登记和抽取。读 `transcript_full.jsonl`（截断版会切掉长原话），准入只认这一种路径形状；插件在新用户消息时登记、在 `Stop` 且不再继续时按会话结束登记并拉起抽取，因为 agy 没有会话结束事件；sweep 的 cwd 从 `conversation_summaries.db` 只读取。§7.2 宿主数改为五个。
 - 2026-11-03 删除 `CONTEXT.md`（用户同日决定）：它来自 09-07 一次 grill，之后没人维护，`AGENTS.md`、代码和验证技能都不引用。逐条对照 47 个术语：44 个设计正文已有（含中文别名，如证据层 L1），1 个补进 §7.2（Host Adapter，按现状写明四宿主接法，并改掉"什么都不装进宿主"），2 个丢弃（Procedure View、Workflow Reference，用户 2026-10-15 决定不做 Procedure，§20 把 Workflow 引擎列为 out of scope）。同时按代码改掉两处过期说法（宿主是四个、Pi 装扩展）和一处混淆（`confirmed_by: corroboration` 与 Corroboration Count 不是一回事）。原指针改为正文定义（§6.3.2、§9.5、§10.2.2），新增 §5.6 收容易混的词。
 - 2026-11-03 新增 §7.6（用户同日授权实现）：Codex 会把会话文件压成 `.jsonl.zst`，已登记的 321 个 Codex 会话里 153 个路径失效，L1 里 227 条来源展开不了。方案是读时解析，不迁移数据；文件层只留 `src/transcript-file.ts` 一个入口。按只读 review 修订：准入改成每次读都查；解压前单独查完整性，因为 Node 对截断帧不报错；读开头只读文件前 256 KB。

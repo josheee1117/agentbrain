@@ -1,7 +1,7 @@
 # ab curate / review (未确认条目审稿与到期复审)
 
 ## Sub-features
-- 未确认条目的审稿建议 (`ab curate [--apply] [--host <claude|codex|pi|opencode>] [--limit N]`)：审"未确认的有效条目"，给出留下/改写/并入/丢弃；默认 dry-run 只写报告，`--apply` 才写库
+- 未确认条目的审稿建议 (`ab curate [--apply] [--host <claude|codex|pi|opencode|agy>] [--limit N]`)：审"未确认的有效条目"，给出留下/改写/并入/丢弃；默认 dry-run 只写报告，`--apply` 才写库
 - 审稿回滚 (`ab curate --undo <run>`)：撤销本批打的 guidance 标记、归档和改写生成的新条目
 - worker 原话审计 (`ab audit worker-quotes [--apply]`)：找出只靠 worker 派活提示当"用户原话"的条目，`--apply` 撤销其自动转正
 - 到期条目复审清单 (`ab review [--limit N] [--archive <id 前缀…> | --archive --all]`)：未确认、过了预计有效期、期间没被注入过的条目；`--archive` 归档，可撤销

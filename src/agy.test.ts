@@ -179,6 +179,17 @@ test("agy sweep 补登记：cwd 取自 conversation_summaries.db；子会话、7
   } finally { store.close(); }
 });
 
+test("话题模式打开时 agy 会话退回普通抽取（同 opencode）：agy 没有可借用的命令行子模型", async () => {
+  const store = new Store(join(home, "topic-store.db"), join(home, "topic-index.db"));
+  try {
+    scan(deps(store));
+    const asked: string[] = [];
+    const report = await runWork({ ...deps(store), topic: { run: "agy-fixture", chatFor: (host) => (asked.push(host), { error: "no_config", message: "不该被调用" }) } }, { session: { host: "agy", session_id: MAIN }, sweep: false, dryRun: false });
+    assert.deepEqual(asked, []);
+    assert.equal(report.windows.deferred, 1, "走普通抽取，缺模型配置时延后");
+  } finally { store.close(); }
+});
+
 test("agy capture --hook：登记完整版路径和钩子给的 cwd；越界路径不登记；SessionEnd 记为结束", () => {
   const registry = join(home, "repos");
   mkdirSync(registry, { recursive: true });

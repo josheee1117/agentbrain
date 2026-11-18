@@ -265,6 +265,29 @@ writeFileSync('$FAKE_HOME/.codex/sessions/2026/10/12/rollout-2026-10-12T10-00-00
     step cli-codex-zst-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session codex:$ZSID --dry-run
     step cli-codex-zst-work-text bash -c "grep -qF 'codex:$ZSID: 待处理窗口' '$EV/cli-codex-zst-work.log'"
 
+    # 5c. agy（§7.7）：钩子给截断版路径，登记成完整版；dry-run 读完整版、不读注入的系统消息
+    ASID="a9e00000-1111-2222-3333-444444444444"
+    ALOGS="$FAKE_HOME/.gemini/antigravity-cli/brain/$ASID/.system_generated/logs"
+    mkdir -p "$ALOGS"
+    node -e "
+const { writeFileSync, utimesSync } = require('node:fs');
+const t = new Date(Date.now() - 3600000);
+const steps = [
+  { step_index: 0, type: 'USER_INPUT', status: 'DONE', created_at: t.toISOString(), content: '<USER_REQUEST>\\n以后做任何改动都要先通过 verify.sh 验证\\n</USER_REQUEST>\\n<ADDITIONAL_METADATA>\\nlocal time\\n</ADDITIONAL_METADATA>' },
+  { step_index: 1, type: 'SYSTEM_MESSAGE', status: 'DONE', created_at: t.toISOString(), content: '<agentbrain-prefs>注入的偏好</agentbrain-prefs>' },
+  { step_index: 2, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: t.toISOString(), model: 'gemini-test', content: '好的，严格执行 verify.sh' },
+];
+writeFileSync('$ALOGS/transcript_full.jsonl', steps.map((s) => JSON.stringify(s)).join('\\n') + '\\n');
+writeFileSync('$ALOGS/transcript.jsonl', JSON.stringify(steps[0]) + '\\n');
+utimesSync('$ALOGS/transcript_full.jsonl', t, t);
+"
+    drive_agy_capture(){
+      printf '{"session_id":"%s","transcript_path":"%s/transcript.jsonl","cwd":"%s","hook_event_name":"UserPromptSubmit"}\n' "$ASID" "$ALOGS" "$REPO" | env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" capture --hook --host agy
+    }
+    step cli-agy-capture drive_agy_capture
+    step cli-agy-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session agy:$ASID --dry-run
+    step cli-agy-work-text bash -c "grep -qF 'agy:$ASID: 待处理窗口 1' '$EV/cli-agy-work.log'"
+
     # 6. curate / review / audit drive
     step cli-review env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" review
     step cli-audit env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" audit worker-quotes

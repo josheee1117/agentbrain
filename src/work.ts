@@ -779,7 +779,7 @@ async function processSession(deps: WorkDeps, s: intake.SessionRow, opts: WorkOp
     hitsByAnchor.set(t.anchor, r.hits as Record<string, number>);
     return { ...t, text: r.text };
   });
-  if (deps.topic && s.host !== "opencode") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
+  if (deps.topic && s.host !== "opencode" && s.host !== "agy") return processTopicSession(deps, deps.topic, s, turns, stripped, hitsByAnchor, worker, opts, report, holder, backlog);
   const chunks = chunk(s.host, s.session_id, turns, s.processed_anchor, settled(s, now));
   if (chunks === "anchor_missing") {
     if (!opts.dryRun) intake.setSessionError(db, s, "source_unavailable");
