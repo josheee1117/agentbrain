@@ -621,11 +621,11 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
 
 ### 7.8 Antigravity 三处对话接入记忆（CANDIDATE，2026-11-23，待用户授权实现）
 
-三处存储共用 `host=agy`、现有 JSONL 读取器和 `ab` 入口，不增加宿主类型、配置键、表、列或事件种类。命令行版沿用 §7.7；本节补 IDE 和 T3 的发现、定位、去噪及分处诊断。sweep 必须独立于插件覆盖三处，插件负责开工注入、每轮偏好和结束后的加速抽取。建议逐实例安装 T3 插件，但安装与真实 ACP 验证须另获授权；本节不代表已经接通。
+首版基线是方案 A：三处 sweep、定位、去噪和分处诊断，共用 `host=agy`、现有 JSONL 读取器和 `ab`。不增加宿主类型、配置键、表、列或事件种类。CLI、IDE 的既有钩子继续修接线；T3 不以插件为前提。方案 B 只是在隔离 ACP 真测通过后共享插件的可选项，不是实现首版的条件。本节仍是 CANDIDATE，不授权代码或正式宿主改动。
 
 #### 7.8.1 现场依据
 
-2026-11-23 18:23 本机核实。先用 `cp -p` 将六份摘要库及存在的 `-wal`、`-shm` 复制到 `/tmp/agy-wiring-readonly.irMq8a/`，正式 `store.db` 也先复制；SQLite 查询只打开副本。transcript 只读原文件，不安装插件、不修改宿主目录。
+数量保留上一轮 2026-11-23 18:23 的快照。六份摘要库及存在的 WAL、SHM、正式 store.db 当时先复制到 `/tmp/agy-wiring-readonly.irMq8a/` 再查询。本轮日志先复制到 `/tmp/agy-wiring-design-fix.ROCwp5/`，只在副本上核实。安装命令无效的结论采用主会话与审查的隔离实测，本轮不重装插件；ACP 加载能力仍未证实。
 
 下表的日志尾均为 `.system_generated/logs/transcript_full.jsonl`。完整路径是 `<应用根>/brain/<会话 id>/<日志尾>`。
 
@@ -641,52 +641,63 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
 |---|---|
 | T3 环境和进程 | `60c7502f…` 的会话 `d92d7fb3-82f5-4c67-9fcd-cee60a2f684b` 日志第 132 行工具输出给出 `GEMINI_HOME=<实例根>`、`ANTIGRAVITY_APP_DATA_DIR=<实例根>/antigravity-acp`、`ANTIGRAVITY_CONVERSATION_ID`、`ANTIGRAVITY_AGENT=1`、`ANTIGRAVITY_LS_VERSION=cli-1.5.13`、`AGY_ACP_FORCE_FILE_STORAGE=1`。`ps` 核实 PID 1823、28894 的 comm 都是 `~/.local/bin/agy`，各自的 `GEMINI_HOME` 指向不同 T3 实例 |
 | 当前发现和定位 | `src/agy.ts:15-25,41-65` 只认 CLI；`src/work.ts:221-244` 再拼 CLI 路径；`src/host.ts:35-45,92-95` 能认 T3 的 agy 进程，但不能找到上述 T3 会话 |
-| 当前路径准入 | `src/transcript-file.ts:165-188` 只放行 CLI 的固定日志路径，IDE、T3 路径都会被拒绝 |
-| 插件 | `~/.gemini/config/plugins/agentbrain/hooks.json` 在位，CLI 与 IDE 共用它；四个 T3 实例的 `config/` 均无 `plugins/`。`src/status.ts:156-165` 目前只检查共享插件与 CLI brain |
-| T3 派出的 Pi 子会话 | 本次会话 `01a207ec-cdcf-7366-a18b-1e4e06fa094a` 的首个 user 在 Pi 日志第 8 行，包含 `ab brief --worker`。真实调用 `cleanTranscript("pi", file).worker` 和 `isWorkerTranscript(file)` 均为 true；副本中该会话已以 `project=agentbrain, via=hook, ephemeral=0` 登记 |
+| 当前路径准入 | `src/transcript-file.ts:165-185` 只放行 CLI 的固定日志路径，IDE、T3 路径都会被拒绝 |
+| 插件 | `~/.gemini/config/plugins/agentbrain/hooks.json` 在位；四个 T3 实例均无 `config/plugins/`，但其 `config/skills` 已由 T3 软链到 `~/.gemini/config/skills`。主会话隔离复现与审查均证明 `agy plugin install` 忽略 `GEMINI_HOME`，只装到 `$HOME/.gemini/config/plugins/`；不能据此宣称共享插件已被 IDE 或 ACP 加载 |
+| T3 派出的 Pi 子会话 | 上一轮仅测 `01a207ec-cdcf-7366-a18b-1e4e06fa094a`，其第 8 行有 `ab brief --worker`，两种检查为 true。这不代表 T3 Pi 全覆盖。现行 `src/transcript.ts:59-65` 仅匹配该字面标记，首轮只有 T3 工具前缀而无开工标记时返回 false；本轮用同形输入调用生产函数复现 |
 | 项目解析 | 对本分支目录运行 `git rev-parse --path-format=absolute --git-common-dir` 得到 `~/code_me/agentbrain/.git`，现有 `resolveProject` 返回 agentbrain。对 `~/code_me/pm` 返回 pm，`isRegistryHome=true`。实现是 `src/registry.ts:48-73` |
 | 定时兜底 | `launchctl print gui/501/com.agentbrain.work` 显示任务已加载、`run interval = 1800 seconds`。仓内样例为 `integrations/launchd/com.agentbrain.work.plist:14-15`；静置门槛为 `src/work.ts:30,703-709` 的 30 分钟 |
 
 #### 7.8.2 发现、只读和去重
 
-`src/agy.ts` 统一枚举应用根，供 sweep、准入、定位与 doctor 共用。固定根只有 CLI 和 IDE；每次调用再列 `~/.t3/userdata/providers/antigravity/` 的直接子目录，取其 `antigravity-acp/`。不写死四个实例，不递归扫整个 `.t3`，不保存账号清单。缺失的父目录视为未使用 T3；某实例读取失败只影响该实例。只接受这三类规范根，拒绝通过实例目录或日志符号链接逃出这些根。
+`src/agy.ts` 统一枚举应用根，供 sweep、准入、定位与 doctor 共用。固定根只有 CLI 和 IDE；每次再列 `~/.t3/userdata/providers/antigravity/` 的直接子目录，取其 `antigravity-acp/`。不写死四个实例，不递归扫整个 `.t3`，不保存账号清单。某处失败不影响其他处。
 
 每个根按以下规则发现会话：
 
-1. 摘要库先复制到临时目录，连同存在的 WAL、SHM 一起复制。在副本上用 `DatabaseSync(..., {readOnly:true})` 只查询 `conversation_id`、`workspace_uris`、`parent_conversation_id`、`last_modified_time`，结束后清理本次临时副本。复制或读取失败时跳过本处并报告，下一次 sweep 再试；不缓存摘要正文，不读 `raw_summary`。
-2. 先将摘要行与同根的实际完整版日志相交，再形成 `{id, cwd, parent, transcript, modifiedAt}`。摘要在别处也出现、但本根没有日志的，不参与去重或收录。日志存在但摘要缺失时报告“日志存在、缺会话元数据”，不猜 cwd。
-3. 未登记会话继续只扫近 7 天（`src/work.ts:53,178`）。以会话的 `last_modified_time` 为时间；时间坏了才用本文件 mtime，不用整个摘要库的 mtime。去掉目前 agy 扫描对摘要时间和文件 mtime 的双重过滤（`src/work.ts:225-232`），避免宿主保留旧 mtime 时漏掉近期对话。已登记会话仍按自己的进度处理，不受发现窗口限制。
-4. 同 id 只有一个有效日志候选时直接取它。多个候选前缀一致时取覆盖其余候选的最长完整版；内容相同才按 `modifiedAt` 较新、再按规范路径字典序定序选择。内容分叉时报告“同 id 日志冲突”，不悄悄覆盖或把两份混成一个会话。本机尚无实际日志撞 id，这个分支只需合成测试。
-5. 现有登记以 `(host, session_id)` 为键（`src/store.ts:115`、`src/intake.ts:99-108`）。已有路径固定使用，新的扫描或另一处钩子不能换掉来源及处理进度。路径失效就报来源不可用，不自动切到另一份副本，因为只凭定位点不能证明两份前文一致。L1 里的旧 Source Pointer 不改写。
+1. **先验证原路径，再复制。** 应用根的 realpath 必须仍在允许的固定根或 T3 单层实例布局内。摘要库和存在的 `-wal`、`-shm` 各自的 realpath 必须落在该根内，拒绝逃逸后才复制。不能只检查 `/tmp` 副本，不能因复制跟随软链而绕过 `src/agy.ts:43` 的原路径检查。副本用 `DatabaseSync(..., {readOnly:true})` 只查 id、workspace、parent、修改时间，结束后清理；不读 `raw_summary`。
+2. 摘要库不存在且没有完整日志的新实例显示“0 对话，尚无摘要库”，不报坏库。有日志但无摘要库或对应行时，保留日志计数并报“缺会话元数据”，不猜 cwd。无权限或损坏显示“无法读取”，不显示 0。
+3. 摘要行先与同根实际完整版日志相交，形成 `{id, cwd, parent, transcript, modifiedAt}`。跨库同步而本根没有日志的摘要不参与收录。近 7 天用会话 `last_modified_time`，时间坏了才用本文件 mtime；去掉目前的摘要时间和文件 mtime 双重过滤（`src/work.ts:53,178,225-232`）。已登记会话不受发现窗口限制。
+4. 同 id 在多个根都有完整版时直接报冲突，本次跳过该 id 的登记、定位和抽取。不读全文、不比前缀、不选最长或按时间换来源。现有登记和 L1 指针保持原样。
+5. **agy 路径固定是必改项，不是当前行为。** `src/intake.ts:94-108` 的 `transcript=COALESCE(?,transcript)` 会覆盖旧路径。对 agy，upsert 在短写事务里读已有行：原路径为空可首次补齐；非空时只接受同一规范路径。另一根的路径或无法确认本根的输入返回冲突，不改 transcript、last_touch、ended_at、processed_anchor 或该行其他字段；`captureHook` 遇到这个结果不再拉起 work（`src/cli.ts:1144-1158`）。同根 touch 与 Stop 沿原语义更新。路径失效报来源不可用，不自动替换。
 
-子会话的 `parent_conversation_id` 非空时，sweep 沿用 §7.7 的不补登记规则。全部文件数、非子会话数与可抽取数分开计，不能把未登记项目、子会话或缺日志全说成漏收录。普通扫描登记仍走既有 scan/backfill 分类及每次 10 个积压窗口的预算（`src/work.ts:237-240,39`）。
+只改变 agy 的覆盖规则。Codex 编辑消息会换 rollout 文件，`codexContinues` 要靠新文件首 ordinal 大于旧进度来接续（`src/work.ts:279-286,324-330`）。现有测试显式换文件后从 635 接到 644（`src/work.test.ts:1687-1719`）；本轮生产函数探针也确认 upsert 能换路径，chunk 能从旧进度接入新文件。Codex 和其他宿主的覆盖行为保持不变；空路径事后补找仍沿 `src/intake.ts:164-167`。
+
+引用扫描同样以 agy 的非空 `capture_sessions.transcript` 为准，不再让 `sessionsToScan` 的跨表 `MAX(transcript)` 选另一根（`src/telemetry.ts:265-274`）。没有登记基线时，只有唯一合法路径才可补找，多根则报冲突跳过。非 agy 的选择规则不在本节修改范围。
+
+parent 非空的子会话仍不由 sweep 补登记。全部日志数、非子会话数与可抽取数分开计。普通扫描沿既有 scan/backfill 分类及每次 10 个积压窗口的预算（`src/work.ts:237-240,39`）。
 
 #### 7.8.3 登记、会话身份与项目
 
 会话 id 保留 `conversationId` 原值，路径携带应用根，三处共用 `host=agy`。不把账号或实例 hash 拼进 id，不迁移现有 CLI 会话键。
 
 - `pickHost` 仍从最近的宿主父进程向外找。T3 的进程本来就是 agy，无需凭 `GEMINI_HOME` 改判宿主。IDE 增加 `Antigravity`，以及 comm 位于 `Antigravity.app` 内或参数含 `--override_ide_name antigravity` 的 `language_server`。不认所有 `language_server`；IDE 内启动 Pi、Claude Code、Codex 时仍取内层宿主。IDE 特征来自旧切片 `7c92d6f` 的已测进程链；当前 `pickHost` 回放该链返回 null，实现验收还须真测 IDE 工具 shell。
-- `locateTranscript("agy", id)` 先核验 `ANTIGRAVITY_APP_DATA_DIR` 是否属于枚举出的应用根；仅有 `GEMINI_HOME` 时只接受已发现的 T3 实例，并使用其 `antigravity-acp`。有有效根提示时只定位本根，日志未落盘可保留规范坐标；没有提示时在全部根按 7.8.2 的规则找，不靠遍历顺序选“第一份”。任意环境路径不放行。
+- `locateTranscript("agy", id)` 先核验 `ANTIGRAVITY_APP_DATA_DIR` 是否属于枚举出的应用根；仅有 `GEMINI_HOME` 时只接受已发现的 T3 实例，并使用其 `antigravity-acp`。无论有无根提示，多根有同 id 完整版都按 7.8.2 报冲突跳过；无冲突才从提示根或唯一候选定位。日志未落盘可保留规范坐标，不靠遍历顺序选“第一份”，不放行任意环境路径。
 - 钩子传 `session_id`、`transcript_path`、`cwd`，路径中的 id 必须与传入 id 相同。sweep 从该根的 `workspace_uris[0]` 经 `fileURLToPath` 得到 cwd，保留 §7.7 的首工作目录口径。多个 workspace 不扩成多个项目，宿主摘要的 `project_id` 不作为 agentbrain 项目身份（当前读法见 `src/agy.ts:53-62`）。
 - 项目继续只由 `repos/*.md` 登记路径决定。普通 worktree 经 `git-common-dir` 归回登记仓库，pm 会话仍归 pm，不因对话提到其他仓库就改归属。抽取按目标项目归属沿 §8.11。目录已删或未登记时只留坐标，不抽取项目记忆，doctor 分列原因；本节不新增执行根映射。
 
-不增加 `capture_sessions.worker`，不升 `SCHEMA_VERSION=1`。现有 Pi 标记已覆盖本次 T3 委派；`ephemeral=0` 表示有持久文件，不等于主会话。读取时的 worker 分类已经传给抽取器（`src/transcript.ts:59-65,379-383,427-446`、`src/work.ts:841,912`），登记表不需要再存一份。
+不增加 `capture_sessions.worker`，库版本保持 1，但必须补共用识别逻辑。上一轮单条 Pi 阳性不足以证明覆盖；`ephemeral=0` 只表示有持久文件。`src/transcript.ts:49,59-65,342-345` 的首轮判断同时接受以下 T3 前缀，并保留宿主原有子会话信号和开工标记：
 
-T3 的 agy 委派还存在另一种真实标记。实例 `42082fb6…` 的 `340ead6f-ffef-446d-b5cf-b319af3436c0`、`af8891a4-c18a-49d0-8a4b-ba88ccfe5056` 日志第 1 行，`<user_request>` 以 `[T3 Code: the agent in T3 thread "…" sent this message, not the user.]` 开头，但摘要 parent 为空。agy 读取器在首个用户输入上识别这个宿主标记，并复用已有 `ab brief --worker` 和 brief 注入标记；每轮检查也复用这个结果（当前 `isAgyWorker` 在 `src/transcript.ts:342-345`，`isWorkerTranscript` 在 `:392-420` 尚未处理 agy）。插件不再依赖外部队列身份，不能仅因“运行在 T3”就判为子代理。这是来源分类，不授予能力。
+- `[T3 Code: the agent in T3 thread "…" sent this message, not the user.]`
+- `[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]`
+
+匹配发生在首个真实输入上、剥包装之前，不因正文任意位置提到 T3 就判 worker。开工标记允许 `ab brief <项目> --worker` 的参数顺序。这个判断供 agy、Pi 的全文与读头路径共用，影响 `cleanTranscript`、每轮偏好和 audit/curate 调用方；不是只修 agy，也不改变 Claude、Codex、opencode 原有信号。两类首轮都是父代理输入，不能当用户原话。
+
+`cmdRecall` 必须先经 `telemetryCtx` / `allowedTranscript` 得到完整版规范路径，再判 worker，不能直接检查钩子传来的截断版（`src/cli.ts:239,246`）。agy 读头仿 Pi，必要时从 16,384 字节扩到 262,144 字节；首行仍不完整时只对首条消息的原始 JSON 文本匹配已知标记，不能因解析失败就判主会话。Pi 的共用回退也补齐两类标记（`src/transcript.ts:392-424,427-445`）。没有完整首轮、也没有阳性标记时保持身份待定，不先注入主会话偏好。这是来源分类，不授予能力。
 
 #### 7.8.4 钩子、安装和延迟
 
-三处使用同一份 `integrations/agy/`，事件仍为 SessionStart、PreInvocation、Stop（`integrations/agy/hooks.json:3-5`）。CLI 与 IDE 更新共享安装一次；T3 每个 `GEMINI_HOME` 有自己的 `config/plugins/agentbrain`，共享目录在位不能代表实例已装。
+方案 A 不要求 T3 插件。实现第 1 步先在 `/tmp` 隔离实例探活方案 B：隔离 HOME、GEMINI_HOME、AB_HOME、AB_REGISTRY 和钩子 shell，使用仅记录测试标记的钩子，通过 `agy acp --gemini-dir <隔离实例> --app-data-dir antigravity-acp` 验证 ACP 是否读取该实例的 `config/plugins/` 并触发钩子。同时测软链到隔离 HOME 的 `.gemini/config/plugins/agentbrain`，核对实际钩子标记与注入，不只看插件清单。此步本轮不执行，不用真实账号改正式配置。
 
-新会话的 SessionStart 若还没有可读输入，brief 延后到首个 PreInvocation，按 `lastUserInput` 或已落盘的首轮识别 worker，再在第一次模型调用前注入一次。已有输入的恢复会话可沿用 SessionStart。不能在拿到 T3 派活标记之前先注入主会话全局规则；recall 也传相同的 worker 结果。单测须覆盖“SessionStart 无 transcript，首轮才出现委派标记”。
+`agy plugin install` 只认 `$HOME/.gemini/config/plugins/`，删掉按 GEMINI_HOME 安装的命令。ACP 探活成功才保留 B：只装一份共享插件，各实例软链到它；失败或未证实，本版删除 B，继续 A，不绕到另一套安装机制。给真实实例创建 `config/plugins/agentbrain` 软链会写 `~/.t3`，必须由用户另行点头；不覆盖已有入口，不由 sweep 自动建链。`config/skills` 的现成软链只是形态参考，不是 plugins 能加载的证据。
 
-建议由操作者在代码验收后逐实例执行已有安装入口：`GEMINI_HOME=<实例目录> agy plugin install <仓库>/integrations/agy`。先在隔离实例证明该命令只写目标实例，并确认 ACP 真会调用钩子，再安装正式实例。新账号出现时由操作者补装，doctor 列出未装实例；sweep、`ab brief` 和 `ab status` 都不偷偷安装。若希望 T3 创建实例时自动安装，要在 T3 的所有者侧另行授权，不在 agentbrain 加安装监控器。
+CLI、IDE 的既有插件使用原有三个事件（`integrations/agy/hooks.json:3-5`）。新会话无首轮时暂不注 brief；首个 PreInvocation 身份明确后，在模型调用前注入。恢复会话已有 SYSTEM_MESSAGE 中的 `<agentbrain-brief>` 时不重复注。此合同只在 B 成立后扩到 T3 ACP。
 
-安装不上或 ACP 不执行钩子时，sweep 仍负责收录，但没有自动开工注入或每轮常驻偏好，需主动 `ab brief` / `ab search`。现有 30 分钟静置加每 30 分钟巡检，在任务正常运行、无积压和模型故障时，最后一条消息后约 30 至 60 分钟开始抽取，不承诺 60 分钟内完成。积压每轮最多 10 个窗口；巡检没加载时必须报告，不能承诺自动兜底。
+brief 状态与现有 prompt 去重状态分开。插件在自己的数据目录按“规范应用根 + 会话 id”保存 pending/done 标记，不存正文、不加配置键。ab 返回非空 brief 且插件成功输出后才置 done；失败或空输出保留 pending，下一次 PreInvocation 重试，不能被 prompt 已 seen 的提前返回挡住。恢复时即使标记丢失，转录中的已注入块也能判 done。插件不自行解析 JSONL。
 
-插件的 `recall --hook` 仍须补传 `session_id=hook.conversationId` 和 `transcript_path=hook.transcriptPath`。当前 capture 已传两者，recall 没传（`integrations/agy/agentbrain-agy.mjs:35,45`）。没有它们时 IDE 无法归属，T3 即使检测到 agy，`telemetryCtx` 的兜底也漏掉 transcript（`src/cli.ts:372-395`）。兜底同步保留 `found.detection.transcript`，并校验 id 与路径一致，才能按 §11.9 对齐偏好注入、交付和回答末尾的“记忆：”报告。
+共用判断由 ab 完成。agy 插件的 `recall --hook` 传 `session_id`、`transcript_path` 和 `want_session_state:true`，返回除原有上下文外的 `agentbrain.session` 元数据，包含 `worker`（true、false 或待定 null）与 `brief_present`。这不是配置键，也不落库；未请求的调用输出不变。插件据它选择 `brief --worker` 或 `brief`，待定时不注主会话规则。先取得身份和状态，再输出本次 brief 与偏好，不复写一份解析器到 `.mjs`。
 
-需要用户选定安装范围：A 只做三处 sweep 和定位，T3 插件保持未装，接受延迟与主动开工；B 在 A 的基础上逐实例安装并验证钩子，获得自动注入和结束加速，但新实例仍要补装。建议 B；安装失败的实例明确退到 A，不把“目录在位”当成注入成功。
+钩子只保证 stdin 坐标，不能假定环境已有会话 id。调用 ab 子进程时补 `ANTIGRAVITY_CONVERSATION_ID=hook.conversationId`，以及从 `hook.transcriptPath` 的固定 brain 日志尾推导的 `ANTIGRAVITY_APP_DATA_DIR`；ab 再核验根与 id。环境只补坐标，宿主仍按父进程链判定。这样 `brief` 的 `detectCtx` 能写带坐标的 inject_log（`src/cli.ts:340-355,437`）；recall 同样补传坐标，并修 `telemetryCtx` 兜底漏 transcript（`:366-390`）。当前 capture 已传两者而 recall 没传（`integrations/agy/agentbrain-agy.mjs:35,45`）。
+
+T3 只靠 A 时没有自动开工或偏好注入，需主动 `ab brief` / `ab search`。30 分钟静置加每 30 分钟巡检，在正常运行、无积压或模型故障时，最后一条消息后约 30 至 60 分钟开始抽取，不承诺完成时间。巡检没加载须报告；积压仍每次最多 10 个窗口。
 
 #### 7.8.5 transcript 格式与稳定定位点
 
@@ -695,22 +706,29 @@ T3 的 agy 委派还存在另一种真实标记。实例 `42082fb6…` 的 `340e
 | 日志 | 片段 |
 |---|---|
 | CLI `14244976-2d08-4627-be75-b4cd19d8fb3f` | 第 1 行为 `step_index=0, USER_INPUT, status=DONE`，`<USER_REQUEST>` 内是“只回答一个字：好”；第 5 行为 `PLANNER_RESPONSE, status=DONE, content="好"` |
-| IDE `63892cce-332b-464d-8483-b7ba8c7d45df` | 第 77、86 行都是 `step_index=76, USER_INPUT`，时间分别为 `2026-11-20T10:24:04Z`、`10:40:12Z`，内容不同。15 份 IDE 日志中 4 份有重复 step；当前 `cleanTranscript` 对该文件产生 5 个重复轮次定位点 |
+| IDE `63892cce-332b-464d-8483-b7ba8c7d45df` | 第 77、86 行都是 `step_index=76, USER_INPUT`，用户正文相同，差异是宿主元数据时间；这是从 84 回滚到 76 后重跑，不是新输入。15 份 IDE 日志中 4 份有重复 step，当前该文件有 5 个重复轮次定位点 |
 | T3 `60c7502f…/c1bda9bb-129b-49cd-8407-96991bb7c982` | 第 1 行为 `step_index=0, USER_INPUT, status=DONE`，包装含 `<t3_code_instructions>`、`<user_request>`、`<runtime_info>`；第 2 行为 `PLANNER_RESPONSE, status=DONE`。CLI、11 份 T3 日志都未发现重复 step |
 
 读取和来源展开仍共用 `cleanTranscript("agy")`（`src/source.ts:142-147,198`），不另写 IDE 或 ACP 解析器。保留 USER_INPUT、PLANNER_RESPONSE、GENERIC 的原有映射；SYSTEM_MESSAGE、thinking 不读，CHECKPOINT、ERROR_MESSAGE 不冒充用户原话或完成回答；`status=DONE` 且无工具调用、有正文才算完成回答（`src/transcript.ts:317-338`）。
 
-定位点在遍历原始 JSONL 时生成。每个有效 `step_index` 的首次出现保留原数字字符串，第 n 次出现用 `<step>#<n>`，例如 `76`、`76#2`。计数包括之后被去噪丢掉的步骤，不按“最终剩下几轮”计。工具调用 id 同样使用这个定位点，防止重试后的工具输出配到旧调用。日志只在尾部追加时，旧定位点不变；不按时间重排，不删重复 step，不用哈希代替旧数字定位点。当前 `chunk` 和来源展开都用 `findIndex`（`src/work.ts:327-328`、`src/source.ts:145`），因此全文件唯一是首版必要条件。日志被宿主重写且旧定位点无法对应时，仍报来源不可用，不猜迁移。
+定位点仍在遍历原始 JSONL 时生成。首次出现保留数字字符串，第 n 次用 `<step>#<n>`，包括之后被去噪丢掉的步骤。保留回滚前的旧行，不按时间重排或合并，否则旧处理进度会失配。每次 `step_index <= prevStepIndex` 先清空 pending，再处理当前行；原有 USER_INPUT 清空也保留。`#n` 同时隔离工具调用与 abCalls 的键，但防 FIFO 错配靠清 pending，不能只改 id（`src/transcript.ts:317-339`）。
 
-T3 的 USER_REQUEST 外层并不等于整段都是用户说的。普通包装先取 `<user_request>` 内文，去掉 T3 自身的指令和运行信息；没有包装的后续真实输入仍沿 §7.7 读取。`c1bda9bb…` 第 1 行内文是 `Context handoff (full_thread_summary)`，末尾才是 `User message: 你好`；只取明确分隔的末尾当前消息，不把交接摘要里的助手复述当成用户证据。边界不明时丢掉这份合成用户输入并计去噪，不把摘要改标为用户认可。委派标记在这一步之前读取。当前清洗仍保留 T3 指令正文，真实调用可复现（`src/transcript.ts:292-295`、`:94-107`）。
+T3 输入按以下顺序处理，读取和来源展开共用结果：
+
+1. 外层 USER_REQUEST 按宿主结构取出，结束位置锚定其后的 ADDITIONAL_METADATA 或文件尾，不被用户正文里的同名字面标签提前截断。若有 T3 包装，从 `</t3_code_instructions>` 后首个 `<user_request>`，取到紧贴 `<runtime_info>` 前的末个 `</user_request>`；不使用第一个闭标签。先识别委派前缀，再剥包装。
+2. 开头为 `Context handoff (full_thread_summary):` 时，从最后一个 `\n\nUser message:\n` 取当前消息。只有这类宿主交接头才走此分支，普通用户正文里的 `User message:` 不切。缺边界则整轮丢弃、计 stripped，不让摘要成为用户证据。
+3. 规范化后以 `Delegated task node:delegated-task:… in child thread …` 开头的完成通知，以及有明确 T3 后台任务唤醒头的合成 USER_INPUT，整轮不生成 user，计 stripped。不是按正文含“completed”就丢弃。裸消息同样检查，不能把“无包装”直接当成真实用户输入。实例 `60c7502f…/d92d7fb3…` 第 45、60 行是必测样本；当前第 60 行经过 `ownUserText` 仍保留 7117 字（`src/extract.ts:149-166`）。
+4. `<assistant_citations>` 只提取 `citation.comment`，不取 text、prefix、suffix、定位数据或 `[assistant-quote-N]` 占位符。解析其说明文字后的 JSON 数组，缺 comment 返回空，坏 JSON 不回退为整块原文。实例 `ac0a3dfd…/adb838bc…` 第 144 行数组是 `[{id,citation:{text,comment,...}}]`，只保留“是这个”。在用户证据检查入口补同样的 comment 例外，避免 `stripPasted` 再丢掉它；复用 `QUESTION_REPLY` 的提取方式，不放宽其他引用块（`src/extract.ts:131-147`）。
+
+其他无包装且不命中明确宿主消息结构的输入继续按 §7.7。单测包含用户正文自带 `</user_request>`、`User message:`、引用块和唤醒字样的反例。定位点唯一性供 chunk、来源展开共用（`src/work.ts:324-330`、`src/source.ts:142-147`）；宿主改写导致旧定位点无法对应时报告来源不可用。当前通用去噪入口为 `src/transcript.ts:101-111`。
 
 #### 7.8.6 诊断与不做
 
-`ab status` 和 `ab doctor` 仍共用入口（`src/cli.ts:1763`）。按应用根重新发现并与 `capture_sessions.transcript` 对齐，分别输出 `agy CLI`、`agy IDE`、`agy T3 <实例短名>`，不新增统计表。每处显示：完整版日志数、已登记数、可抽取但未登记数、已处理会话数、缺元数据或日志数、子会话与未登记项目数、插件在位与否、只靠 sweep 与否。T3 总计只聚合实例行；同 id 副本单列，不重复计成两次收录。
+`ab status` 和 `ab doctor` 共用入口（`src/cli.ts:1763`），每个根只显示一行，例如 `agy IDE: 日志 15（可抽 N），已登记 0，插件在位`。CLI、IDE、T3 每实例各一行，不再展开八项指标，不新增统计表。只靠 sweep、新实例尚无对话或无法读取就在该行注明；异常详情只进顶部“要处理”。
 
-“本处有可抽取主会话但已登记为 0”必须进入开头的“要处理”，即使 CLI 插件正常也不能覆盖 IDE 或某个 T3 实例的告警。目录或摘要库读取失败时显示“无法读取”，不显示 0；只有摘要但没有本处日志时单列“摘要有坐标、完整版缺失”。这是只读诊断，不补登记、不调模型、不安装插件；`status --line` 不加字段。计数口径不能依赖钩子已经登记，否则发现不了当前 IDE、T3 的全零断档。
+计数重新发现实际日志，再与固定的登记路径对齐，不能依赖已登记行才发现当前全零断档。同 id 冲突跳过且单列异常，不重复计数。每个 cwd 的 `resolveProject` 单独捕获 ENOENT，计为目录已删并排除可抽取数，不让整份 status 崩溃（`src/registry.ts:48-58`）；已存在但未登记的目录另计。新实例无摘要库且无日志是 0；有日志无摘要库是缺元数据；坏库或无权限是无法读取。某处有可抽取主会话但已登记为 0 必须进“要处理”，不能被 CLI 插件正常覆盖。
 
-回退整个实现提交即可停止新接线，库版本仍为 1，不需要反向迁移。旧代码读不到 IDE、T3 路径或 `#n` 定位点时会报来源不可用，CLI 原有来源不变。回退代码不删除已抽出的记忆；若要撤销某条产出，仍由用户用现有 archive 路径处理。正式插件回退只撤本次安装或恢复安装前副本，不碰其他插件。
+诊断不补登记、不调模型、不装插件，`status --line` 不变。回退整个实现提交不需要反向迁移，版本仍为 1；旧代码读不到新增路径或 `#n` 定位点时报告来源不可用。回退代码不删除已抽出的记忆，撤销产出仍用现有 archive。若 B 获准，只撤本次建的插件软链或恢复原入口，不删除共享插件、skills 链或其他配置。
 
 本节不做：
 
@@ -726,14 +744,15 @@ T3 的 USER_REQUEST 外层并不等于整段都是用户说的。普通包装先
 
 | 场景 | 输入、结果和证据 |
 |---|---|
-| 离线单测 | 临时目录先 realpath，同时隔离 HOME、AB_HOME、AB_REGISTRY。`src/agy.test.ts`、`host.test.ts`、`agy-plugin.test.ts` 补动态第五实例、单处坏库不拖其他处、摘要重复但只有一处有日志、同 id 同内容及分叉、时间过滤、根外软链、id 不符、IDE 内嵌 Pi、T3 环境定位。重复 step 得到 `76` / `76#2`，尾部追加不改变旧定位点，chunk 与来源展开定位第二次输入；T3 包装和 handoff 不产出假的用户证据。Pi 当前两种 worker 检查保持 true，T3 agy 的显式委派首轮也为 worker。库版本始终为 1 |
+| 离线单测 | 同时隔离 HOME、AB_HOME、AB_REGISTRY，临时目录先 realpath。新增实例、无摘要空实例、缺元数据、坏库、已删 cwd、DB/WAL/SHM 和日志逃逸软链均覆盖。多根同 id 直接冲突跳过；agy 异根 touch/Stop 不改任何会话字段、不触发 work，引用扫描仍取固定路径；Codex 换文件覆盖与接续不变。Pi、agy 的两类 T3 前缀、带项目参数的 worker 标记、截断路径规范化、16KB 以上首行及 262KB 原文回退均测试。身份待定不注主会话规则。库版本保持 1 |
+| 去噪与工具配对 | `d92d7fb3` 第 45、60 行不能生成 user 或提供用户证据；`adb838bc` 第 144 行只剩“是这个”。嵌套闭标签和普通 User message 字样不误切；handoff 无末尾边界整轮去噪。IDE 回滚产生 `76` / `76#2`，旧进度仍可定位；另造非 USER_INPUT 回跳，pending 必须清空，GENERIC 不能配到旧 ab 调用 |
 | 三处真实会话的隔离重放 | 各选一份非子会话、有可抽取信号的完整日志，先记录 id、真实路径、原 cwd 与项目。初始测试库没有这三个 id。将副本放在隔离 HOME 的三类根，摘要沿用真实 cwd，隔离 registry 显式登记对应项目；假 chat 只放模型边界，真实 `runWork(..., {sweep:true})` 发现、登记、处理。三处各产出一条引用真实原话、通过生产校验的条目；精确查会话坐标、处理定位点及窗口终态。真实 CLI 的 status/doctor、`work --dry-run` 核对已登记结果；dry-run 不负责首次发现（`src/work.ts:1426-1429`）。再跑一次，登记行、已完成窗口和相同候选不增加 |
-| 三处实时钩子 | 安装另获授权后，CLI、IDE、T3 ACP 各在已登记目录开一个新会话。hook、shell 与会话目录均按验证技能 `hosts.ts` 的隔离方法绑定测试库和本分支 CLI。观察开工 brief、每轮偏好、capture 和 Stop 加速；以 `capture_sessions`、`recall_runs`、`inject_log`、`memory_reports` 的同一会话 id 核对，不凭插件文件存在判断。T3 插件没执行时标 BLOCKED，不算三处钩子通过 |
+| 既有钩子与可选 B | CLI、IDE 验证 SessionStart 无输入、首 PreInvocation、ab 失败重试和恢复不重注；brief done 与 prompt seen 独立。去掉钩子继承的坐标环境，仍须靠 stdin 补 env，让 inject_log 的 brief 和 recall_runs 对齐同一会话。T3 钩子只在隔离 ACP 确认加载并触发后才验；未证实就删除 B，不作为 A 的失败或通过证据。真实软链另获授权，仍按 `hosts.ts` 隔离 hook、shell、会话目录和库 |
 | 只靠 sweep 的实例 | 测试实例不装插件，静置时钟用可控时间而非真实等一小时；一次 sweep 登记并处理。新增一个实例后下一次能发现。CLI 插件在位时 IDE 或一个 T3 实例仍有对话且 0 登记，status/doctor 必须逐处报“要处理”；坏库不能显示成 0 |
 | 项目与来源 | 真实 worktree 归登记仓库，pm 归 pm；已删和未登记目录不出项目记忆。三处各一次 `ab get --expand` 能打开对应日志定位点，路径不能串到另一实例。T3 的非子会话不能因实例目录被判 worker；有明确派活标记的不能按用户原话抽取 |
 | 完整验证与副作用 | `npm test`、`npm run typecheck`、`.agents/skills/verify-agentbrain/verify.sh run` 全过，再跑上述三处专项。证据写到 `~/.cache/verify-evidence/agentbrain/<运行时间>-agy-wiring/`。重拷正式库，按本轮新增测试 id 逐表确认 0 收录，检查正式宿主配置和源 transcript 未变。无独立隔离启动办法的 IDE 或 ACP 项记 BLOCKED，并列出缺失的证据 |
 
-本次只完成只读核实和候选设计，不执行本表。用户说“开始实现”后才改代码；正式插件安装仍单独确认 A 或 B。
+本轮只修候选设计，不执行验收或 ACP 探活。用户说“开始实现”才推进 A；只有探活证明 B 成立、用户再同意正式软链，才改真实 T3 实例。
 
 ---
 
@@ -3289,7 +3308,7 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
-- 2026-11-23 新增 §7.8（CANDIDATE，待用户授权实现）：Antigravity CLI、IDE、T3 动态实例共用 agy 接入。摘要库先复制再只读，先匹配本根日志再按会话时间去重，已有来源固定；保留原 id 和现有项目解析；补 IDE 进程、T3 路径、recall 会话坐标、重复 step 定位点与 T3 包装去噪；status/doctor 分处计数并报告有对话但 0 收录。真实 T3 Pi 子会话已能靠现有文本标记识别，不新增 worker 列或升库版本，配置键新增 0。插件逐实例安装另获授权，装不上靠 sweep 明示降级。现场副本和真实日志证据见 7.8.1、7.8.5，排在 §9.7 前。
+- 2026-11-23 新增并按异家审查修订 §7.8（CANDIDATE，待用户授权实现）：CLI、IDE、T3 共用 agy，首版基线为三处 sweep、定位、去噪、诊断。删除无效安装命令，B 先隔离验证 ACP 共享软链，正式建链另获授权。补 agy 固定路径与异根钩子拒绝，保留 Codex 换文件；Pi、agy 共用两类 T3 标记、完整版准入与有界读头；补唤醒和引用去噪、回滚清 pending、brief 状态与坐标。复制前验证软链，诊断处理空实例、已删 cwd，每处一行，同 id 冲突跳过。版本保持 1，配置键新增 0，不加 worker 列。审查在 pm `docs/agentbrain/2026-11-23-agy-wiring/tasks/02-review-design.reply.md`，本轮核实副本在 `/tmp/agy-wiring-design-fix.ROCwp5/`。排在 §9.7 前。
 - 2026-11-23 新增 §9.7（CANDIDATE，用户同日同意写入设计，实现按 4 张单逐张授权）：代码变更驱动的记忆重核。每条记忆以自带的核验 head 为基线，和主干比它引用的文件或锚点改没改；排除开发分支上的 head、gitignore 路径、无法核验和退避中的条目；先做机械预筛，单次最多入队 20 条；核验只读主干；决定纳入核验但不自动转正；被判不符时，用户确认的照常注入并加标记，代码转正和未确认的不注入；`ab confirm` 可清 stale。主触发是 sweep 每日一次（默认关），pm `req log 上线` 只在后台加速。零新表，不升版本号，配置键新增 0。依据是 Claude Opus 与 Gemini Neon 两轮评审，记录在 pm `docs/agentbrain/2026-11-23-kb-change-reverify/`。
 - 2026-11-18 用户授权实现 §7.7（"按你说的干"）。实现后实测：钩子给的 `transcriptPath` 已是完整版；隔离库真实会话登记 host=agy、窗口完成 1。
 - 2026-11-18 新增 §7.7（CANDIDATE，待用户授权）：agy 作为第五个宿主接入登记和抽取。读 `transcript_full.jsonl`（截断版会切掉长原话），准入只认这一种路径形状；插件在新用户消息时登记、在 `Stop` 且不再继续时按会话结束登记并拉起抽取，因为 agy 没有会话结束事件；sweep 的 cwd 从 `conversation_summaries.db` 只读取。§7.2 宿主数改为五个。
