@@ -312,8 +312,6 @@ Project identity 只认稳定 project ID 与显式本机 binding/registry 关系
 
 这把 pm 的档案格式变成了 agentbrain 的输入接口。若日后 agentbrain 接管 pm 的档案职责（§2.1、§20），清单随之迁入 `ab`，届时再改。
 
-2026-11-18：用户把项目管理从 pm 切到 pm_new，档案随之迁到 `~/code_me/pm_new/repos/*.md`，格式不变。默认清单位置改为：`AB_REGISTRY` 优先；否则 `~/code_me/pm_new/repos` 存在就用它；再否则用旧的 `~/code_me/pm/repos`。清单所在仓库（registry home）随之从 pm 变成 pm_new。
-
 ### 6.2 六个必须分开的概念
 
 1. Ownership：谁负责治理；
