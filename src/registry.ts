@@ -12,8 +12,8 @@ export interface RegistryEntry {
   path: string | null; // null = 档案没有路径行
 }
 
-export function registryDir(env: Record<string, string | undefined> = process.env): string {
-  return env.AB_REGISTRY || join(homedir(), "code_me/pm/repos");
+export function registryDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
+  return env.AB_REGISTRY || join(home, "code_me/pm/repos");
 }
 
 function expandHome(p: string): string {

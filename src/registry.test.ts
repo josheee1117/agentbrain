@@ -7,7 +7,7 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { isRegistryHome, resolveProject } from "./registry.ts";
+import { isRegistryHome, registryDir, resolveProject } from "./registry.ts";
 
 test("worktree 解析回主仓库对应的项目；未登记目录返回 null", () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-reg-")));
@@ -33,4 +33,12 @@ test("worktree 解析回主仓库对应的项目；未登记目录返回 null", 
   assert.equal(isRegistryHome(join(dir, "pm"), repos), true);
   assert.equal(isRegistryHome(repo, repos), false);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("清单默认读 pm 的 repos，pm_new 的 repos 在也不读（2026-11-23 pm_new 停用）；AB_REGISTRY 优先", () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "ab-reg-home-")));
+  mkdirSync(join(home, "code_me/pm_new/repos"), { recursive: true });
+  assert.equal(registryDir({}, home), join(home, "code_me/pm/repos"));
+  assert.equal(registryDir({ AB_REGISTRY: "/x/repos" }, home), "/x/repos");
+  rmSync(home, { recursive: true, force: true });
 });
