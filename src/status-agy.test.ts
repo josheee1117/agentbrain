@@ -98,6 +98,39 @@ test("agy status 空实例、缺元数据、坏库和权限拒绝分别注明，
   assert.match(todo(out), /agy T3 ac0a3dfd.*1 份完整日志无法读取/);
 });
 
+test("agy status 未安装 CLI、IDE 不显示，共享插件不冒充安装，空实例仍显示尚无对话", (t) => {
+  const f = fixture(t);
+  rmSync(f.apps[1], { recursive: true });
+  const plugin = join(f.home, ".gemini/config/plugins/agentbrain");
+  mkdirSync(plugin, { recursive: true });
+  writeFileSync(join(plugin, "hooks.json"), "{}");
+  let out = statusReport(f.store, f.context);
+  assert.doesNotMatch(out, /agy IDE:/);
+  assert.match(out, /^agy CLI: 日志 0（可抽 0），已登记 0，插件在位，尚无对话$/m);
+  f.summaries(f.apps[0], [{ id: "summary-without-log" }]);
+  f.summaries(f.apps[2], []);
+  out = statusReport(f.store, f.context);
+  assert.match(out, /^agy CLI: 日志 0（可抽 0），已登记 0，插件在位，尚无对话$/m);
+  for (const id of ["60c7502f", "ac0a3dfd"]) assert.match(out, new RegExp(`^agy T3 ${id}: 日志 0（可抽 0），已登记 0，只靠 sweep，尚无对话$`, "m"));
+  rmSync(f.apps[0], { recursive: true });
+  assert.doesNotMatch(statusReport(f.store, f.context), /agy (CLI|IDE):/);
+});
+
+test("agy status 应用目录访问拒绝时仍保留 CLI、IDE 并报告无法读取", (t) => {
+  const f = fixture(t);
+  const parent = join(f.home, ".gemini");
+  chmodSync(parent, 0);
+  try {
+    const out = statusReport(f.store, f.context);
+    for (const label of ["CLI", "IDE"]) {
+      assert.match(out, new RegExp(`^agy ${label}: 日志 无法读取（可抽 0），已登记 0，只靠 sweep，无法读取$`, "m"));
+      assert.match(todo(out), new RegExp(`agy ${label}：应用目录无法读取`));
+    }
+  } finally {
+    chmodSync(parent, 0o700);
+  }
+});
+
 test("agy status 已删 cwd 不崩且排除可抽数，未登记目录另计", (t) => {
   const f = fixture(t);
   const deleted = join(f.home, "deleted");
@@ -105,12 +138,68 @@ test("agy status 已删 cwd 不崩且排除可抽数，未登记目录另计", (
   mkdirSync(unregistered);
   for (const id of ["deleted", "unregistered", "registered"]) f.log(f.apps[1], id);
   f.summaries(f.apps[1], [{ id: "deleted", cwd: deleted }, { id: "unregistered", cwd: unregistered }, { id: "registered" }]);
-  assert.equal(resolveProject(deleted), null);
+  assert.throws(() => resolveProject(deleted), { code: "ENOENT" });
   const out = statusReport(f.store, f.context);
   assert.match(out, /^agy IDE: 日志 3（可抽 1），已登记 0，只靠 sweep$/m);
   assert.match(todo(out), /agy IDE.*目录已删 1/);
   assert.match(todo(out), /agy IDE.*未登记项目 1/);
   assert.match(statusReport(f.store, { ...f.context, cwd: deleted }), /^目录: 未登记目录$/m);
+});
+
+test("agy status cwd 父路径是文件时计目录已删，当前目录异常不崩", (t) => {
+  const f = fixture(t);
+  const parent = join(f.home, "notdir");
+  writeFileSync(parent, "not a directory");
+  const cwd = join(parent, "child");
+  assert.throws(() => resolveProject(cwd), { code: "ENOTDIR" });
+  f.log(f.apps[1], "notdir");
+  f.log(f.apps[1], "registered");
+  f.summaries(f.apps[1], [{ id: "notdir", cwd }, { id: "registered" }]);
+  const out = statusReport(f.store, f.context);
+  assert.match(out, /^agy IDE: 日志 2（可抽 1），已登记 0，只靠 sweep$/m);
+  assert.match(todo(out), /agy IDE：目录已删 1 个主会话，不可抽取/);
+  assert.doesNotMatch(todo(out), /agy IDE：未登记项目/);
+  assert.match(statusReport(f.store, { ...f.context, cwd }), /^目录: 未登记目录$/m);
+});
+
+test("agy status cwd 权限拒绝单列且排除可抽数，当前目录无法读取不崩", (t) => {
+  const f = fixture(t);
+  const parent = join(f.home, "denied");
+  const cwd = join(parent, "child");
+  mkdirSync(cwd, { recursive: true });
+  f.log(f.apps[1], "denied-cwd");
+  f.log(f.apps[1], "registered");
+  f.summaries(f.apps[1], [{ id: "denied-cwd", cwd }, { id: "registered" }]);
+  chmodSync(parent, 0);
+  try {
+    assert.throws(() => resolveProject(cwd), { code: "EACCES" });
+    const out = statusReport(f.store, f.context);
+    assert.match(out, /^agy IDE: 日志 2（可抽 1），已登记 0，只靠 sweep$/m);
+    assert.match(todo(out), /agy IDE：工作目录无法读取 1 个主会话，不可抽取/);
+    assert.doesNotMatch(todo(out), /agy IDE：(目录已删|未登记项目)/);
+    assert.match(statusReport(f.store, { ...f.context, cwd }), /^目录: 未登记目录$/m);
+  } finally {
+    chmodSync(parent, 0o700);
+  }
+});
+
+test("agy status 零登记提示只看可抽主会话的七天窗口，近期子会话和未登记目录不影响旧日志提示", (t) => {
+  const f = fixture(t);
+  const unregistered = join(f.home, "unregistered");
+  mkdirSync(unregistered);
+  for (const id of ["old", "recent-child", "recent-unregistered"]) f.log(f.apps[0], id);
+  f.summaries(f.apps[0], [{ id: "old", old: true }, { id: "recent-child", parent: "old" }, { id: "recent-unregistered", cwd: unregistered }]);
+  for (const id of ["recent", "old-too"]) f.log(f.apps[1], id);
+  f.summaries(f.apps[1], [{ id: "recent" }, { id: "old-too", old: true }]);
+  const db = new DatabaseSync(join(f.apps[1], "conversation_summaries.db"));
+  db.prepare("UPDATE conversation_summaries SET last_modified_time=? WHERE conversation_id='recent'")
+    .run(new Date(f.context.now.getTime() - 7 * 86_400_000).toISOString());
+  db.close();
+  const out = statusReport(f.store, f.context);
+  assert.match(todo(out), /agy CLI：可抽取主会话 1，已登记 0：超过 7 天，巡检不会补登记/);
+  assert.match(todo(out), /agy IDE：可抽取主会话 2，已登记 0：检查巡检是否在跑/);
+  assert.doesNotMatch(todo(out), /agy CLI：可抽取主会话.*检查巡检是否在跑/);
+  assert.doesNotMatch(todo(out), /agy IDE：可抽取主会话.*超过 7 天/);
 });
 
 test("agy status 同 id 跨根冲突单列，日志与登记均不重复计数", (t) => {

@@ -58,13 +58,7 @@ export function mainWorktree(cwd: string): string {
 }
 
 export function resolveProject(cwd: string, dir = registryDir()): { name: string; path: string } | null {
-  let root: string;
-  try {
-    root = mainWorktree(cwd);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    throw error;
-  }
+  const root = mainWorktree(cwd);
   const hit = loadRegistry(dir).find((e) => e.path === root);
   return hit && hit.path ? { name: hit.name, path: hit.path } : null;
 }

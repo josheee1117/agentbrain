@@ -1,5 +1,5 @@
 /** ab status / ab doctor：自检报告。只拼文本；宿主检测、向量、模型配置由调用方给。 */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import type { Embedder, Store } from "./store.ts";
 import type { HostResult } from "./host.ts";
@@ -21,7 +21,13 @@ export interface AgyRootStatus {
 }
 
 function agyStatus(store: Store, ctx: StatusContext): { lines: string[]; todo: string[] } {
-  const roots = agyRoots();
+  const roots = agyRoots().filter((root) => {
+    if (root.kind === "t3") return true;
+    try { lstatSync(root.appData); } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    }
+    return true;
+  });
   // 诊断统计所有完整日志，不改变 sweep 的七天发现窗口。
   const discovered = agyDiscover(roots, ctx.now, () => true);
   const conflictIds = new Set(discovered.conflicts.map((c) => c.id));
@@ -38,19 +44,30 @@ function agyStatus(store: Store, ctx: StatusContext): { lines: string[]; todo: s
     const label = labels.get(root.root)!;
     const conversations = discovered.conversations.filter((c) => c.root.root === root.root);
     let extractable = 0;
+    let hasRecentExtractable = false;
     let deleted = 0;
+    let cwdUnreadable = 0;
     let unregistered = 0;
     for (const c of conversations) {
       if (c.parent || !c.cwd) continue;
-      const project = resolveProject(c.cwd);
-      if (project) extractable++;
-      else if (!existsSync(c.cwd)) deleted++;
-      else unregistered++;
+      let project: ReturnType<typeof resolveProject>;
+      try { project = resolveProject(c.cwd); } catch (error) {
+        const code = error instanceof Error && "code" in error ? error.code : null;
+        if (code === "ENOENT" || code === "ENOTDIR") deleted++;
+        else if (code === "EACCES" || code === "EPERM") cwdUnreadable++;
+        else throw error;
+        continue;
+      }
+      if (project) {
+        extractable++;
+        if (c.modifiedAt >= ctx.now.getTime() - 7 * 86_400_000) hasRecentExtractable = true;
+      } else unregistered++;
     }
     if (deleted) todo.push(`agy ${label}：目录已删 ${deleted} 个主会话，不可抽取`);
+    if (cwdUnreadable) todo.push(`agy ${label}：工作目录无法读取 ${cwdUnreadable} 个主会话，不可抽取`);
     if (unregistered) todo.push(`agy ${label}：未登记项目 ${unregistered} 个主会话，不可抽取`);
     const registered = sessions.filter((s) => s.transcript?.startsWith(root.brain + sep)).length;
-    if (extractable && !registered) todo.push(`agy ${label}：可抽取主会话 ${extractable}，已登记 0：检查巡检是否在跑`);
+    if (extractable && !registered) todo.push(`agy ${label}：可抽取主会话 ${extractable}，已登记 0：${hasRecentExtractable ? "检查巡检是否在跑" : "超过 7 天，巡检不会补登记"}`);
     const problems = discovered.problems.filter((p) => p.root === root.root);
     const problem = problems.find((p) => p.kind === "unreadable")?.kind
       ?? problems.find((p) => p.kind === "missing_meta")?.kind
@@ -169,7 +186,8 @@ function containsBrief(file: string): boolean {
 export function statusReport(store: Store, ctx: StatusContext): string {
   const { cwd } = ctx;
   {
-    const here = resolveProject(cwd);
+    let here: ReturnType<typeof resolveProject>;
+    try { here = resolveProject(cwd); } catch { here = null; }
     const where = isRegistryHome(cwd) ? "pm（清单所在仓库）" : here ? `项目 ${here.name}` : "未登记目录";
     const found = ctx.host;
     const proj = store.project();

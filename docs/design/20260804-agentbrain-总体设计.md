@@ -3308,6 +3308,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-24 用户按 fix-status-review 单授权修正分处诊断。status 跳过 appData 不存在的 CLI、IDE，其他读取异常保留根并报告；已安装的空根和 T3 新实例仍显示尚无对话。resolveProject 恢复目录异常抛错，只在 status 分类处理：ENOENT、ENOTDIR 计目录已删，EACCES、EPERM 计工作目录无法读取，均排除可抽数；未知异常照抛。当前目录无法解析时显示未登记目录。可抽主会话全部超过七天且零登记时说明巡检不会补登记，有近七天可抽主会话时仍提示检查巡检。理由是避免把未安装应用报成空实例、把异常目录登记成全局会话，以及把旧日志误报为巡检停转。回归先红后绿，隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY，走真实 status、doctor 和完整验证。不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
+
 - 2026-11-24 用户按 fix-worker-review 单授权修正四类身份误判。Pi、agy 的对象与截断读头共用首轮起点函数，仅从输入开头剥宿主请求框和闭合 skill 块，再匹配派活标记。T3 说明块或 skill 块超出读头窗口时保留 null，普通正文中部的同名标签不剥。Codex 的 session_meta 独立返回身份，截断元数据无阳性信号时返回 false，不再误走 Pi 判断；Claude 截断 user 行按行首 isSidechain 判定。回归先红后绿，隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY 走真实 recall --hook，验证主会话偏好与 worker 隔离。不新增解析器、配置、表或列，不改公开签名，库版本仍为 1；代码可用 git 回退。
 
 - 2026-11-24 用户按 status-per-root 单授权实现 §7.8.6。status 和 doctor 复用发现接口统计所有完整日志，按固定登记路径分别对齐 CLI、IDE 和 T3 各实例；不改变 sweep 的七天窗口。已删 cwd 排除可抽数，已存在但未登记的项目另报；冲突日志跳过计数并集中报异常。CLI、IDE 检查共享插件，T3 检查实例根的插件入口。验证覆盖四根计数、空实例、缺元数据、坏库、权限拒绝、目录已删、冲突和真实 CLI 的只读副作用。status --line 和库版本 1 不变；代码可用 git 回退。
