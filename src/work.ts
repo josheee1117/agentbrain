@@ -18,7 +18,7 @@ import { addHits, sanitize, secretKinds } from "./sanitize.ts";
 import { cleanTranscript, isCodexSubagent, type Turn } from "./transcript.ts";
 import { locateTranscript } from "./host.ts";
 import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from "./opencode.ts";
-import { agyConversations, agyTranscriptPath } from "./agy.ts";
+import { agyDiscover, agyRoots } from "./agy.ts";
 import { allowedTranscript, readTranscript, resolveTranscript } from "./transcript-file.ts";
 import { EXTRACT_PROMPT_VERSION, buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
 import { RepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
@@ -173,7 +173,7 @@ function walk(host: Host, dir: string, depth: number, out: string[]): void {
 }
 
 /** 兜底：hook 没触发（Codex 未信任等）时，从三宿主会话目录补登记 cwd 落在已登记项目里的近期会话。 */
-export function scan(deps: WorkDeps): number {
+export function scan(deps: WorkDeps, agy = agyDiscover(agyRoots(), deps.now(), (id) => intake.knownSession(deps.store.workDb, "agy", id))): number {
   const db = deps.store.workDb;
   const since = deps.now().getTime() - SCAN_DAYS * 86_400_000;
   const hook = intake.firstHookAt(db);
@@ -217,31 +217,19 @@ export function scan(deps: WorkDeps): number {
       if (project) added++;
     }
   }
-  try {
-    // agy 的记录里没有 cwd，从它的会话库取；子会话不补登记（§7.7）
-    for (const c of agyConversations(since)) {
-      if (c.parent || intake.knownSession(db, "agy", c.id)) continue;
-      const f = agyTranscriptPath(c.id);
-      let mtime: number;
-      try {
-        mtime = statSync(f!).mtimeMs;
-      } catch {
-        continue;
-      }
-      if (mtime < since) continue;
-      let project: { name: string } | null = null;
-      try {
-        project = deps.resolveProject(c.cwd);
-      } catch {
-        project = null;
-      }
-      const started = sessionStart(f!);
-      const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
-      intake.upsertSession(db, { host: "agy", session_id: c.id, transcript: realpathSync(f!), cwd: c.cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
-      if (project) added++;
+  // 缺元数据不猜 cwd；冲突已由发现入口排除，子会话不补登记（§7.8.2）。
+  for (const c of agy.conversations) {
+    if (c.parent || !c.cwd || intake.knownSession(db, "agy", c.id)) continue;
+    let project: { name: string } | null = null;
+    try {
+      project = deps.resolveProject(c.cwd);
+    } catch {
+      project = null;
     }
-  } catch {
-    // agy 未安装或会话库不可读时不影响其他宿主的扫描。
+    const started = sessionStart(c.transcript);
+    const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
+    intake.upsertSession(db, { host: "agy", session_id: c.id, transcript: c.transcript, cwd: c.cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
+    if (project) added++;
   }
   try {
     for (const s of recentOpencodeSessions(since)) {
@@ -1423,17 +1411,30 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     return report;
   }
   try {
+    const agy = agyDiscover(agyRoots(), deps.now(), (id) => intake.knownSession(db, "agy", id));
+    const conflictIds = new Set(agy.conflicts.map((c) => c.id));
+    for (const c of agy.conflicts) report.problems.push(`agy 会话 ${c.id} 在多处有完整日志，已跳过：${c.roots.join("，")}`);
+    for (const p of agy.problems) {
+      const detail = p.kind === "no_summaries" ? "0 对话，尚无摘要库" : p.kind === "missing_meta" ? `缺会话元数据（${p.count} 份完整日志）` : "无法读取";
+      report.problems.push(`agy ${p.root}：${detail}`);
+    }
     if (opts.sweep && !opts.dryRun) {
       intake.reclassifyScanned(db, (t) => sessionStart(t));
-      report.scanned = scan(deps);
+      report.scanned = scan(deps, agy);
     }
-    if (opts.redo && opts.session && !opts.dryRun) intake.resetSession(db, opts.session.host, opts.session.session_id);
+    if (opts.redo && opts.session && !opts.dryRun
+        && !(opts.session.host === "agy" && conflictIds.has(opts.session.session_id))) {
+      intake.resetSession(db, opts.session.host, opts.session.session_id);
+    }
     // hook / 手动登记的会话先处理；扫描补登记的排后面，并受 BACKLOG_WINDOWS_PER_SWEEP 限制
     // 单会话运行（hook 拉起）也顺带重试别的会话里已到期的延后窗口：launchd 没开时它们没有别的机会重跑
     const list = opts.session ? [...intake.sessions(db, opts.session), ...intake.dueDeferredSessions(db, deps.now(), opts.session)] : intake.sessions(db);
     const ordered = [...list.filter((x) => !isBacklog(x)), ...list.filter(isBacklog)];
     const backlog: Backlog = { left: BACKLOG_WINDOWS_PER_SWEEP };
-    for (const s of ordered) await processSession(deps, s, opts, report, holder, backlog);
+    for (const s of ordered) {
+      if (s.host === "agy" && conflictIds.has(s.session_id)) continue;
+      await processSession(deps, s, opts, report, holder, backlog);
+    }
     if (!opts.dryRun) await relatePass(deps, report, holder);
     if (opts.sweep && !opts.dryRun) {
       await verifyPass(deps, report, holder);

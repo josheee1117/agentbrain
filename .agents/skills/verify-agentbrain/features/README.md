@@ -12,7 +12,7 @@
 | 归属显示 | [attribution.md](attribution.md) | 抽取判到别的项目时 `ab get` 写清会话在哪；归属没确认的条目标「[归属未定]」 |
 | recall-hook | [recall-hook.md](recall-hook.md) | 宿主每轮静默召回、上下文注入（Claude Code、Pi、Codex） |
 | opencode-host | [opencode-host.md](opencode-host.md) | OpenCode 宿主接入、v2 插件召回、SQLite 会话捕获与子代理隔离 |
-| agy-host | [agy-host.md](agy-host.md) | Antigravity CLI 宿主：插件注入与登记、`transcript_full.jsonl` 准入与读法、sweep 补登记 |
+| agy-host | [agy-host.md](agy-host.md) | Antigravity 宿主：CLI、IDE、T3 动态实例的完整日志发现与 sweep，摘要副本只读、异常与冲突跳过；既有 CLI 插件与读法 |
 | work | [work.md](work.md) | 后台会话自动抽取、单实例租约调度、代码核验与转正、跨会话印证、模型产出留痕；Codex 压缩会话 `.jsonl.zst` 读时解析（§7.6） |
 | curate / review | [curate.md](curate.md) | 未确认条目审稿建议、审稿回滚、worker 原话审计与到期复审；旧候选区条目只读对照 |
 | view | [view.md](view.md) | 手动生成本地 HTML 记忆看板（概览、关联图、注入/引用统计） |

@@ -90,7 +90,7 @@ utimesSync(full(OLD), new Date(now - 9 * 86_400_000), new Date(now - 9 * 86_400_
 const db = new DatabaseSync(join(app, "conversation_summaries.db"));
 db.exec("CREATE TABLE conversation_summaries(conversation_id text, workspace_uris text NOT NULL, parent_conversation_id text NOT NULL DEFAULT '', last_modified_time datetime NOT NULL, PRIMARY KEY(conversation_id))");
 for (const [id, ws, parent] of [[MAIN, [`file://${repo}`], ""], [WORKER, [`file://${repo}`], ""], [CHILD, [`file://${repo}`], MAIN], [ELSEWHERE, ["file:///elsewhere"], ""], [OLD, [`file://${repo}`], ""]] as const) {
-  db.prepare("INSERT INTO conversation_summaries VALUES(?,?,?,?)").run(id, JSON.stringify(ws), parent, iso(now));
+  db.prepare("INSERT INTO conversation_summaries VALUES(?,?,?,?)").run(id, JSON.stringify(ws), parent, iso(id === OLD ? now - 9 * 86_400_000 : now));
 }
 db.close();
 
