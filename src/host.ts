@@ -8,7 +8,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Host } from "./l2.ts";
 import { opencodeRef, opencodeSession } from "./opencode.ts";
-import { agyTranscriptPath } from "./agy.ts";
+import { agyLocate } from "./agy.ts";
 import { resolveTranscript } from "./transcript-file.ts";
 
 const MAX_ANCESTORS = 20;
@@ -39,7 +39,7 @@ export function pickHost(chain: Proc[], env: Record<string, string | undefined>)
     if (name === "claude") host = "claude";
     else if (name === "codex") host = "codex";
     else if (name === "opencode") host = "opencode";
-    else if (name === "agy") host = "agy";
+    else if (name === "agy" || name === "Antigravity" || (name === "language_server" && (p.comm.includes("/Antigravity.app/") || /(?:^|\s)--override_ide_name(?:=|\s+)antigravity(?:\s|$)/.test(p.args)))) host = "agy";
     else if (name === "pi" || (name === "node" && p.args.includes("pi-coding-agent"))) host = "pi";
     if (host) return { host, session_id: env[SESSION_ENV[host]] || null };
   }
@@ -89,10 +89,7 @@ export function locateTranscript(host: Host, sessionId: string): string | null {
       return null;
     }
   }
-  if (host === "agy") {
-    const path = agyTranscriptPath(sessionId);
-    return path ? resolveTranscript(path) : null;
-  }
+  if (host === "agy") return agyLocate(sessionId, { appDataDir: process.env.ANTIGRAVITY_APP_DATA_DIR, geminiHome: process.env.GEMINI_HOME }).path;
   const home = homedir();
   // 先 sessions 后 archived_sessions；每个目录先精确找 `.jsonl`，再找 `.jsonl.zst`，不靠目录遍历顺序（§7.6）
   if (host === "claude") return locateIn(join(home, ".claude/projects"), (n) => n === `${sessionId}.jsonl`, 2);
@@ -151,6 +148,6 @@ export function detectHost(env: Record<string, string | undefined> = process.env
   const transcript = hit.session_id ? locateTranscript(hit.host, hit.session_id) : null;
   return {
     ok: true,
-    detection: { host: hit.host, session_id: hit.session_id, transcript: transcript ? (hit.host === "opencode" ? transcript : realpathSync(transcript)) : null },
+    detection: { host: hit.host, session_id: hit.session_id, transcript: transcript ? (hit.host === "opencode" || hit.host === "agy" ? transcript : realpathSync(transcript)) : null },
   };
 }

@@ -32,7 +32,7 @@ import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
-import { agySessionId } from "./agy.ts";
+import { agyLocate, agySessionId } from "./agy.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
 import { REVIEWER_ENV } from "./clireviewer.ts";
 import { addTopicMark, listTopicRuns, newTopicRun, saveTopicReport, topicChatFor, topicEnabled, TOPIC_IDLE_MS, topicReportDir, undoTopicRun } from "./topic.ts";
@@ -461,7 +461,7 @@ function relayedBy(): { host: Host; session_id: string | null } | null {
 function workerSource(raw: string, summary: string): { source: SourcePointer; missing: boolean } {
   const w = parseSessionKey(raw, "--from-worker 必须是 claude|codex|pi|opencode|agy:<session_id>");
   const found = locateTranscript(w.host, w.session_id);
-  const transcript = found ? (w.host === "opencode" ? found : realpathSync(found)) : null;
+  const transcript = found ? (w.host === "opencode" || w.host === "agy" ? found : realpathSync(found)) : null;
   const anchor = transcript ? latestAnchor(w.host, transcript) : null;
   return {
     source: { host: w.host, session_id: w.session_id, transcript, anchor, summary, relayed_by: relayedBy() },
@@ -1117,7 +1117,9 @@ async function captureHook(host: Host): Promise<void> {
     transcript = allowedTranscript(host, given, sessionId);
     if (!transcript) return; // 不在宿主会话目录里的路径一律不登记
   } else if (!ephemeral) {
-    const found = locateTranscript(host, sessionId);
+    const located = host === "agy" ? agyLocate(sessionId, { appDataDir: process.env.ANTIGRAVITY_APP_DATA_DIR, geminiHome: process.env.GEMINI_HOME }) : null;
+    if (located?.conflict.length) return;
+    const found = located ? located.path : locateTranscript(host, sessionId);
     transcript = found ? allowedTranscript(host, found, sessionId) : null;
   }
   let cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : null;
@@ -1180,7 +1182,9 @@ async function cmdCapture(argv: string[]): Promise<void> {
   }
   if (!positionals[0]) die("用法: ab capture <claude|codex|pi|opencode|agy>:<session_id> [--transcript <路径>] [--cwd <目录>] [--end]");
   const key = parseSessionKey(positionals[0], "会话必须写成 claude|codex|pi|opencode|agy:<session_id>");
-  const found = values.transcript ?? locateTranscript(key.host, key.session_id);
+  const located = !values.transcript && key.host === "agy" ? agyLocate(key.session_id, { appDataDir: process.env.ANTIGRAVITY_APP_DATA_DIR, geminiHome: process.env.GEMINI_HOME }) : null;
+  if (located?.conflict.length) die(`agy 会话 ${key.session_id} 在多处有完整日志，已跳过：${located.conflict.map((root) => root.root).join("，")}`);
+  const found = values.transcript ?? (located ? located.path : locateTranscript(key.host, key.session_id));
   if (!found) die("找不到这个会话的 transcript，用 --transcript 指定");
   const transcript = allowedTranscript(key.host, found, key.session_id);
   if (!transcript) die(`transcript 必须在 ${key.host} 的会话目录下: ${found}`);

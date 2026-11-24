@@ -20,6 +20,7 @@ case "${1:-}" in
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
+    step cli-agy-locate node --test src/agy-locate.test.ts src/host.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)

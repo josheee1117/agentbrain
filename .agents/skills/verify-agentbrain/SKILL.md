@@ -10,6 +10,8 @@ Every agent must use this to verify changes before calling them done. 改动必�
 ## Launch
 CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch AB_HOME / AGENTBRAIN_HOME (mktemp) — never point at ~/.agentbrain (user's real memory).
 
+A fully isolated HOME hides the keychain. The local embedding server in `verify.sh run` still reads `agentbrain-embedding` through `security`. Put a scratch `security` on PATH that returns `fixture-key` only for that service, following `src/llm.test.ts`. No real key is needed. Do not use this stub for real-model verification.
+
 ## Doctor
 `.agents/skills/verify-agentbrain/verify.sh doctor` — read-only; JSON lines. Run first whenever anything looks off.
 
@@ -23,7 +25,7 @@ CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch 
 - `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)
 - `cli-recall-hook`: `recall --hook` via stdin JSON
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`
-- `cli-agy`: agy session capture from the truncated `transcript.jsonl` path (registered as `transcript_full.jsonl`) and `work --dry-run`. `cli-agy-roots` drives the real `work --sweep` in isolated CLI, IDE and T3 directories, then asserts three capture rows and three dry-run windows. It also covers empty instances, missing metadata, unreadable databases, symlink escape, the seven-day window and cross-root conflicts (see [features/agy-host.md](features/agy-host.md)).
+- `cli-agy`: agy session capture from the truncated `transcript.jsonl` path (registered as `transcript_full.jsonl`) and `work --dry-run`. `cli-agy-roots` drives the real `work --sweep` in isolated CLI, IDE and T3 directories, then asserts three capture rows and three dry-run windows. It also covers empty instances, missing metadata, unreadable databases, symlink escape, the seven-day window and cross-root conflicts. `cli-agy-locate` covers root hints, unique candidates, conflicts, unwritten canonical paths and IDE process-chain replay. It drives real no-path capture and `remember --from-worker` / `get --expand` in isolated directories; a real IDE tool shell still needs a separate run (see [features/agy-host.md](features/agy-host.md)).
 - `cli-curate`: `review` and `audit worker-quotes`
 - `cli-detail`: `remember --body-file/--alternative` → `get` shows body + rejected options → `search` body hint → rule-with-body rejected → `correct` does not copy detail (see [features/detail.md](features/detail.md))
 - `cli-cross-*`: cross-project section in `ab search` (other projects' similar entries, sim >=0.65, max 3) using a mock embedding endpoint; asserts it is suppressed for `--project` / `--all` / pm dir / `--scene`, records delivery in `inject_log`, and explains itself when vectors are unavailable (see [features/cross-project.md](features/cross-project.md))

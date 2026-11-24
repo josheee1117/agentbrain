@@ -29,7 +29,35 @@ const env = {
   CLAUDE_CODE_SESSION_ID: "claude-1",
   CODEX_THREAD_ID: "codex-1",
   PI_SESSION_ID: "pi-1",
+  ANTIGRAVITY_CONVERSATION_ID: "agy-1",
 };
+
+// 旧切片 7c92d6f 的 IDE 工具 shell 实测链，路径和参数两类特征分别回放。
+const ide: Proc = { comm: "/Applications/Antigravity.app/Contents/MacOS/Antigravity", args: "" };
+const languageServer: Proc = { comm: "/Applications/Antigravity.app/Contents/Resources/app/extensions/antigravity/bin/language_server", args: "language_server --override_ide_name antigravity" };
+
+test("Antigravity IDE 进程链回放识别 agy，不认其他 language_server", () => {
+  assert.deepEqual(pickHost([{ comm: "/bin/zsh", args: "" }, languageServer, ide], env), { host: "agy", session_id: "agy-1" });
+  assert.deepEqual(pickHost([ide], env), { host: "agy", session_id: "agy-1" });
+  assert.deepEqual(pickHost([{ ...languageServer, args: "" }], env), { host: "agy", session_id: "agy-1" });
+  for (const args of ["language_server --override_ide_name antigravity", "language_server --override_ide_name=antigravity --port 1"]) {
+    assert.deepEqual(pickHost([{ comm: "/bin/language_server", args }], env), { host: "agy", session_id: "agy-1" });
+  }
+  for (const p of [
+    { comm: "/bin/language_server", args: "" },
+    { comm: "/bin/language_server", args: "--override_ide_name antigravity-other" },
+    { comm: "/Applications/NotAntigravity.app/Contents/language_server", args: "" },
+  ]) assert.equal(pickHost([p], env), null);
+  assert.equal(pickHost([node("some-tool")], { GEMINI_HOME: "/x" }), null);
+});
+
+test("IDE 内嵌 Pi、Claude Code、Codex 仍取最近宿主的会话 id", () => {
+  for (const [inner, host, session_id] of [
+    [node("/opt/pi/pi-coding-agent/dist/cli.js"), "pi", "pi-1"],
+    [claude, "claude", "claude-1"],
+    [{ comm: "/bin/codex", args: "" }, "codex", "codex-1"],
+  ] as const) assert.deepEqual(pickHost([{ comm: "/bin/sh", args: "" }, inner, languageServer, ide], env), { host, session_id });
+});
 
 test("嵌套 claude→pi：链从最近的 pi 进程开始，判定为 pi 并取 PI_SESSION_ID", () => {
   const chain = [node("/opt/pi/pi-coding-agent/dist/cli.js"), claude];

@@ -6,7 +6,7 @@
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { accessSync, constants, copyFileSync, lstatSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
@@ -74,6 +74,28 @@ export function agyRoots(): AgyRoot[] {
     // 枚举失败仍保留 CLI、IDE；发现入口单独报告实例目录无法读取。
   }
   return roots;
+}
+
+export interface AgyLocateResult {
+  path: string | null;
+  conflict: AgyRoot[];
+}
+
+/** 只检查指定 id 的完整版，冲突先于根提示；合法提示允许保留未落盘坐标。 */
+export function agyLocate(id: string, hints: { appDataDir?: string | null; geminiHome?: string | null } = {}): AgyLocateResult {
+  const candidates = agyRoots().flatMap((root) => {
+    const path = agyTranscriptPath(id, root);
+    return path ? [{ root, path }] : [];
+  });
+  const hits = candidates.filter(({ path }) => {
+    try { return statSync(path).isFile(); } catch { return false; }
+  });
+  if (hits.length > 1) return { path: null, conflict: hits.map(({ root }) => root) };
+  const appDataDir = hints.appDataDir ? resolve(hints.appDataDir) : null;
+  const geminiHome = hints.geminiHome ? resolve(hints.geminiHome) : null;
+  const hint = appDataDir ? candidates.find(({ root }) => root.appData === appDataDir)
+    : geminiHome ? candidates.find(({ root }) => root.kind === "t3" && root.root === geminiHome) : undefined;
+  return { path: hint?.path ?? hits[0]?.path ?? null, conflict: [] };
 }
 
 function isMissing(error: unknown): boolean {
