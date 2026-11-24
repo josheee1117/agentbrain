@@ -30,7 +30,7 @@ import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
-import { cleanTranscript, isWorkerTranscript, workerIdentity } from "./transcript.ts";
+import { cleanTranscript, hasBriefInjected, isWorkerTranscript, workerIdentity } from "./transcript.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
 import { agyLocate, agySessionId } from "./agy.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
@@ -270,6 +270,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
       const block = prefs + reminder;
       process.stdout.write(JSON.stringify({
         hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: block.trimEnd() },
+        ...(hookRaw?.want_session_state === true ? { agentbrain: { session: { worker, brief_present: hasBriefInjected(ctx?.transcript) } } } : {}),
       }) + "\n");
 
       if (ctx) telemetry(() => recordRecall(store.workDb, ctx, "nohit", [], performance.now() - t0, cite, new Date()));
@@ -385,6 +386,8 @@ function telemetryCtx(store: Store, raw: Record<string, unknown>, cwd: string): 
     if (found.ok && found.detection) {
       host = found.detection.host;
       session_id = sid ?? found.detection.session_id;
+      const file = sid && sid !== found.detection.session_id ? locateTranscript(host, sid) : found.detection.transcript;
+      transcript = file ? (host === "opencode" || host === "agy" ? file : realpathSync(file)) : null;
     }
   }
   return { host, session_id, transcript, project_id: projectIdOf(store, cwd) };

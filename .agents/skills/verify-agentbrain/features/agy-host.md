@@ -9,6 +9,7 @@
 - 宿主识别：进程名 `agy` 或 `Antigravity`，以及位于 `Antigravity.app` 内或带 `--override_ide_name antigravity` 的 `language_server`。链上最近的宿主优先，IDE 内嵌 Pi、Claude Code、Codex 不改判。会话 id 取 `ANTIGRAVITY_CONVERSATION_ID`。
 - 定位：`agyLocate` 检查枚举根里的指定 id 完整版，多根命中返回冲突；`locateTranscript` 返回 null。`ANTIGRAVITY_APP_DATA_DIR` 只匹配应用根，只有 `GEMINI_HOME` 时只匹配已枚举的 T3 实例。合法提示允许保留未落盘规范坐标；无提示只取唯一候选，没有候选返回 null。无路径 capture 遇到冲突不登记、不刷新。
 - 子代理识别：Pi、agy 共用首个原始输入的两类 T3 前缀和 `ab brief <项目> --worker` 标记。读头从 16,384 字节扩至 262,144 字节，首条输入仍不完整时仅匹配其原始 JSON 已知标记。`workerIdentity` 在无完整首轮且无阳性信号时返回 null，recall 不注主会话偏好。
+- 会话状态：`recall --hook` 仅在 `want_session_state:true` 时新增 `agentbrain.session`，包含 `worker` 三态和独立的 `brief_present`。已注入 brief 只从 SYSTEM_MESSAGE 的 content 判断，读头上限为 262,144 字节，截断末行仍先确认 type。先规范完整版路径，不把用户正文里的标签当注入。环境兜底补 transcript；stdin id 覆盖环境 id 时重新定位，冲突保持 null。
 - 路径固定：agy 的 upsert 在短写事务内返回 `new`、`touched` 或 `conflict`。空路径首次补齐，同根 touch / Stop 更新；异根或多根完整版冲突不改任何会话字段、不启动 work。合法提示指向未落盘的另一根也不能换路径。引用扫描使用登记路径，无基线时只补找唯一合法来源；Codex 换文件语义不变。
 
 ## How to get to it (user POV)
@@ -23,6 +24,7 @@
 - `verify.sh run` 的 `cli-agy-worker` 跑 `src/transcript.test.ts`、`src/transcript-file.test.ts` 和 `src/cli.test.ts` 中的身份回归。覆盖两类 T3 前缀、正文反例、带项目参数标记、超长首行和身份待定；真实 CLI 比较截断版与完整版 recall 输出，回读输出确认无主会话偏好，再用 `brief --worker` 确认全局规则仍在。
 - `verify.sh run` 的 `cli-agy-status`：`node --test src/status-agy.test.ts`。真实 `status`、`doctor` 在隔离 HOME 下各显示 CLI、IDE 和两个 T3 实例一行。计数覆盖所有完整日志，按登记路径对齐，不沿用 sweep 的七天窗口。子会话、已删 cwd 和未登记项目不进可抽数；冲突日志不重复计数；缺元数据、坏库和权限拒绝各自注明。CLI、IDE 检查共享插件，T3 检查各实例入口。0 登记且有可抽主会话进入顶部“要处理”。诊断不改 capture 行、事件、源摘要库或日志，`status --line` 仍只有 `review` 和 `work_failed`。
 - `verify.sh run` 的 `cli-agy-denoise` 跑 `src/agy.test.ts` 和 `src/extract.test.ts` 的去噪与定位点回归。它覆盖嵌套闭标签、普通 User message 和唤醒字样、缺边界交接、两类完成通知、引用评论与坏 JSON、原始步骤计数、非用户回跳及 ab 键隔离。真实 CLI 在隔离三处根各执行 `remember --from-worker` 和 `get --expand`，回读 L1 来源的路径及 `76#2`，确认展开只含用户正文。
+- `verify.sh run` 的 `cli-agy-session-state` 跑 `node --test --test-name-pattern=会话状态 src/cli.test.ts`。隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY，真实 CLI 比较带标记与不带标记的 stdout，唯一差异为 agentbrain 字段。覆盖 worker 三态与 brief 的独立组合、恢复无标记、用户/助手标签反例、16KB 后注入与 262KB 截断。名为 agy 的 Node 软链父进程驱动三处环境坐标、无准入路径、仅 stdin id 和覆盖环境 id，回读 SQLite 的 inject_log 与 recall_runs，确认 host、session_id、transcript 一致。多根冲突保持 null；Pi 的 stdin id 补定位回读 realpath，库版本仍为 1。此项只验证 ab 合同，不证明已安装插件或真实 IDE/ACP 钩子。
 - IDE/T3 定位和诊断已覆盖隔离目录，真实 IDE 工具 shell 未验证。
 
 ## Real-host evidence

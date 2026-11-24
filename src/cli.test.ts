@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -955,6 +955,122 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   assert.equal(slash.out, "");
 });
 
+test("recall --hook 会话状态：按需输出，身份和已注入 brief 独立", (t) => {
+  const own = join(dir, "recall-session-state");
+  const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "会话状态主会话偏好", "--summary", "偏好"], alpha, own);
+  assert.equal(pref.code, 0, pref.err);
+  assert.equal(ab(["guidance", pref.out.match(/\[([0-9a-f]{8})\]/)![1]], alpha, own).code, 0);
+  const logs = join(fakeHome, ".gemini/antigravity-cli/brain/session-state/.system_generated/logs");
+  mkdirSync(logs, { recursive: true });
+  const full = join(logs, "transcript_full.jsonl");
+  const short = join(logs, "transcript.jsonl");
+  writeFileSync(short, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: "截断版只含普通输入" }) + "\n");
+  const main = { type: "USER_INPUT", step_index: 0, content: "用户正文提到 <agentbrain-brief>，不是注入" };
+  const worker = { ...main, content: '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]\n任务' };
+  const injected = { type: "SYSTEM_MESSAGE", content: "<agentbrain-brief>已注入规则</agentbrain-brief>" };
+  const scenarios = [
+    { name: "主会话正文不是 brief", lines: [main], worker: false, brief: false },
+    { name: "恢复主会话", lines: [main, injected], worker: false, brief: true },
+    { name: "子代理未注入", lines: [worker], worker: true, brief: false },
+    { name: "恢复子代理", lines: [worker, injected], worker: true, brief: true },
+    { name: "首轮待定但已注入", lines: [injected], worker: null, brief: true },
+    { name: "无首轮", lines: [], worker: null, brief: false },
+    { name: "助手引用不是注入", lines: [main, { ...injected, type: "PLANNER_RESPONSE" }], worker: false, brief: false },
+    { name: "16KB 后的注入", lines: [main, { type: "SYSTEM_MESSAGE", content: "x".repeat(20_000) }, injected], worker: false, brief: true },
+    { name: "截断 SYSTEM_MESSAGE", lines: [main, { ...injected, content: injected.content + "x".repeat(300_000) }], worker: false, brief: true },
+    { name: "截断 USER_INPUT", lines: [{ ...main, content: main.content + "x".repeat(300_000) }], worker: null, brief: false },
+    { name: "读头以外不搜索", lines: [{ ...main, content: "x".repeat(300_000) }, injected], worker: null, brief: false },
+  ];
+  for (const scenario of scenarios) {
+    writeFileSync(full, scenario.lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const raw = { prompt: "开始干活", cwd: alpha, transcript_path: short };
+    const run = (want_session_state?: unknown) => {
+      const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ ...raw, want_session_state }));
+      assert.equal(result.code, 0, result.err);
+      return result.out;
+    };
+    const old = run();
+    assert.deepEqual(Object.keys(JSON.parse(old)), ["hookSpecificOutput"]);
+    for (const flag of [false, "true", 1]) assert.equal(run(flag), old);
+    const state = JSON.parse(run(true));
+    assert.deepEqual(state.agentbrain, { session: { worker: scenario.worker, brief_present: scenario.brief } }, scenario.name);
+    const { agentbrain, ...unchanged } = state;
+    assert.equal(JSON.stringify(unchanged) + "\n", old, "唯一输出差异是 agentbrain 字段");
+    assert.equal(JSON.parse(run(true)).agentbrain.session.brief_present, scenario.brief, "恢复查询不依赖插件标记");
+    t.diagnostic(`${scenario.name}: ${JSON.stringify(agentbrain)}`);
+  }
+  rmSync(full);
+  const missing = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "开始干活", transcript_path: full, want_session_state: true, worker: true }));
+  assert.equal(missing.code, 0, missing.err);
+  assert.deepEqual(JSON.parse(missing.out).agentbrain.session, { worker: true, brief_present: false });
+});
+
+test("recall --hook 会话状态：三处环境坐标与 brief 日志对齐，stdin id 补定位", (t) => {
+  const own = join(dir, "recall-session-coordinates");
+  assert.equal(ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "日志坐标规则", "--summary", "坐标"], alpha, own).code, 0);
+  const wrapper = join(dir, "agy");
+  symlinkSync(process.execPath, wrapper);
+  const apps = [join(fakeHome, ".gemini/antigravity-cli"), join(fakeHome, ".gemini/antigravity"), join(fakeHome, ".t3/userdata/providers/antigravity/state-instance/antigravity-acp")];
+  for (const [i, app] of apps.entries()) {
+    const sid = `state-coordinates-${i}`;
+    const logs = join(app, "brain", sid, ".system_generated/logs");
+    mkdirSync(logs, { recursive: true });
+    const full = join(logs, "transcript_full.jsonl");
+    const text = JSON.stringify({ type: "USER_INPUT", step_index: 0, content: "完整首轮" }) + "\n" + JSON.stringify({ type: "SYSTEM_MESSAGE", content: "<agentbrain-brief>规则</agentbrain-brief>" }) + "\n";
+    writeFileSync(full, text);
+    const env = { ...process.env, HOME: fakeHome, AB_HOME: own, AGENTBRAIN_HOME: own, AB_REGISTRY: repos, PATH: process.env.PATH, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "", PI_SESSION_ID: "", OPENCODE_SESSION_ID: "", GEMINI_HOME: "", ANTIGRAVITY_CONVERSATION_ID: sid, ANTIGRAVITY_APP_DATA_DIR: app };
+    const run = (args: string[], input?: object, session = sid) => spawnSync(wrapper, ["-e", 'const {spawnSync} = require("node:child_process"); const r = spawnSync(process.execPath, process.argv.slice(1), {stdio:"inherit"}); process.exit(r.status ?? 1);', CLI, ...args], {
+      cwd: alpha, encoding: "utf8", input: input && JSON.stringify(input), env: { ...env, ANTIGRAVITY_CONVERSATION_ID: session },
+    });
+    const brief = run(["brief"]);
+    assert.equal(brief.status, 0, brief.stderr);
+    assert.match(brief.stdout, /日志坐标规则/);
+    for (const [name, raw, session] of [
+      ["只有环境", { prompt: "干活", want_session_state: true }, sid],
+      ["路径不过准入", { prompt: "干活", transcript_path: join(dir, "outside.jsonl"), want_session_state: true }, sid],
+      ["只有 stdin id", { prompt: "干活", session_id: sid, want_session_state: true }, ""],
+      ["stdin id 覆盖环境", { prompt: "干活", session_id: sid, want_session_state: true }, "wrong-session"],
+    ] as const) {
+      const result = run(["recall", "--hook"], raw, session);
+      assert.equal(result.status, 0, result.stderr);
+      const db = new DatabaseSync(join(own, "store.db"));
+      try {
+        const actual = db.prepare("SELECT host,session_id,transcript FROM recall_runs ORDER BY id DESC LIMIT 1").get();
+        assert.deepEqual({ ...actual }, { host: "agy", session_id: sid, transcript: full }, name);
+        const injections = db.prepare("SELECT host,session_id,transcript FROM inject_log WHERE path='brief' AND session_id=?").all(sid);
+        assert.equal(injections.length, 1);
+        assert.deepEqual({ ...injections[0] }, { host: "agy", session_id: sid, transcript: full });
+        assert.deepEqual(JSON.parse(result.stdout).agentbrain.session, { worker: false, brief_present: true });
+        t.diagnostic(`${i} ${name}: ${JSON.stringify(actual)}`);
+      } finally { db.close(); }
+    }
+    const conflictLogs = join(apps[(i + 1) % apps.length], "brain", sid, ".system_generated/logs");
+    mkdirSync(conflictLogs, { recursive: true });
+    const conflictPath = join(conflictLogs, "transcript_full.jsonl");
+    writeFileSync(conflictPath, text);
+    const conflict = run(["recall", "--hook"], { prompt: "干活", session_id: sid, want_session_state: true }, "");
+    assert.equal(conflict.status, 0, conflict.stderr);
+    assert.deepEqual(JSON.parse(conflict.stdout).agentbrain.session, { worker: null, brief_present: false });
+    const conflictDb = new DatabaseSync(join(own, "store.db"));
+    try {
+      assert.equal(conflictDb.prepare("SELECT transcript FROM recall_runs ORDER BY id DESC LIMIT 1").get()?.transcript, null);
+    } finally { conflictDb.close(); }
+    rmSync(conflictPath);
+    assert.equal(readFileSync(full, "utf8"), text, "查询不修改转录");
+  }
+  const pi = spawnSync("node", [CLI, "recall", "--hook"], {
+    cwd: alpha, encoding: "utf8", input: JSON.stringify({ prompt: "干活", session_id: SESSION, want_session_state: true }),
+    env: { ...process.env, HOME: fakeHome, AB_HOME: own, AGENTBRAIN_HOME: own, AB_REGISTRY: repos, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: "", ANTIGRAVITY_CONVERSATION_ID: "", GEMINI_HOME: "" },
+  });
+  assert.equal(pi.status, 0, pi.stderr);
+  assert.deepEqual(JSON.parse(pi.stdout).agentbrain.session, { worker: false, brief_present: false });
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    assert.equal(db.prepare("SELECT transcript FROM recall_runs ORDER BY id DESC LIMIT 1").get()?.transcript, realpathSync(join(transcriptDir, `2026-01-01T00-00-00-000Z_${SESSION}.jsonl`)));
+    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 1);
+  } finally { db.close(); }
+});
+
 test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不注主会话偏好", () => {
   const own = join(dir, "recall-worker-store");
   const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "只给主会话的工作偏好", "--summary", "偏好"], alpha, own);
@@ -967,7 +1083,7 @@ test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不�
   const short = join(logs, "transcript.jsonl");
   writeFileSync(short, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: "截断版不含派活前缀" }) + "\n");
   const hook = (transcript_path: string | null, worker?: boolean) => {
-    const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "开始干活", cwd: alpha, transcript_path, worker }));
+    const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "开始干活", cwd: alpha, session_id: "worker-recall", transcript_path, worker }));
     assert.equal(result.code, 0, result.err);
     return JSON.parse(result.out).hookSpecificOutput.additionalContext as string;
   };

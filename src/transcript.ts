@@ -456,7 +456,28 @@ export function isWorkerTranscript(file: string | null | undefined, maxBytes = 1
   return readWorkerIdentity(file, maxBytes) === true;
 }
 
-const WORKER_HEAD_MAX_BYTES = 262_144;
+const TRANSCRIPT_HEAD_MAX_BYTES = 262_144;
+
+/** 只认宿主注入行，用户正文里的同名标签不能证明 brief 已注入。 */
+export function hasBriefInjected(file: string | null | undefined): boolean {
+  if (!file) return false;
+  let raw: string;
+  try {
+    raw = readTranscript(file, TRANSCRIPT_HEAD_MAX_BYTES);
+  } catch {
+    return false;
+  }
+  return raw.split("\n").some((line) => {
+    try {
+      const entry: unknown = JSON.parse(line);
+      return !!entry && typeof entry === "object" && "type" in entry && entry.type === "SYSTEM_MESSAGE"
+        && "content" in entry && typeof entry.content === "string" && entry.content.includes("<agentbrain-brief>");
+    } catch {
+      // 读头可截断最后一行；先确认 type，不能裸搜整份读头。
+      return /^\s*\{[^{}]*"type"\s*:\s*"SYSTEM_MESSAGE"/.test(line) && line.includes("<agentbrain-brief>");
+    }
+  });
+}
 function readWorkerIdentity(file: string | null | undefined, maxBytes: number): boolean | null {
   if (!file) return null;
   if (file.startsWith("opencode://")) {
@@ -500,7 +521,7 @@ function readWorkerIdentity(file: string | null | undefined, maxBytes: number): 
   if (piAgy) {
     // 两宿主的系统提示都可能把首条输入推到 16KB 之后，读头共用同一个上限。
     try {
-      return piAgyIdentity(parseHead(readTranscript(file, WORKER_HEAD_MAX_BYTES)));
+      return piAgyIdentity(parseHead(readTranscript(file, TRANSCRIPT_HEAD_MAX_BYTES)));
     } catch {
       return null;
     }

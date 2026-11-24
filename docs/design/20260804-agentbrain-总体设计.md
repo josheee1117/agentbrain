@@ -693,7 +693,7 @@ CLI、IDE 的既有插件使用原有三个事件（`integrations/agy/hooks.json
 
 brief 状态与现有 prompt 去重状态分开。插件在自己的数据目录按“规范应用根 + 会话 id”保存 pending/done 标记，不存正文、不加配置键。ab 返回非空 brief 且插件成功输出后才置 done；失败或空输出保留 pending，下一次 PreInvocation 重试，不能被 prompt 已 seen 的提前返回挡住。恢复时即使标记丢失，转录中的已注入块也能判 done。插件不自行解析 JSONL。
 
-共用判断由 ab 完成。agy 插件的 `recall --hook` 传 `session_id`、`transcript_path` 和 `want_session_state:true`，返回除原有上下文外的 `agentbrain.session` 元数据，包含 `worker`（true、false 或待定 null）与 `brief_present`。这不是配置键，也不落库；未请求的调用输出不变。插件据它选择 `brief --worker` 或 `brief`，待定时不注主会话规则。先取得身份和状态，再输出本次 brief 与偏好，不复写一份解析器到 `.mjs`。
+共用判断由 ab 完成。agy 插件的 `recall --hook` 传 `session_id`、`transcript_path` 和 `want_session_state:true`，返回除原有上下文外的 `agentbrain.session` 元数据，包含 `worker`（true、false 或待定 null）与 `brief_present`。这不是配置键，也不落库；未请求的调用输出不变。插件据它选择 `brief --worker` 或 `brief`，待定时不注主会话规则。先取得身份和状态，再输出本次 brief 与偏好，不复写一份解析器到 `.mjs`。`brief_present` 只检查 SYSTEM_MESSAGE 的 content，不在 USER_INPUT 或整份原文里搜索；读头上限为 262,144 字节。最后一行截断时，先确认行首对象的 type 为 SYSTEM_MESSAGE，再检查已读到的注入标签。身份与 brief 状态分别判断，均使用准入后的完整版路径。
 
 钩子只保证 stdin 坐标，不能假定环境已有会话 id。调用 ab 子进程时补 `ANTIGRAVITY_CONVERSATION_ID=hook.conversationId`，以及从 `hook.transcriptPath` 的固定 brain 日志尾推导的 `ANTIGRAVITY_APP_DATA_DIR`；ab 再核验根与 id。环境只补坐标，宿主仍按父进程链判定。这样 `brief` 的 `detectCtx` 能写带坐标的 inject_log（`src/cli.ts:340-355,437`）；recall 同样补传坐标，并修 `telemetryCtx` 兜底漏 transcript（`:366-390`）。当前 capture 已传两者而 recall 没传（`integrations/agy/agentbrain-agy.mjs:35,45`）。
 
@@ -3307,6 +3307,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-24 用户按状态合同单授权实现 §7.8.4。`want_session_state:true` 仅新增 `agentbrain.session`，旧 hook 输出不变。brief 状态只读 SYSTEM_MESSAGE，避免派活正文里的字面标签误判；读头与身份判断共用 262,144 字节上限。telemetryCtx 从检测结果补 transcript，stdin 会话 id 覆盖环境 id 时按合并后的 id 重新定位，保留多根冲突的 null。验证先红后绿，覆盖三态、恢复、截断路径、读头截断、三处环境坐标与真实 CLI 的日志对齐。不改变偏好筛选和排序，不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
 
 - 2026-11-24 用户按 denoise-anchors 单授权实现 §7.8.5。原始步骤首次保留数字定位点，重复步骤使用 `<step>#<n>`；所有带 step_index 的行参与计数，回跳先清空工具配对队列。外层 USER_REQUEST 取尾部零或多个全大写宿主块前的最后一个闭标签，兼容 USER_SETTINGS_CHANGE 和无尾随块。T3 请求以 runtime_info 前的末个闭标签为边界，交接只取末尾当前消息。明确完成通知不生成用户轮；后台唤醒只匹配宿主源码的 `Background task completed.`，不按正文关键词过滤。助手引用只保留非空 citation.comment，并清除行内占位符；去噪和用户证据校验共用提取函数。验证先红后绿，再重放真实日志副本和隔离 CLI 的三处来源展开。不新增配置、表或列，库版本仍为 1，代码可用 git 回退。
 
