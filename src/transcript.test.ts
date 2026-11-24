@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanTranscript, isAbCommand, isWorkerTranscript, stripInjected } from "./transcript.ts";
+import { cleanTranscript, isAbCommand, isWorkerTranscript, stripInjected, workerIdentity } from "./transcript.ts";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-tr-")));
 const file = (name: string, lines: object[]) => {
@@ -35,7 +35,7 @@ test("Pi、agy：T3 前缀和带项目参数的开工标记共用首轮判断，
       ? { type: "message", id: `u${i}`, parentId: i ? `u${i - 1}` : null, message: { role: "user", content } }
       : { type: "USER_INPUT", step_index: i, content };
     for (const [i, prompt] of delegated.entries()) {
-      const content = host === "agy" ? `${prompt}\n<USER_REQUEST>\n任务\n</USER_REQUEST>` : prompt;
+      const content = host === "agy" ? `<USER_REQUEST>\n${prompt}\n</USER_REQUEST>` : prompt;
       const p = file(`worker-${host}-${i}.jsonl`, [input(content, 0)]);
       assert.equal(cleanTranscript(host, p).worker, true, `${host}: ${prompt}`);
       assert.equal(isWorkerTranscript(p), true, `${host}: ${prompt}`);
@@ -47,6 +47,84 @@ test("Pi、agy：T3 前缀和带项目参数的开工标记共用首轮判断，
     }
   }
 });
+
+const t3Prefix = '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]';
+
+for (const host of ["pi", "agy"] as const) {
+  const input = (content: string) => host === "pi"
+    ? { type: "message", id: "u1", parentId: null, message: { role: "user", content } }
+    : { type: "USER_INPUT", step_index: 0, content };
+  test(`workerIdentity：${host} 真实 T3 请求框只在首轮开头剥离`, () => {
+    for (const content of [
+      `<USER_REQUEST>\n<t3_code_instructions>\n${"x".repeat(5_300)}\n</t3_code_instructions>\n\n<user_request>\n${t3Prefix}\n任务\n</user_request>\n</USER_REQUEST>`,
+      `<USER_REQUEST>\n${t3Prefix}\n</USER_REQUEST>`,
+      `<user_request>\n${t3Prefix}\n</user_request>`,
+    ]) {
+      const p = file(`t3-shell-${host}.jsonl`, [input(content)]);
+      assert.equal(workerIdentity(p), true);
+      assert.equal(isWorkerTranscript(p), true);
+      assert.equal(cleanTranscript(host, p).worker, true);
+    }
+    const p = file(`middle-tag-${host}.jsonl`, [input(`请解释下面的示例\n<user_request>\n${t3Prefix}`)]);
+    assert.equal(workerIdentity(p), false);
+    assert.equal(cleanTranscript(host, p).worker, false);
+  });
+
+  test(`workerIdentity：${host} 闭合 skill 外壳后的 T3 前缀可识别`, () => {
+    for (const shell of ["", "<USER_REQUEST>\n", "<user_request>\n"]) {
+      const p = file(`skill-shell-${host}.jsonl`, [input(`${shell}<skill name="pstack-tdd" location="/skills/tdd/SKILL.md">\n说明\n</skill>\n\n${t3Prefix}`)]);
+      assert.equal(workerIdentity(p), true);
+      assert.equal(isWorkerTranscript(p), true);
+      assert.equal(cleanTranscript(host, p).worker, true);
+    }
+    const unclosed = file(`skill-unclosed-${host}.jsonl`, [input('<skill name="tdd">\n先跑 ab brief repo --worker')]);
+    assert.equal(workerIdentity(unclosed), true, "完整但未闭合的 skill 保留原文匹配");
+    const middle = file(`skill-middle-${host}.jsonl`, [input(`示例\n<skill name="tdd">说明</skill>\n${t3Prefix}`)]);
+    assert.equal(workerIdentity(middle), false);
+  });
+
+  test(`workerIdentity：${host} 超 262KB 请求框只对窗口内实际任务判身份`, () => {
+    const inside = file(`t3-large-${host}.jsonl`, [input(`<USER_REQUEST>\n<t3_code_instructions>${"x".repeat(20_000)}</t3_code_instructions>\n<user_request>\n${t3Prefix}\n${"y".repeat(300_000)}`)]);
+    assert.equal(workerIdentity(inside), true);
+    assert.equal(isWorkerTranscript(inside), true);
+    for (const shell of [
+      '<USER_REQUEST>\n<t3_code_instructions>先跑 ab brief repo --worker\n',
+      '<skill name="pstack-tdd">先跑 ab brief repo --worker\n',
+    ]) {
+      const pending = file(`shell-pending-${host}.jsonl`, [input(shell + "x".repeat(300_000))]);
+      assert.equal(workerIdentity(pending), null, "未读到请求或 skill 结束不能猜身份");
+      assert.equal(isWorkerTranscript(pending), false);
+    }
+  });
+}
+
+test("workerIdentity：Codex 超长 session_meta 单独确认身份", () => {
+  for (const [originator, source, size, expected] of [
+    ["Codex Desktop", "vscode", 30_000, false],
+    ["Claude Code", "exec", 40_000, true],
+  ] as const) {
+    const p = file(`codex-long-${originator}.jsonl`, [{ timestamp: "2026-11-24T08:00:00Z", type: "session_meta", payload: { originator, source, base_instructions: "x".repeat(size) } }]);
+    assert.equal(workerIdentity(p), expected);
+    assert.equal(isWorkerTranscript(p), expected);
+  }
+});
+
+test("workerIdentity：Codex 非 worker 短 meta 不被截断用户正文的开工示例覆盖", () => {
+  const p = file("codex-short-meta.jsonl", [
+    { type: "session_meta", payload: { originator: "Codex Desktop", source: "vscode" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "请解释 ab brief repo --worker\n" + "x".repeat(20_000) }] } },
+  ]);
+  assert.equal(workerIdentity(p), false);
+  assert.equal(isWorkerTranscript(p), false);
+});
+
+for (const isSidechain of [false, true]) {
+  test(`workerIdentity：Claude 20KB 首条 user 的 isSidechain=${isSidechain}`, () => {
+    const p = file(`claude-large-${isSidechain}.jsonl`, [{ isSidechain, type: "user", uuid: "u1", message: { role: "user", content: "x".repeat(20_000) } }]);
+    assert.equal(workerIdentity(p), isSidechain);
+    assert.equal(isWorkerTranscript(p), isSidechain);
+  });
+}
 
 test("Claude：剥掉 recall 注入、system-reminder 和 ab 调用及其输出；工具报错留首尾", () => {
   const p = file("c.jsonl", [

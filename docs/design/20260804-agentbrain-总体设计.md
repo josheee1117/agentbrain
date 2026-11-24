@@ -3308,6 +3308,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-24 用户按 fix-worker-review 单授权修正四类身份误判。Pi、agy 的对象与截断读头共用首轮起点函数，仅从输入开头剥宿主请求框和闭合 skill 块，再匹配派活标记。T3 说明块或 skill 块超出读头窗口时保留 null，普通正文中部的同名标签不剥。Codex 的 session_meta 独立返回身份，截断元数据无阳性信号时返回 false，不再误走 Pi 判断；Claude 截断 user 行按行首 isSidechain 判定。回归先红后绿，隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY 走真实 recall --hook，验证主会话偏好与 worker 隔离。不新增解析器、配置、表或列，不改公开签名，库版本仍为 1；代码可用 git 回退。
+
 - 2026-11-24 用户按 status-per-root 单授权实现 §7.8.6。status 和 doctor 复用发现接口统计所有完整日志，按固定登记路径分别对齐 CLI、IDE 和 T3 各实例；不改变 sweep 的七天窗口。已删 cwd 排除可抽数，已存在但未登记的项目另报；冲突日志跳过计数并集中报异常。CLI、IDE 检查共享插件，T3 检查实例根的插件入口。验证覆盖四根计数、空实例、缺元数据、坏库、权限拒绝、目录已删、冲突和真实 CLI 的只读副作用。status --line 和库版本 1 不变；代码可用 git 回退。
 
 - 2026-11-24 用户按 worker-identity 单授权实现 §7.8.3 的共用身份判断。`workerIdentity` 返回 true、false 或 null，分别表示已知 worker、完整首轮无标记、首轮待定；既有 `isWorkerTranscript` 和 `cleanTranscript.worker` 保持 boolean。Pi、agy 共用两类 T3 首轮前缀、带项目参数的开工标记和 262,144 字节读头上限。`recall --hook` 先规范路径，身份待定不调用 `guidanceBlock`，全局规则读取和提醒不变。测试覆盖截断路径、超长首行及未知身份，并用隔离 HOME 和临时库走真实 CLI。不加配置、表或列，库版本仍为 1；代码可用 git 回退。

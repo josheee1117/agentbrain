@@ -975,11 +975,14 @@ test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不�
     '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]',
     "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]",
   ]) {
-    writeFileSync(full, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: `${prefix}\n<USER_REQUEST>任务</USER_REQUEST>` }) + "\n");
+    writeFileSync(full, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: `<USER_REQUEST>\n<t3_code_instructions>${"x".repeat(5_300)}</t3_code_instructions>\n\n<user_request>\n${prefix}\n任务\n</user_request>\n</USER_REQUEST>` }) + "\n");
     const canonical = hook(full);
     assert.equal(hook(short), canonical, "两种路径必须得到相同身份与输出");
     assert.doesNotMatch(canonical, /<agentbrain-prefs>|只给主会话/);
   }
+  const piSkill = join(transcriptDir, "2026-11-24T08-00-00-000Z_worker-skill.jsonl");
+  writeFileSync(piSkill, JSON.stringify({ type: "message", id: "u1", parentId: null, message: { role: "user", content: '<skill name="pstack-tdd" location="/skills/tdd/SKILL.md">说明</skill>\n\n[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]\n任务' } }) + "\n");
+  assert.doesNotMatch(hook(piSkill), /<agentbrain-prefs>|只给主会话/);
   writeFileSync(full, JSON.stringify({ type: "SYSTEM_MESSAGE", content: "首轮还未落盘" }) + "\n");
   for (const path of [full, null, join(logs, "missing.jsonl")]) {
     const pending = hook(path);
@@ -995,6 +998,33 @@ test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不�
   assert.doesNotMatch(hook(full, true), /只给主会话/);
   assert.doesNotMatch(hook(null, false), /<agentbrain-prefs>/, "false 不能确认尚无首轮的会话身份");
 });
+
+for (const scenario of ["codex-main-long", "codex-main-short", "codex-worker-long", "claude-main-long", "claude-worker-long"] as const) {
+  test(`recall --hook workerIdentity：${scenario} 按宿主身份决定主会话偏好`, (t) => {
+    const own = join(dir, `recall-${scenario}`);
+    const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "只给主会话的工作偏好", "--summary", "偏好"], alpha, own);
+    assert.equal(pref.code, 0, pref.err);
+    assert.equal(ab(["guidance", pref.out.match(/\[([0-9a-f]{8})\]/)![1]], alpha, own).code, 0);
+    const codex = scenario.startsWith("codex");
+    const worker = scenario.includes("worker");
+    const sid = "01a332dc-4d5f-7d62-840d-69f94d09f7d7";
+    const root = codex ? join(fakeHome, ".codex/sessions/2026/11/24") : join(fakeHome, ".claude/projects/worker-review");
+    mkdirSync(root, { recursive: true });
+    const path = join(root, codex ? `rollout-2026-11-24T08-00-00-${sid}.jsonl` : `${sid}.jsonl`);
+    const lines = codex ? [
+      { type: "session_meta", payload: { originator: worker ? "Claude Code" : "Codex Desktop", source: "vscode", base_instructions: "x".repeat(scenario.endsWith("short") ? 0 : worker ? 40_000 : 30_000) } },
+      { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "解释 ab brief repo --worker\n" + "x".repeat(20_000) }] } },
+    ] : [{ isSidechain: worker, type: "user", uuid: "u1", message: { role: "user", content: "x".repeat(20_000) } }];
+    writeFileSync(path, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "开始干活", cwd: alpha, transcript_path: path, session_id: sid }));
+    assert.equal(result.code, 0, result.err);
+    const context = JSON.parse(result.out).hookSpecificOutput.additionalContext;
+    t.diagnostic(`${scenario} recall --hook 输出：${context}`);
+    assert.match(context, /要不要查历史记忆由你判断/);
+    if (worker) assert.doesNotMatch(context, /<agentbrain-prefs>|只给主会话/);
+    else assert.match(context, /<agentbrain-prefs>[\s\S]*只给主会话的工作偏好/);
+  });
+}
 
 test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab status", async () => {
   const own = join(dir, "pi-ext-home");

@@ -57,7 +57,29 @@ function textOf(content: unknown): string {
   return content.map((c: any) => (typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "")).join("\n");
 }
 
-/** Pi 与 agy 共用首轮判断。传入原始输入，不先剥掉宿主包装。 */
+/** 只剥输入开头的请求框与 skill，读头未到任务起点时保留待定。 */
+function workerPromptStart(text: string, truncated = false): string | null {
+  let prompt = text;
+  if (prompt.startsWith("<USER_REQUEST>")) {
+    prompt = prompt.slice("<USER_REQUEST>".length).trimStart();
+    const instructionsEnd = prompt.indexOf("</t3_code_instructions>");
+    if (/^<t3_code_instructions\b/.test(prompt) || (instructionsEnd >= 0 && prompt.includes("<user_request>"))) {
+      const request = instructionsEnd < 0 ? -1 : prompt.indexOf("<user_request>", instructionsEnd + "</t3_code_instructions>".length);
+      if (request < 0) return truncated ? null : text;
+      prompt = prompt.slice(request + "<user_request>".length).trimStart();
+    }
+  } else if (prompt.startsWith("<user_request>")) {
+    prompt = prompt.slice("<user_request>".length).trimStart();
+  }
+  if (/^<skill\b/.test(prompt)) {
+    const end = prompt.indexOf("</skill>");
+    if (end < 0) return truncated ? null : prompt;
+    return prompt.slice(end + "</skill>".length).trimStart();
+  }
+  return prompt;
+}
+
+/** Pi 与 agy 共用首轮判断，身份识别先于正文去噪。 */
 function piAgyIdentity(lines: any[]): boolean | null {
   if (lines.some((e) =>
     (e?.type === "session" && e.parentSession) ||
@@ -69,12 +91,15 @@ function piAgyIdentity(lines: any[]): boolean | null {
       // 读头可能截在首条输入的 JSON 字符串里，只检查这一条，不扫系统提示或后续正文。
       if (!/"type"\s*:\s*"USER_INPUT"/.test(e) && !(/"type"\s*:\s*"message"/.test(e) && /"role"\s*:\s*"user"/.test(e))) continue;
       const start = /"(?:content|text)"\s*:\s*"/.exec(e);
-      const text = start ? e.slice(start.index + start[0].length).replace(/\\"/g, '"').replace(/\\n/g, "\n") : "";
-      return WORKER_PROMPT_MARK.test(text) || T3_WORKER_PREFIX.test(text) ? true : null;
+      const text = workerPromptStart(start ? e.slice(start.index + start[0].length).replace(/\\"/g, '"').replace(/\\n/g, "\n") : "", true);
+      return text !== null && (WORKER_PROMPT_MARK.test(text) || T3_WORKER_PREFIX.test(text)) ? true : null;
     }
     const content = e?.type === "USER_INPUT" ? textOf(e.content)
       : e?.type === "message" && e.message?.role === "user" ? textOf(e.message.content) : null;
-    if (content !== null) return WORKER_PROMPT_MARK.test(content) || T3_WORKER_PREFIX.test(content);
+    if (content !== null) {
+      const text = workerPromptStart(content);
+      return text !== null && (WORKER_PROMPT_MARK.test(text) || T3_WORKER_PREFIX.test(text));
+    }
   }
   return null;
 }
@@ -431,11 +456,15 @@ function readWorkerIdentity(file: string | null | undefined, maxBytes: number): 
   });
   const head = parseHead(raw);
   if (head.some((e) => e?.isSidechain === true)) return true;
-  const meta = head.find((e) => e?.type === "session_meta")?.payload;
-  if (isCodexWorkerMeta(meta)) return true;
-  // Codex 的 session_meta 常带几十 KB 的 base_instructions，保持既有原文阳性信号。
-  if (/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw) &&
-    (/"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw))) return true;
+  const meta = head.find((e) => e?.type === "session_meta");
+  if (meta) return isCodexWorkerMeta(meta.payload);
+  // Codex 元数据常超出读头，阴性也已确认，不能落到 Pi 的正文匹配。
+  if (/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw)) {
+    return /"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw);
+  }
+  // Claude 的身份字段在 message 正文之前，不必为超长首轮扩读。
+  const claudeUser = head.find((e) => typeof e === "string" && /"type"\s*:\s*"user"/.test(e));
+  if (claudeUser) return /"isSidechain"\s*:\s*true/.test(claudeUser);
   const identity = piAgyIdentity(head);
   if (identity !== null) return identity;
   const piAgy = head.some((e) => {
