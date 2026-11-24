@@ -4,6 +4,7 @@ import { linesOf } from "./source.ts";
 import { opencodeModel } from "./opencode.ts";
 import type { Host } from "./l2.ts";
 import type { Turn } from "./transcript.ts";
+import { agyLocate } from "./agy.ts";
 
 export const RETENTION_DAYS = 90;
 /** 标题与条目正文的字面重合低于此值记为"标题不符"（只做提示，不丢引用）。 */
@@ -263,13 +264,24 @@ export function scanSession(db: DatabaseSync, host: Host, sessionId: string, tur
 
 // ponytail: 保留 90 天会话全量重扫，约千会话实测 12.5 秒；超出可接受耗时时跳过 transcript 未变化的会话。
 export function sessionsToScan(db: DatabaseSync): { host: Host; session_id: string; transcript: string | null }[] {
-  return db.prepare(`SELECT host,session_id,MAX(transcript) AS transcript FROM (
+  const rows = db.prepare(`SELECT host,session_id,CASE WHEN host='agy' THEN
+    (SELECT c.transcript FROM capture_sessions c WHERE c.host='agy' AND c.session_id=s.session_id)
+    ELSE MAX(transcript) END AS transcript FROM (
     SELECT host,session_id,transcript FROM inject_log
     UNION ALL SELECT host,session_id,transcript FROM memory_queries
     UNION ALL SELECT host,session_id,transcript FROM recall_runs
     UNION ALL SELECT host,session_id,transcript FROM capture_sessions WHERE ephemeral=0
     UNION ALL SELECT host,session_id,NULL AS transcript FROM memory_reports
-  ) WHERE host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id`).all() as { host: Host; session_id: string; transcript: string | null }[];
+  ) s WHERE host IS NOT NULL AND session_id IS NOT NULL GROUP BY host,session_id`).all() as { host: Host; session_id: string; transcript: string | null }[];
+  return rows.flatMap((s) => {
+    if (s.host !== "agy" || s.transcript) return [s];
+    const located = agyLocate(s.session_id);
+    if (located.conflict.length) {
+      console.error(`agy 会话 ${s.session_id} 在多处有完整日志，引用扫描已跳过：${located.conflict.map((root) => root.root).join("，")}`);
+      return [];
+    }
+    return located.path ? [{ ...s, transcript: located.path }] : [];
+  });
 }
 
 /**

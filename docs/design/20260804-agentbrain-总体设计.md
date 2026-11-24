@@ -657,7 +657,7 @@ Claude Code 和 Pi 目录里没有 `.zst`。Codex 源码压缩时保留 mtime，
 2. 摘要库不存在且没有完整日志的新实例显示“0 对话，尚无摘要库”，不报坏库。有日志但无摘要库或对应行时，保留日志计数并报“缺会话元数据”，不猜 cwd。无权限或损坏显示“无法读取”，不显示 0。
 3. 摘要行先与同根实际完整版日志相交，形成 `{id, cwd, parent, transcript, modifiedAt}`。跨库同步而本根没有日志的摘要不参与收录。近 7 天用会话 `last_modified_time`，时间坏了才用本文件 mtime；去掉目前的摘要时间和文件 mtime 双重过滤（`src/work.ts:53,178,225-232`）。已登记会话不受发现窗口限制。
 4. 同 id 在多个根都有完整版时直接报冲突，本次跳过该 id 的登记、定位和抽取。不读全文、不比前缀、不选最长或按时间换来源。现有登记和 L1 指针保持原样。
-5. **agy 路径固定是必改项，不是当前行为。** `src/intake.ts:94-108` 的 `transcript=COALESCE(?,transcript)` 会覆盖旧路径。对 agy，upsert 在短写事务里读已有行：原路径为空可首次补齐；非空时只接受同一规范路径。另一根的路径或无法确认本根的输入返回冲突，不改 transcript、last_touch、ended_at、processed_anchor 或该行其他字段；`captureHook` 遇到这个结果不再拉起 work（`src/cli.ts:1144-1158`）。同根 touch 与 Stop 沿原语义更新。路径失效报来源不可用，不自动替换。
+5. **agy 路径固定。** 对 agy，upsert 在短写事务里读已有行：原路径为空可首次补齐；非空时只接受同一规范路径。另一根的路径或无法确认本根的输入返回冲突，不改 transcript、last_touch、ended_at、processed_anchor 或该行其他字段；`captureHook` 遇到这个结果不再拉起 work（`src/cli.ts:1144-1158`）。同根 touch 与 Stop 沿原语义更新。路径失效报来源不可用，不自动替换。
 
 只改变 agy 的覆盖规则。Codex 编辑消息会换 rollout 文件，`codexContinues` 要靠新文件首 ordinal 大于旧进度来接续（`src/work.ts:279-286,324-330`）。现有测试显式换文件后从 635 接到 644（`src/work.test.ts:1687-1719`）；本轮生产函数探针也确认 upsert 能换路径，chunk 能从旧进度接入新文件。Codex 和其他宿主的覆盖行为保持不变；空路径事后补找仍沿 `src/intake.ts:164-167`。
 
@@ -3307,6 +3307,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-24 用户按 agy-path-pin 单授权实现 §7.8.2 第 5 条。agy 登记在短写事务内核验已有路径，返回 new、touched 或 conflict；异根、无法确认本根及多根完整日志冲突均不改会话行，hook 不启动 work，手动 capture 明确失败。合法提示指向未落盘的另一根也不能替换已有路径。引用扫描优先使用已登记路径，没有基线时只补找唯一合法来源；读取前复用 agy 准入，失效软链不能串根。非 agy 保持原选择规则，Codex 换文件与旧进度接续不变。验证覆盖逐字段回读、work.log 不存在、真实 get --expand、全量测试与 verify.sh run。只使用隔离 HOME 和临时库，不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
 
 - 2026-11-24 用户按 fix-roots-review 单授权修正发现异常报告。有不可读完整日志时不报 0 对话；同根日志和摘要库失败合成一条 unreadable，count 只计不可读日志，可选 summariesUnreadable 标明摘要库也失败，kind 枚举不变。不新增配置、表或列，库版本仍为 1。回归覆盖权限拒绝、逃逸链接、合并报错及真实 sweep 输出；代码可直接回退。
 

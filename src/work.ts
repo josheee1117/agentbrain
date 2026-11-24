@@ -213,8 +213,8 @@ export function scan(deps: WorkDeps, agy = agyDiscover(agyRoots(), deps.now(), (
       // 开始时间早于第一次 hook 登记的是装 hook 前的历史会话（backfill），不算漏登记
       const started = sessionStart(f, head);
       const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
-      intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
-      if (project) added++;
+      const result = intake.upsertSession(db, { host, session_id: id, transcript: realpathSync(f), cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
+      if (result !== "conflict" && project) added++;
     }
   }
   // 缺元数据不猜 cwd；冲突已由发现入口排除，子会话不补登记（§7.8.2）。
@@ -228,8 +228,8 @@ export function scan(deps: WorkDeps, agy = agyDiscover(agyRoots(), deps.now(), (
     }
     const started = sessionStart(c.transcript);
     const via = hookMs !== null && started !== null && started >= hookMs ? "scan" : "backfill";
-    intake.upsertSession(db, { host: "agy", session_id: c.id, transcript: c.transcript, cwd: c.cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
-    if (project) added++;
+    const result = intake.upsertSession(db, { host: "agy", session_id: c.id, transcript: c.transcript, cwd: c.cwd, ended: false, ephemeral: false, via }, () => project?.name ?? null, deps.now());
+    if (result !== "conflict" && project) added++;
   }
   try {
     for (const s of recentOpencodeSessions(since)) {
@@ -237,8 +237,8 @@ export function scan(deps: WorkDeps, agy = agyDiscover(agyRoots(), deps.now(), (
       const project = deps.resolveProject(s.directory);
       if (!project) continue;
       const via = hookMs !== null && s.time_created >= hookMs ? "scan" : "backfill";
-      intake.upsertSession(db, { host: "opencode", session_id: s.id, transcript: opencodeRef(s.id), cwd: s.directory, ended: false, ephemeral: false, via }, () => project.name, deps.now());
-      added++;
+      const result = intake.upsertSession(db, { host: "opencode", session_id: s.id, transcript: opencodeRef(s.id), cwd: s.directory, ended: false, ephemeral: false, via }, () => project.name, deps.now());
+      if (result !== "conflict") added++;
     }
   } catch {
     // opencode 未安装或库不可读时不影响其他宿主的扫描。

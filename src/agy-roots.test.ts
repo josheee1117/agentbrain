@@ -253,6 +253,7 @@ test("agy 七天只按摘要时间过滤，坏时间回退 mtime，已登记不�
 test("agy 同 id 多根完整日志冲突先于七天过滤，已登记也跳过抽取且原坐标不变", async (t) => {
   const f = fixture(t);
   const transcript = f.log(f.apps[0], "duplicate");
+  intake.upsertSession(f.store.workDb, { host: "agy", session_id: "duplicate", transcript, cwd: f.repo, ended: false, ephemeral: false, via: "hook" }, () => "repo", f.now);
   f.log(f.apps[1], "duplicate", f.now.getTime() - 9 * 86_400_000);
   f.summaries(f.apps[0], [{ id: "duplicate" }]);
   f.summaries(f.apps[1], [{ id: "duplicate", modifiedAt: new Date(f.now.getTime() - 9 * 86_400_000).toISOString() }]);
@@ -260,7 +261,6 @@ test("agy 同 id 多根完整日志冲突先于七天过滤，已登记也跳过
   assert.deepEqual(result.conflicts, [{ id: "duplicate", roots: f.apps.slice(0, 2) }]);
   assert.deepEqual(result.conversations, []);
   assert.equal(scan(f.deps), 0);
-  intake.upsertSession(f.store.workDb, { host: "agy", session_id: "duplicate", transcript, cwd: f.repo, ended: false, ephemeral: false, via: "hook" }, () => "repo", f.now);
   const before = f.store.workDb.prepare("SELECT * FROM capture_sessions").all();
   const report = await runWork(f.deps, { sweep: false, dryRun: true });
   assert.deepEqual(report.dry, []);
@@ -272,9 +272,9 @@ test("agy 冲突加 redo 不重置既有处理进度和窗口", async (t) => {
   const f = fixture(t);
   const id = "redo-conflict";
   const transcript = f.log(f.apps[0], id);
+  intake.upsertSession(f.store.workDb, { host: "agy", session_id: id, transcript, cwd: f.repo, ended: false, ephemeral: false, via: "hook" }, () => "repo", f.now);
   f.log(f.apps[1], id);
   f.apps.slice(0, 2).forEach((app) => f.summaries(app, [{ id }]));
-  intake.upsertSession(f.store.workDb, { host: "agy", session_id: id, transcript, cwd: f.repo, ended: false, ephemeral: false, via: "hook" }, () => "repo", f.now);
   const session = intake.sessions(f.store.workDb)[0];
   intake.finishWindow(f.store.workDb, session, { id: "completed-window", from: null, to: "8" }, "done", null, null, f.now);
   const beforeSessions = f.store.workDb.prepare("SELECT * FROM capture_sessions").all();

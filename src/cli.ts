@@ -319,7 +319,9 @@ function refreshCitations(store: Store, now: Date): { sessions: number; cited: n
     .filter((p) => p.state === "active" && p.confirmed && p.guidance && p.project_id === null && !p.scenes.length) // 和 guidanceBlock 同口径（§11.10）
     .map((p) => p.id);
   for (const s of (() => { try { return sessionsToScan(store.workDb); } catch { return []; } })()) {
-    const file = s.transcript ?? locateTranscript(s.host, s.session_id);
+    const file = s.host === "agy"
+      ? s.transcript && allowedTranscript("agy", s.transcript, s.session_id)
+      : s.transcript ?? locateTranscript(s.host, s.session_id);
     if (!file) {
       r.unreadable++;
       continue;
@@ -1143,10 +1145,11 @@ async function captureHook(host: Host): Promise<void> {
     const before = intake.sessions(store.workDb, { host, session_id: sessionId })[0];
     // 候选 B：下一轮进来时距上次登记已超过 20 分钟，上一个话题多半结束了，拉起 ab work 去看（真正的边界由 transcript 里的时间差决定）
     if (topic && !ended && !compact && before && now.getTime() - Date.parse(before.last_touch) >= TOPIC_IDLE_MS) idle = true;
-    intake.upsertSession(store.workDb, { host, session_id: sessionId, transcript, cwd, ended, ephemeral, via: "hook" }, () => {
+    const result = intake.upsertSession(store.workDb, { host, session_id: sessionId, transcript, cwd, ended, ephemeral, via: "hook" }, () => {
       project = cwd ? (resolveProject(cwd)?.name ?? null) : null;
       return project;
     }, now);
+    if (result === "conflict") return;
     if (compact && !ephemeral) addTopicMark(store.workDb, host, sessionId, now);
     if (ended || compact || idle) {
       const row = intake.sessions(store.workDb, { host, session_id: sessionId })[0];
@@ -1194,6 +1197,7 @@ async function cmdCapture(argv: string[]): Promise<void> {
   try {
     const project = resolveProject(cwd)?.name ?? null;
     const r = intake.upsertSession(store.workDb, { ...key, transcript, cwd, ended: values.end === true, ephemeral: !!session?.parent_id, via: "manual" }, () => project, new Date());
+    if (r === "conflict") die(`agy 会话 ${key.session_id} 来源冲突：已登记路径不能替换，或多处有完整日志；会话保持原样，请使用原应用根。`);
     console.log(`${r === "new" ? "已登记" : "已刷新"} ${key.host}:${key.session_id}${project ? `（项目 ${project}）` : "（cwd 不是已登记项目，不会抽取）"}`);
   } finally {
     store.close();

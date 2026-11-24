@@ -8,6 +8,7 @@
 - 发现状态：空实例没有摘要库报告 0；有日志但缺元数据保留日志和空 cwd，不补登记；坏库或无权限报告无法读取。不可读日志不能算成 0 对话，同根日志和摘要库失败只报一条，注明不可读日志数量及摘要库失败。同 id 多根完整日志冲突时不登记、不抽取。已登记会话不受七天窗口限制，未登记按摘要时间过滤，坏时间退回文件 mtime，子会话不补登记。
 - 宿主识别：进程名 `agy` 或 `Antigravity`，以及位于 `Antigravity.app` 内或带 `--override_ide_name antigravity` 的 `language_server`。链上最近的宿主优先，IDE 内嵌 Pi、Claude Code、Codex 不改判。会话 id 取 `ANTIGRAVITY_CONVERSATION_ID`；`ab doctor` 有 `agy:` 一行。
 - 定位：`agyLocate` 检查枚举根里的指定 id 完整版，多根命中返回冲突；`locateTranscript` 返回 null。`ANTIGRAVITY_APP_DATA_DIR` 只匹配应用根，只有 `GEMINI_HOME` 时只匹配已枚举的 T3 实例。合法提示允许保留未落盘规范坐标；无提示只取唯一候选，没有候选返回 null。无路径 capture 遇到冲突不登记、不刷新。
+- 路径固定：agy 的 upsert 在短写事务内返回 `new`、`touched` 或 `conflict`。空路径首次补齐，同根 touch / Stop 更新；异根或多根完整版冲突不改任何会话字段、不启动 work。合法提示指向未落盘的另一根也不能换路径。引用扫描使用登记路径，无基线时只补找唯一合法来源；Codex 换文件语义不变。
 
 ## How to get to it (user POV)
 - `agy plugin install "$PWD/integrations/agy"` 后，在已登记仓库里用 agy；每轮结束后台抽取，`ab search` 看到 `[未确认·自动沉淀]`
@@ -17,6 +18,7 @@
 - `verify.sh run` 的 `cli-agy-roots`：`node --test src/agy-roots.test.ts` 在隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY 下造三处应用目录，真实 `work --sweep` 后回读 `capture_sessions`，断言三处路径与 cwd；再跑 `work --dry-run`，逐个断言待处理窗口 1。无模型时窗口延后，不用抽取成功冒充发现成功。
 - 单测：`src/agy-roots.test.ts` 覆盖动态新增实例、空实例、缺元数据、坏库与无权限、DB/WAL/SHM 和日志逃逸、只读 WAL 副本、七天窗口、子会话与冲突。冲突加 `--redo` 的用例断言既有会话全部字段和已完成窗口均不变。不可读日志且无摘要库的用例断言不报 0，同根双重失败的用例断言只报一行并驱动真实 `work --sweep`。`src/agy.test.ts` 覆盖既有 CLI 准入、读法、来源展开、capture、doctor，`src/agy-plugin.test.ts` 覆盖插件登记时机。
 - `verify.sh run` 的 `cli-agy-locate`：`node --test src/agy-locate.test.ts src/host.test.ts`。隔离文件根覆盖三处提示、唯一候选、T3 的 GEMINI_HOME、未落盘坐标、跨根冲突和非法路径。真实 CLI 的无路径 capture 回读三处登记路径；冲突不刷新已有行。`remember --from-worker` 后 `get --expand` 展开各自原话，回读 L1 来源确认不串根。IDE 进程链只做回放，不算真实工具 shell 验收。
+- `verify.sh run` 的 `cli-agy-path-pin`：`node --test src/agy-path-pin.test.ts`。真实 capture hook 和手动 capture 后逐字段回读，冲突时 `work.log` 不存在；覆盖带路径的同根多根冲突、异根未落盘提示、事务回滚及并发首次登记。真实 `remember --from-worker` / `get --expand` 展开登记根原话，跨表引用扫描不取另一根；无基线冲突跳过。登记路径变成异根软链后，真实 `view --no-open` 报来源不可用，不写 agy 引用扫描记录。`src/work.test.ts` 的 Codex 635 到 644 接续断言保持不变。
 - doctor 单行仍沿 CLI 口径，逐处诊断由后续工作线实现。IDE/T3 定位已覆盖隔离目录，真实 IDE 工具 shell 未验证。
 
 ## Real-host evidence

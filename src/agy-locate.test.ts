@@ -173,14 +173,15 @@ test("agy 真实 capture 入口无路径时登记三处坐标，冲突不登记�
     const store = new Store(join(process.env.AB_HOME!, "store.db"), join(process.env.AB_HOME!, "index.db"));
     try { assert.equal(intake.sessions(store.workDb, { host: "agy", session_id: id })[0].transcript, file); } finally { store.close(); }
   }
-  f.apps.forEach((app) => f.log(app, "conflict"));
-  const manual = f.cli("capture", "agy:conflict", "--cwd", f.home);
-  assert.equal(manual.status, 1);
-  assert.match(manual.stderr, /多处有完整日志/);
+  f.log(f.apps[0], "conflict");
   const store = new Store(join(process.env.AB_HOME!, "store.db"), join(process.env.AB_HOME!, "index.db"));
   intake.upsertSession(store.workDb, { host: "agy", session_id: "conflict", transcript: f.path(f.apps[0], "conflict"), cwd: f.home, ended: false, ephemeral: false, via: "hook" }, () => null, new Date("2026-01-01"));
   const before = intake.sessions(store.workDb, { host: "agy", session_id: "conflict" })[0];
   store.close();
+  f.apps.slice(1).forEach((app) => f.log(app, "conflict"));
+  const manual = f.cli("capture", "agy:conflict", "--cwd", f.home);
+  assert.equal(manual.status, 1);
+  assert.match(manual.stderr, /多处有完整日志/);
   const hook = spawnSync(process.execPath, [join(import.meta.dirname, "cli.ts"), "capture", "--hook", "--host", "agy"], { env: process.env, input: JSON.stringify({ session_id: "conflict", cwd: f.home, hook_event_name: "SessionEnd" }), encoding: "utf8" });
   assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, "", ""]);
   const again = new Store(join(process.env.AB_HOME!, "store.db"), join(process.env.AB_HOME!, "index.db"));

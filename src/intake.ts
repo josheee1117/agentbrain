@@ -6,6 +6,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Host } from "./l2.ts";
 import type { WorkError } from "./llm.ts";
+import { allowedTranscript } from "./transcript-file.ts";
+import { agyLocate } from "./agy.ts";
 
 export const LEASE_TTL_MS = 10 * 60_000;
 export const MAX_ATTEMPTS = 4;
@@ -90,23 +92,42 @@ export interface Registration {
   via: SessionRow["via"];
 }
 
-/** 已存在时只刷新 last_touch / transcript / ended_at，不重新解析项目（hook 的热路径要快）。 */
-export function upsertSession(db: DatabaseSync, r: Registration, resolveProject: () => string | null, now: Date): "new" | "touched" {
+export type UpsertResult = "new" | "touched" | "conflict";
+
+/** agy 的首次来源固定；其他宿主仍允许换文件。已有会话不重新解析项目。 */
+export function upsertSession(db: DatabaseSync, r: Registration, resolveProject: () => string | null, now: Date): UpsertResult {
   const ts = now.toISOString();
-  // 记下第一次 hook 登记的时间（只写一次）。旧库没有这个键时，以已有 hook 行的最早登记时间为准
-  if (r.via === "hook") db.prepare("INSERT OR IGNORE INTO work_meta(key,value) VALUES('first_hook_at',?)").run(firstHookAt(db) ?? ts);
-  const row = db.prepare("SELECT 1 AS x FROM capture_sessions WHERE host=? AND session_id=?").get(r.host, r.session_id);
-  if (row) {
-    db.prepare(
-      // hook 碰到了扫描登记的会话，说明 hook 在这个会话上是生效的
-      "UPDATE capture_sessions SET last_touch=?, transcript=COALESCE(?,transcript), ended_at=CASE WHEN ? THEN ? ELSE ended_at END, ephemeral=MAX(ephemeral,?), via=CASE WHEN ?='hook' THEN 'hook' ELSE via END WHERE host=? AND session_id=?",
-    ).run(ts, r.transcript, r.ended ? 1 : 0, ts, r.ephemeral ? 1 : 0, r.via, r.host, r.session_id);
-    return "touched";
+  // agy 的检查和写入共用短事务，两个根的并发 hook 不能先读后互相覆盖。
+  if (r.host === "agy") db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare("SELECT transcript FROM capture_sessions WHERE host=? AND session_id=?").get(r.host, r.session_id) as { transcript: string | null } | undefined;
+    if (r.host === "agy") {
+      const transcript = r.transcript === null ? null : allowedTranscript("agy", r.transcript, r.session_id);
+      if (agyLocate(r.session_id).conflict.length || (r.transcript !== null && !transcript)
+          || (row?.transcript && (!transcript || allowedTranscript("agy", row.transcript, r.session_id) !== transcript))) {
+        db.exec("ROLLBACK");
+        return "conflict";
+      }
+      r = { ...r, transcript: row?.transcript || transcript };
+    }
+    // 冲突不写首次 hook 时间。旧库以已有 hook 行的最早登记时间为准。
+    if (r.via === "hook") db.prepare("INSERT OR IGNORE INTO work_meta(key,value) VALUES('first_hook_at',?)").run(firstHookAt(db) ?? ts);
+    if (row) {
+      db.prepare(
+        // hook 碰到了扫描登记的会话，说明 hook 在这个会话上是生效的
+        "UPDATE capture_sessions SET last_touch=?, transcript=COALESCE(?,transcript), ended_at=CASE WHEN ? THEN ? ELSE ended_at END, ephemeral=MAX(ephemeral,?), via=CASE WHEN ?='hook' THEN 'hook' ELSE via END WHERE host=? AND session_id=?",
+      ).run(ts, r.transcript, r.ended ? 1 : 0, ts, r.ephemeral ? 1 : 0, r.via, r.host, r.session_id);
+    } else {
+      db.prepare(
+        "INSERT OR IGNORE INTO capture_sessions(host,session_id,transcript,cwd,project,first_seen,last_touch,ended_at,ephemeral,processed_anchor,via) VALUES(?,?,?,?,?,?,?,?,?,NULL,?)",
+      ).run(r.host, r.session_id, r.transcript, r.cwd, r.ephemeral ? null : resolveProject(), ts, ts, r.ended ? ts : null, r.ephemeral ? 1 : 0, r.via);
+    }
+    if (r.host === "agy") db.exec("COMMIT");
+    return row ? "touched" : "new";
+  } catch (error) {
+    if (r.host === "agy" && db.isTransaction) db.exec("ROLLBACK");
+    throw error;
   }
-  db.prepare(
-    "INSERT OR IGNORE INTO capture_sessions(host,session_id,transcript,cwd,project,first_seen,last_touch,ended_at,ephemeral,processed_anchor,via) VALUES(?,?,?,?,?,?,?,?,?,NULL,?)",
-  ).run(r.host, r.session_id, r.transcript, r.cwd, r.ephemeral ? null : resolveProject(), ts, ts, r.ended ? ts : null, r.ephemeral ? 1 : 0, r.via);
-  return "new";
 }
 
 export function sessions(db: DatabaseSync, only?: { host: Host; session_id: string }): SessionRow[] {
