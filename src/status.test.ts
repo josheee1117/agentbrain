@@ -1,7 +1,7 @@
 /** status 报告直接单测：上下文全由调用方注入。运行：node --test src/status.test.ts */
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
@@ -16,7 +16,16 @@ for (const d of [repos, alpha, join(userHome, ".claude")]) mkdirSync(d, { recurs
 writeFileSync(join(repos, "alpha.md"), `- 路径：\`${alpha}\`\n`);
 writeFileSync(join(repos, "ghost.md"), `- 路径：\`${join(dir, "missing")}\`\n`);
 writeFileSync(join(userHome, ".claude/CLAUDE.md"), "开工先跑 ab brief\n");
+const oldEnv = { HOME: process.env.HOME, AB_HOME: process.env.AB_HOME, AGENTBRAIN_HOME: process.env.AGENTBRAIN_HOME, AB_REGISTRY: process.env.AB_REGISTRY };
+process.env.HOME = userHome;
+process.env.AB_HOME = process.env.AGENTBRAIN_HOME = join(dir, "ab");
 process.env.AB_REGISTRY = repos;
+after(() => {
+  for (const [key, value] of Object.entries(oldEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
 const src: RememberBody["source"] = { host: "pi", session_id: "s", transcript: null, anchor: null, summary: "讨论" };
 
 const ctx = (over: Partial<StatusContext> = {}): StatusContext => ({

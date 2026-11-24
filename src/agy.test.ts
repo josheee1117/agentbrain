@@ -17,10 +17,17 @@ import { scan, runWork, type WorkDeps } from "./work.ts";
 import { Store } from "./store.ts";
 import * as intake from "./intake.ts";
 
-const oldHome = process.env.HOME;
+const oldEnv = { HOME: process.env.HOME, AB_HOME: process.env.AB_HOME, AGENTBRAIN_HOME: process.env.AGENTBRAIN_HOME, AB_REGISTRY: process.env.AB_REGISTRY };
 const home = realpathSync(mkdtempSync(join(tmpdir(), "ab-agy-host-")));
 process.env.HOME = home;
-after(() => { process.env.HOME = oldHome; rmSync(home, { recursive: true, force: true }); });
+process.env.AB_HOME = process.env.AGENTBRAIN_HOME = join(home, "ab");
+process.env.AB_REGISTRY = join(home, "repos");
+after(() => {
+  for (const [key, value] of Object.entries(oldEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  rmSync(home, { recursive: true, force: true });
+});
 
 const app = join(home, ".gemini/antigravity-cli");
 const brain = join(app, "brain");
@@ -196,7 +203,7 @@ test("agy capture --hook：登记完整版路径和钩子给的 cwd；越界路�
   writeFileSync(join(registry, "repo.md"), `- 路径：\`${repo}\`\n`);
   const abHome = join(home, "ab");
   const cli = join(import.meta.dirname, "cli.ts");
-  const capture = (payload: object) => spawnSync(process.execPath, [cli, "capture", "--hook", "--host", "agy"], { env: { ...process.env, AB_HOME: abHome, AB_REGISTRY: registry, HOME: home }, input: JSON.stringify(payload), encoding: "utf8" });
+  const capture = (payload: object) => spawnSync(process.execPath, [cli, "capture", "--hook", "--host", "agy"], { env: { ...process.env, AB_HOME: abHome, AGENTBRAIN_HOME: abHome, AB_REGISTRY: registry, HOME: home }, input: JSON.stringify(payload), encoding: "utf8" });
   const ok = capture({ session_id: MAIN, transcript_path: join(logs(MAIN), "transcript.jsonl"), cwd: repo, hook_event_name: "UserPromptSubmit" });
   assert.deepEqual([ok.status, ok.stdout, ok.stderr], [0, "", ""]);
   capture({ session_id: WORKER, transcript_path: join(brain, WORKER, "scratch/notes.jsonl"), cwd: repo, hook_event_name: "UserPromptSubmit" });
@@ -213,13 +220,13 @@ test("agy capture --hook：登记完整版路径和钩子给的 cwd；越界路�
   } finally { again.close(); }
 });
 
-test("ab doctor 有 agy 一行：插件在位且会话目录可读", () => {
+test("ab doctor 按 agy 根显示日志、可抽数和插件来源", () => {
   const abHome = join(home, "ab-doctor");
   const cli = join(import.meta.dirname, "cli.ts");
-  const doctor = () => spawnSync(process.execPath, [cli, "doctor"], { cwd: repo, env: { ...process.env, AB_HOME: abHome, AB_REGISTRY: join(home, "repos"), HOME: home }, encoding: "utf8" }).stdout;
-  assert.match(doctor(), /^agy: 未安装插件$/m);
+  const doctor = () => spawnSync(process.execPath, [cli, "doctor"], { cwd: repo, env: { ...process.env, AB_HOME: abHome, AGENTBRAIN_HOME: abHome, AB_REGISTRY: join(home, "repos"), HOME: home }, encoding: "utf8" }).stdout;
+  assert.match(doctor(), /^agy CLI: 日志 [0-9]+（可抽 [0-9]+），已登记 0，只靠 sweep，无法读取$/m);
   const plugin = join(home, ".gemini/config/plugins/agentbrain");
   mkdirSync(plugin, { recursive: true });
   writeFileSync(join(plugin, "hooks.json"), "{}");
-  assert.match(doctor(), /^agy: 正常（插件在位，会话目录可读，.*brain）$/m);
+  assert.match(doctor(), /^agy CLI: 日志 [0-9]+（可抽 [0-9]+），已登记 0，插件在位，无法读取$/m);
 });

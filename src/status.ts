@@ -1,6 +1,6 @@
 /** ab status / ab doctor：自检报告。只拼文本；宿主检测、向量、模型配置由调用方给。 */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import type { Embedder, Store } from "./store.ts";
 import type { HostResult } from "./host.ts";
 import type { ChatConfig } from "./llm.ts";
@@ -9,6 +9,59 @@ import * as intake from "./intake.ts";
 import { reviewList, sourceClock } from "./expiry.ts";
 import { opencodeDbPath, recentOpencodeSessions } from "./opencode.ts";
 import { listBackups } from "./admin.ts";
+import { agyDiscover, agyRoots } from "./agy.ts";
+
+export interface AgyRootStatus {
+  label: string;
+  logs: number;
+  extractable: number;
+  registered: number;
+  source: "sweep" | "plugin";
+  problem?: "no_summaries" | "missing_meta" | "unreadable" | "conflict";
+}
+
+function agyStatus(store: Store, ctx: StatusContext): { lines: string[]; todo: string[] } {
+  const roots = agyRoots();
+  // 诊断统计所有完整日志，不改变 sweep 的七天发现窗口。
+  const discovered = agyDiscover(roots, ctx.now, () => true);
+  const conflictIds = new Set(discovered.conflicts.map((c) => c.id));
+  const sessions = intake.sessions(store.workDb).filter((s) => s.host === "agy" && !conflictIds.has(s.session_id));
+  const todo = discovered.conflicts.map((c) => `agy 会话 ${c.id} 在多处有完整日志，已跳过：${c.roots.join("，")}`);
+  const labels = new Map(roots.map((r) => [r.root, r.kind === "t3" ? `T3 ${r.instance!.slice(0, 8)}` : r.kind.toUpperCase()]));
+  for (const p of discovered.problems) {
+    if (p.kind === "no_summaries") continue;
+    const detail = p.kind === "missing_meta" ? `${p.count ?? 0} 份日志缺元数据，无法确认工作目录`
+      : [p.count ? `${p.count} 份完整日志无法读取` : "", p.summariesUnreadable ? "摘要库无法读取" : ""].filter(Boolean).join("，") || "应用目录无法读取";
+    todo.push(`agy ${labels.get(p.root) ?? p.root}：${detail}`);
+  }
+  const statuses = roots.map((root): AgyRootStatus => {
+    const label = labels.get(root.root)!;
+    const conversations = discovered.conversations.filter((c) => c.root.root === root.root);
+    let extractable = 0;
+    let deleted = 0;
+    let unregistered = 0;
+    for (const c of conversations) {
+      if (c.parent || !c.cwd) continue;
+      const project = resolveProject(c.cwd);
+      if (project) extractable++;
+      else if (!existsSync(c.cwd)) deleted++;
+      else unregistered++;
+    }
+    if (deleted) todo.push(`agy ${label}：目录已删 ${deleted} 个主会话，不可抽取`);
+    if (unregistered) todo.push(`agy ${label}：未登记项目 ${unregistered} 个主会话，不可抽取`);
+    const registered = sessions.filter((s) => s.transcript?.startsWith(root.brain + sep)).length;
+    if (extractable && !registered) todo.push(`agy ${label}：可抽取主会话 ${extractable}，已登记 0：检查巡检是否在跑`);
+    const problems = discovered.problems.filter((p) => p.root === root.root);
+    const problem = problems.find((p) => p.kind === "unreadable")?.kind
+      ?? problems.find((p) => p.kind === "missing_meta")?.kind
+      ?? (discovered.conflicts.some((c) => c.roots.includes(root.root)) ? "conflict" : problems[0]?.kind);
+    const pluginHome = root.kind === "t3" ? root.root : join(ctx.userHome, ".gemini");
+    return { label, logs: conversations.length, extractable, registered,
+      source: existsSync(join(pluginHome, "config/plugins/agentbrain/hooks.json")) ? "plugin" : "sweep", problem };
+  });
+  const problems = { no_summaries: "尚无对话", missing_meta: "缺元数据", unreadable: "无法读取", conflict: "冲突" };
+  return { todo, lines: statuses.map((s) => `agy ${s.label}: 日志 ${s.problem === "unreadable" && !s.logs ? "无法读取" : s.logs}（可抽 ${s.extractable}），已登记 ${s.registered}，${s.source === "plugin" ? "插件在位" : "只靠 sweep"}${s.problem ? `，${problems[s.problem]}` : !s.logs ? "，尚无对话" : ""}`) };
+}
 
 /** 最近一次备份超过这么久就列进"要处理"（自动备份每天一次，两天没有说明巡检没在跑）。 */
 const BACKUP_STALE_MS = 48 * 3_600_000;
@@ -153,16 +206,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         opencode = "插件在位，但 SQLite 不可读取";
       }
     }
-    const agyBrain = join(userHome, ".gemini/antigravity-cli/brain");
-    let agy = "未安装插件";
-    if (existsSync(join(userHome, ".gemini/config/plugins/agentbrain/hooks.json"))) {
-      try {
-        readdirSync(agyBrain);
-        agy = `正常（插件在位，会话目录可读，${agyBrain}）`;
-      } catch {
-        agy = `插件在位，但会话目录不可读（${agyBrain}）`;
-      }
-    }
+    const agy = agyStatus(store, ctx);
     const { embedder, embedReason: reason } = ctx;
     const vectors = store.vectorStatus();
     const vectorLine = embedder
@@ -193,6 +237,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
     const conflicts = proj.conflict_pairs.length;
     const due = reviewList(all, store.usage(), ctx.now, sourceClock()).length;
     const todo = [
+      ...agy.todo,
       schema.readOnly ? `库版本 ${schema.version} 比代码支持的 ${schema.supported} 新：这份代码只能读不能写，先更新 ab 的代码` : "",
       proj.unknown ? `库里有 ${proj.unknown} 条这份代码不认识的事件，它们没有生效：更新 ab 的代码` : "",
       "error" in ctx.chatConfig ? `抽取模型不可用（${ctx.chatConfig.error}）：后台不会从新会话里抽取记忆` : "",
@@ -223,7 +268,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         `投影: orphan 事件 ${proj.orphans}，已忽略的详情 ${proj.detail_ignored}，ephemeral 证据 ${proj.ephemeral}，已清除 ${proj.purged}`,
         `接线: ${wires.join("；")}`,
         `opencode: ${opencode}`,
-        `agy: ${agy}`,
+        ...agy.lines,
         `清单: ${problems.length ? problems.join("；") : "全部可解析"}`,
         ...sedimentLines(store, ctx.chatConfig, ctx.now),
         ...probLines,

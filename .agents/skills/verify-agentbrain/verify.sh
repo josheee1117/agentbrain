@@ -20,6 +20,7 @@ case "${1:-}" in
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
+    step cli-agy-status node --test src/status-agy.test.ts
     step cli-agy-locate node --test src/agy-locate.test.ts src/host.test.ts
     step cli-agy-path-pin node --test src/agy-path-pin.test.ts
     step cli-agy-worker node --test --test-name-pattern='Pi、agy|workerIdentity|先规范 agy' src/transcript.test.ts src/transcript-file.test.ts src/cli.test.ts
