@@ -129,6 +129,26 @@ export const sha256 = (s: string) => createHash("sha256").update(s).digest("hex"
  */
 const OWN_TAGS = new Set(["command-args"]);
 const QUESTION_REPLY = /<send_user_message_question_reply>([\s\S]*?)<\/send_user_message_question_reply>/g;
+export const ASSISTANT_CITATIONS = /<assistant_citations>([\s\S]*?)<\/assistant_citations>/g;
+export const ASSISTANT_QUOTE_MARK = /\[assistant-quote-\d+\]/g;
+
+/** 宿主说明后的引用数组只提供用户 comment；坏 JSON 不把助手原话当成用户证据。 */
+export function citationComments(inner: string): string {
+  const start = inner.indexOf("[");
+  if (start < 0) return "";
+  let list: unknown;
+  try {
+    list = JSON.parse(inner.slice(start));
+  } catch {
+    return "";
+  }
+  if (!Array.isArray(list)) return "";
+  return list.flatMap((item: unknown) => {
+    if (!item || typeof item !== "object" || !("citation" in item)) return [];
+    const c = item.citation;
+    return c && typeof c === "object" && "comment" in c && typeof c.comment === "string" && c.comment.trim() ? [c.comment] : [];
+  }).join("\n");
+}
 const CLOSED_FENCE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
 /** 没闭合的代码块只吃到下一个空行（或结尾），不吃掉后面用户自己写的段落。 */
 const OPEN_FENCE = /(?:```|~~~)[^\n]*(?:\n(?![ \t]*\n)[^\n]*)*/g;
@@ -150,6 +170,8 @@ function replyAnswers(inner: string): string {
 function stripPasted(text: string): string {
   return text
     .replace(QUESTION_REPLY, (_m, inner: string) => `\u0000${replyAnswers(inner)}\u0000`)
+    .replace(ASSISTANT_CITATIONS, (_m, inner: string) => `\u0000${citationComments(inner)}\u0000`)
+    .replace(ASSISTANT_QUOTE_MARK, "")
     .replace(CLOSED_FENCE, "\u0000")
     .replace(OPEN_FENCE, "\u0000")
     .replace(TAG_BLOCK, (_m, tag: string, inner: string) => (OWN_TAGS.has(tag) ? `\u0000${inner}\u0000` : "\u0000"))

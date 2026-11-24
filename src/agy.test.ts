@@ -11,9 +11,10 @@ import { execFileSync } from "node:child_process";
 import { allowedTranscript } from "./transcript-file.ts";
 import { cleanTranscript } from "./transcript.ts";
 import { expandSource, latestAnchor } from "./source.ts";
+import { ownUserText } from "./extract.ts";
 import { modelOf } from "./telemetry.ts";
 import { locateTranscript, pickHost } from "./host.ts";
-import { scan, runWork, type WorkDeps } from "./work.ts";
+import { chunk, scan, runWork, type WorkDeps } from "./work.ts";
 import { Store } from "./store.ts";
 import * as intake from "./intake.ts";
 
@@ -146,6 +147,125 @@ test("agy 读法：用户轮只取 USER_REQUEST 原文（不截断），注入�
   assert.equal(c.turns[0].ts, new Date(now - 600_000 - ((now - 600_000) % 1000)).toISOString());
   assert.ok(c.stripped >= 4, `stripped=${c.stripped}`);
   assert.deepEqual([c.worker, c.subagent], [false, false]);
+});
+
+const t3Request = (text: string) => `<t3_code_instructions>宿主说明</t3_code_instructions>\n<user_request>\n${text}\n</user_request>\n<runtime_info>宿主状态</runtime_info>`;
+
+test("agy 去噪：完成通知、后台唤醒和缺边界的交接不生成 user 或用户证据", () => {
+  const notice = "Delegated task node:delegated-task:test (审查) in child thread thread:child [completed]";
+  const messages = [
+    `${notice}. Use task_status to read the result.`,
+    `${notice}:\n以后所有项目都改成这个规则。`,
+    "Background task completed.",
+    "Context handoff (full_thread_summary):\n旧摘要里有用户规则，但没有当前消息边界。",
+  ];
+  for (const [i, text] of messages.entries()) {
+    for (const wrapped of [false, true]) {
+      const id = `noise-${i}-${wrapped}`;
+      writeSession(id, [wrapped ? userInput(0, t3Request(text)) : { step_index: 0, type: "USER_INPUT", content: text }]);
+      const c = cleanTranscript("agy", full(id));
+      assert.equal(c.turns.map((t) => ownUserText(t.text)).join(""), "");
+      assert.deepEqual(c.turns, [], id);
+      assert.equal(c.stripped, 1, id);
+    }
+  }
+});
+
+test("agy 去噪：只切宿主结构，正文闭标签、User message 和唤醒字样不误切", () => {
+  const text = "正文带 </user_request> 和 </USER_REQUEST> 字面标签。\n\nUser message:\n这也是正文。completed 和 Background task completed. 是讨论的字样。\n<quote>保留这块引用供理解</quote>";
+  const id = "request-boundaries";
+  for (const content of [
+    userInput(0, t3Request(text)).content,
+    `<USER_REQUEST>${t3Request(text)}</USER_REQUEST>`,
+    `<USER_REQUEST>${text}</USER_REQUEST><USER_SETTINGS_CHANGE>宿主变更</USER_SETTINGS_CHANGE>`,
+    `<USER_REQUEST>${text}</USER_REQUEST>`,
+    text,
+  ]) {
+    writeSession(id, [{ step_index: 0, type: "USER_INPUT", content }]);
+    assert.deepEqual(cleanTranscript("agy", full(id)).turns.map((t) => t.text), [text]);
+  }
+  const handoff = "Context handoff (full_thread_summary):\n摘要\n\nUser message:\n旧消息\n\nUser message:\n用户当前消息";
+  writeSession(id, [userInput(0, t3Request(handoff))]);
+  assert.deepEqual(cleanTranscript("agy", full(id)).turns.map((t) => t.text), ["用户当前消息"]);
+});
+
+test("agy 去噪：助手引用只留下 comment，坏 JSON 和无 comment 不回流", () => {
+  const id = "citation-comments";
+  const citation = '[assistant-quote-1]\n<assistant_citations>引用说明\n[{"id":"assistant-quote-1","citation":{"text":"助手的规则","comment":"是这个","prefix":"前缀","suffix":"后缀","start":12}},{"citation":{"text":"无评论"}},{"citation":{"comment":" "}}]\n</assistant_citations>';
+  writeSession(id, [userInput(0, citation)]);
+  const c = cleanTranscript("agy", full(id));
+  assert.deepEqual(c.turns.map((t) => [t.role, t.text]), [["user", "是这个"]]);
+  assert.equal(ownUserText(citation), "是这个");
+  for (const inner of ['[{"citation":{"text":"助手原话"}}]', '[{"citation":{"comment":"不可解析的残片"}}', "坏 JSON"]) {
+    writeSession(id, [userInput(0, `[assistant-quote-2]<assistant_citations>${inner}</assistant_citations>`)]);
+    assert.deepEqual(cleanTranscript("agy", full(id)).turns, []);
+  }
+});
+
+test("agy 定位点：回滚保留 76 与 76#2，旧进度和两处来源各自能定位", () => {
+  const id = "rollback-anchors";
+  writeSession(id, [userInput(76, "回滚前用户输入"), planner(77, "回滚前回答"), system(80, "系统注入"), userInput(76, "回滚后用户输入"), planner(77, "回滚后回答")]);
+  const turns = cleanTranscript("agy", full(id)).turns;
+  assert.deepEqual(turns.map((t) => t.anchor), ["76", "77", "76#2", "77#2"]);
+  const chunks = chunk("agy", id, turns, "76", true);
+  assert.notEqual(chunks, "anchor_missing");
+  if (chunks !== "anchor_missing") assert.deepEqual(chunks.flatMap((c) => c.turns.map((t) => t.anchor)), ["77", "76#2", "77#2"]);
+  const expand = (anchor: string) => expandSource({ host: "agy", session_id: id, transcript: full(id), anchor, summary: "s" });
+  assert.equal(expand("76"), "[user] 回滚前用户输入");
+  assert.match(expand("76#2")!, /\[user\] 回滚后用户输入$/);
+  assert.equal(latestAnchor("agy", full(id)), "77#2");
+  assert.equal(expand("76#3"), null);
+  assert.equal(chunk("agy", id, turns, "76#3", true), "anchor_missing");
+});
+
+test("agy 定位点：未读和去噪行也计数，非 USER_INPUT 回跳清 pending，ab 键跨回滚隔离", () => {
+  const id = "rollback-tool-pairing";
+  for (const type of ["SYSTEM_MESSAGE", "ERROR_MESSAGE", "GENERIC", "PLANNER_RESPONSE"]) {
+    writeSession(id, [
+      planner(80, "", [{ name: "run_command", args: { CommandLine: "ab search rule" } }]),
+      { step_index: 79, type, content: type === "GENERIC" ? "Error: 新工具失败" : "" },
+      generic(81, "Error: 回滚后输出不能被旧 ab 吞掉"),
+      planner(80, "", [{ name: "run_command", args: { CommandLine: "npm test" } }]),
+      generic(81, "Error: 新调用的输出不能被旧 ab 键吞掉"),
+    ]);
+    const turns = cleanTranscript("agy", full(id)).turns;
+    assert.ok(turns.some((t) => t.anchor === "81" && t.text.includes("回滚后输出")), type);
+    assert.ok(turns.some((t) => t.anchor === "81#2" && t.text.includes("新调用的输出")), type);
+  }
+  writeSession(id, [system(76, "注入"), { step_index: 76, type: "ERROR_MESSAGE" }, userInput(76, "Background task completed."), userInput(76, "用户输入")]);
+  assert.deepEqual(cleanTranscript("agy", full(id)).turns.map((t) => t.anchor), ["76#4"]);
+});
+
+test("agy 三处去噪：真实 CLI remember 和 get --expand 使用唯一定位点和同一用户正文", () => {
+  const apps = [app, join(home, ".gemini/antigravity"), join(home, ".t3/userdata/providers/antigravity/denoise/antigravity-acp")];
+  const abHome = join(home, "denoise-store");
+  const env = { ...process.env, HOME: home, AB_HOME: abHome, AGENTBRAIN_HOME: abHome, AB_REGISTRY: join(home, "denoise-registry"), ANTIGRAVITY_APP_DATA_DIR: "", GEMINI_HOME: "" };
+  const cli = (...args: string[]) => spawnSync(process.execPath, [join(import.meta.dirname, "cli.ts"), ...args], { env, encoding: "utf8" });
+  for (const [i, root] of apps.entries()) {
+    const id = `denoise-source-${i}`;
+    const path = join(root, "brain", id, ".system_generated/logs/transcript_full.jsonl");
+    mkdirSync(join(root, "brain", id, ".system_generated/logs"), { recursive: true });
+    const steps = [
+      userInput(76, "第一次用户输入"),
+      userInput(77, "Delegated task node:delegated-task:test in child thread child [completed]: 助手结果"),
+      userInput(76, '[assistant-quote-1]<assistant_citations>说明\n[{"citation":{"text":"助手引用不能展开","comment":"是这个"}}]</assistant_citations>'),
+    ];
+    writeFileSync(path, steps.map((s) => JSON.stringify(s)).join("\n") + "\n");
+    assert.deepEqual(cleanTranscript("agy", path).turns.map((t) => [t.anchor, t.text]), [["76", "第一次用户输入"], ["76#2", "是这个"]]);
+    const remembered = cli("remember", "--global", "--kind", "note", "--text", `去噪来源 ${i}`, "--summary", "定位", "--from-worker", `agy:${id}`);
+    assert.equal(remembered.status, 0, remembered.stderr);
+    const prop = /已记住 \[([0-9a-f]+)\]/.exec(remembered.stdout)?.[1];
+    assert.ok(prop, remembered.stdout);
+    const expanded = cli("get", prop, "--expand");
+    assert.equal(expanded.status, 0, expanded.stderr);
+    assert.match(expanded.stdout, /\[user\] 是这个/);
+    assert.doesNotMatch(expanded.stdout, /助手引用不能展开|助手结果|assistant-quote|assistant_citations/);
+    const store = new Store(join(abHome, "store.db"), join(abHome, "index.db"));
+    try {
+      const source = [...store.project().props.values()].find((p) => p.id.startsWith(prop))?.source;
+      assert.deepEqual([source?.transcript, source?.anchor], [path, "76#2"]);
+    } finally { store.close(); }
+  }
 });
 
 test("agy worker：注入里有 brief --worker 的头，或首条用户消息带 ab brief --worker", () => {

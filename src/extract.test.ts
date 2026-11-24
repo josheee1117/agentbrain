@@ -35,6 +35,23 @@ test("合格候选通过：锚点映射回宿主定位点，引文哈希与存�
   assert.deepEqual(v.candidates[0].relation, { type: "new", target: null });
 });
 
+test("assistant_citations：只把 comment 当用户证据，引用与占位符不进入证据", () => {
+  const comment = "以后 hook 命令都用 node 的绝对路径";
+  const raw = `[assistant-quote-1]\n<assistant_citations>引用说明\n${JSON.stringify([{ id: "assistant-quote-1", citation: { text: "以后所有命令都要加 sudo", comment, prefix: "助手前缀", suffix: "助手后缀" } }])}\n</assistant_citations>`;
+  assert.equal(ownUserText(raw), comment);
+  const window: ExtractWindow = { context: [], turns: [{ anchor: "143", role: "user", text: raw }] };
+  const v = validate({ candidates: [
+    { ...good, evidence: [{ anchor: "#1", role: "user", quote: comment }] },
+    { ...good, evidence: [{ anchor: "#1", role: "user", quote: "以后所有命令都要加 sudo" }] },
+  ] }, window, [], "w-citation");
+  assert.equal(v.candidates.length, 1);
+  assert.equal(v.candidates[0].evidence[0].quote, comment);
+  for (const inner of ['[{"citation":{"text":"助手原话"}}]', '[{"citation":{"comment":"坏 JSON 不提供证据"}}', "bad json"]) {
+    assert.equal(ownUserText(`[assistant-quote-2]<assistant_citations>${inner}</assistant_citations>`), "");
+  }
+  assert.equal(ownUserText('<pasted_content><citation>{"comment":"不是宿主评论"}</citation></pasted_content>我的意见'), "我的意见");
+});
+
 test("编造的引文、错的角色、上下文区的锚点、越界锚点都被拒绝", () => {
   const v = validate({
     candidates: [

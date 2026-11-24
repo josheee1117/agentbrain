@@ -6,6 +6,7 @@
 import { CODEX_INJECTED, linesOf } from "./source.ts";
 import type { Host } from "./l2.ts";
 import { opencodeParts } from "./opencode.ts";
+import { ASSISTANT_CITATIONS, ASSISTANT_QUOTE_MARK, citationComments } from "./extract.ts";
 import { readTranscript } from "./transcript-file.ts";
 
 export type TurnRole = "user" | "assistant" | "tool";
@@ -142,7 +143,10 @@ export function isAbCommand(cmd: string): boolean {
 /** 返回剥掉注入后的文本与剥掉的块数。 */
 export function stripInjected(text: string): { text: string; stripped: number } {
   let stripped = 0;
-  let out = text;
+  let out = text.replace(ASSISTANT_CITATIONS, (_m, inner: string) => {
+    stripped++;
+    return citationComments(inner);
+  }).replace(ASSISTANT_QUOTE_MARK, "");
   for (const re of INJECTED_BLOCKS) {
     out = out.replace(re, () => {
       stripped++;
@@ -326,15 +330,29 @@ function readPi(lines: any[], b: Builder): void {
 }
 
 /** agy 用户原话在 <USER_REQUEST> 里；后面的 <ADDITIONAL_METADATA>、<USER_SETTINGS_CHANGE> 等是宿主块。 */
-const AGY_USER_REQUEST = /<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/;
+// 贪婪取末个闭标签，尾部只允许宿主块；正文中的同名字面标签不截断请求。
+const AGY_USER_REQUEST = /^\s*<USER_REQUEST>([\s\S]*)<\/USER_REQUEST>\s*(?:<([A-Z][A-Z_]*)>[\s\S]*?<\/\2>\s*)*$/;
 const AGY_HOST_BLOCK = /<([A-Z][A-Z_]*)>[\s\S]*?<\/\1>/g;
 /** 插件在 pm 队列任务里跑 `ab brief --worker`，注入的头带 worker（§7.7）。 */
 const AGY_WORKER_BRIEF = /<agentbrain project="[^"]*" worker>/;
 
 function agyUserText(content: unknown): string {
-  const text = typeof content === "string" ? content : "";
+  let text = typeof content === "string" ? content : "";
   const m = AGY_USER_REQUEST.exec(text);
-  return m ? m[1] : text.replace(AGY_HOST_BLOCK, "");
+  text = (m ? m[1] : text.replace(AGY_HOST_BLOCK, "")).trim();
+  if (text.startsWith("<t3_code_instructions>")) {
+    const end = text.indexOf("</t3_code_instructions>");
+    const request = end < 0 ? null : /<user_request>([\s\S]*)<\/user_request>\s*<runtime_info>/.exec(text.slice(end + "</t3_code_instructions>".length));
+    text = request ? request[1].trim() : "";
+  }
+  if (text.startsWith("Context handoff (full_thread_summary):")) {
+    const boundary = "\n\nUser message:\n";
+    const at = text.lastIndexOf(boundary);
+    text = at < 0 ? "" : text.slice(at + boundary.length).trim();
+  }
+  // 只认宿主完成头。Background task completed. 来自 T3 ProviderContinuationService。
+  if (/^Delegated task node:delegated-task:\S+(?:[ \t]+\([^\n]*\))?[ \t]+in child thread \S+/.test(text) || /^Background task completed\.(?:\s|$)/.test(text)) return "";
+  return text;
 }
 
 /** agy 的工具参数：`CommandLine` 当命令、`Path` 当路径；有的值被多包了一层 JSON 字符串。 */
@@ -354,15 +372,23 @@ function agyArgs(args: unknown): Record<string, unknown> {
   return out;
 }
 
-/** agy 每行一步，定位点是 step_index。工具输出没有 call id，按先进先出配上前面的调用。系统消息（钩子注入、宿主通知）整条不读。 */
+/** agy 每行一步。重复 step_index 按原始行次序编号；工具输出没有 call id，按先进先出配对。 */
 function readAgy(lines: any[], b: Builder): void {
   const pending: string[] = [];
+  const occurrences = new Map<number, number>();
+  let prevStepIndex = -Infinity;
   for (const e of lines) {
     if (typeof e?.step_index !== "number") continue;
-    const anchor = String(e.step_index);
+    const n = (occurrences.get(e.step_index) ?? 0) + 1;
+    occurrences.set(e.step_index, n);
+    const anchor = n === 1 ? String(e.step_index) : `${e.step_index}#${n}`;
+    if (e.step_index <= prevStepIndex) pending.length = 0;
+    prevStepIndex = e.step_index;
     if (e.type === "USER_INPUT") {
       pending.length = 0;
-      b.push(anchor, "user", [agyUserText(e.content)], e.created_at);
+      const text = agyUserText(e.content);
+      if (text) b.push(anchor, "user", [text], e.created_at);
+      else b.stripped++;
     } else if (e.type === "PLANNER_RESPONSE") {
       const calls: any[] = Array.isArray(e.tool_calls) ? e.tool_calls : [];
       const text = typeof e.content === "string" ? e.content : "";

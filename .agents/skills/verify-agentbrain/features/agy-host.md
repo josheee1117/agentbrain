@@ -3,7 +3,7 @@
 ## Sub-features
 - 插件 `integrations/agy/`：SessionStart 注入 `ab brief`，PreInvocation 新用户消息注入 recall 并登记（`UserPromptSubmit`），Stop 且 `continuationActive` 不为真时按 `SessionEnd` 登记、拉起 `ab work --session agy:<id>`
 - 准入：只认 CLI、IDE 与 T3 实例应用根内的 `brain/<id>/.system_generated/logs/transcript_full.jsonl`。CLI 根为 `~/.gemini/antigravity-cli`，IDE 根为 `~/.gemini/antigravity`，T3 根为 `~/.t3/userdata/providers/antigravity/<实例>/antigravity-acp`。截断版换成完整版；`chunks/`、`scratch/`、id 不符和逃逸软链拒绝。
-- 读法：`USER_REQUEST` 内文是用户轮，`PLANNER_RESPONSE` 是助手轮（工具调用压成一行），`GENERIC` 是工具输出，`SYSTEM_MESSAGE`（钩子注入）不读
+- 读法：三处共用 `cleanTranscript("agy")`。`USER_REQUEST` 按尾部宿主块取正文，T3 内层请求取 `runtime_info` 前的末个闭标签。上下文交接只取末尾当前消息，缺边界、子代理完成和明确后台唤醒不生成用户轮。助手引用只保留非空 `citation.comment`，占位符不进入轮次或用户证据。`PLANNER_RESPONSE` 是助手轮，工具调用压成一行；`GENERIC` 是工具输出；`SYSTEM_MESSAGE` 不读。重复步骤依原始顺序使用 `76`、`76#2`，未读和去噪行也计数。回跳清空工具配对队列。
 - sweep 补登记：`agyRoots` 动态枚举 T3 直接实例，`agyDiscover` 先发现本根完整日志，再与摘要行相交。原库及 WAL、SHM 先核验路径，复制后只读查询 id、首 workspace、parent 和修改时间，不读摘要正文。
 - 发现状态：空实例没有摘要库报告 0；有日志但缺元数据保留日志和空 cwd，不补登记；坏库或无权限报告无法读取。不可读日志不能算成 0 对话，同根日志和摘要库失败只报一条，注明不可读日志数量及摘要库失败。同 id 多根完整日志冲突时不登记、不抽取。已登记会话不受七天窗口限制，未登记按摘要时间过滤，坏时间退回文件 mtime，子会话不补登记。
 - 宿主识别：进程名 `agy` 或 `Antigravity`，以及位于 `Antigravity.app` 内或带 `--override_ide_name antigravity` 的 `language_server`。链上最近的宿主优先，IDE 内嵌 Pi、Claude Code、Codex 不改判。会话 id 取 `ANTIGRAVITY_CONVERSATION_ID`。
@@ -22,6 +22,7 @@
 - `verify.sh run` 的 `cli-agy-path-pin`：`node --test src/agy-path-pin.test.ts`。真实 capture hook 和手动 capture 后逐字段回读，冲突时 `work.log` 不存在；覆盖带路径的同根多根冲突、异根未落盘提示、事务回滚及并发首次登记。真实 `remember --from-worker` / `get --expand` 展开登记根原话，跨表引用扫描不取另一根；无基线冲突跳过。登记路径变成异根软链后，真实 `view --no-open` 报来源不可用，不写 agy 引用扫描记录。`src/work.test.ts` 的 Codex 635 到 644 接续断言保持不变。
 - `verify.sh run` 的 `cli-agy-worker` 跑 `src/transcript.test.ts`、`src/transcript-file.test.ts` 和 `src/cli.test.ts` 中的身份回归。覆盖两类 T3 前缀、正文反例、带项目参数标记、超长首行和身份待定；真实 CLI 比较截断版与完整版 recall 输出，回读输出确认无主会话偏好，再用 `brief --worker` 确认全局规则仍在。
 - `verify.sh run` 的 `cli-agy-status`：`node --test src/status-agy.test.ts`。真实 `status`、`doctor` 在隔离 HOME 下各显示 CLI、IDE 和两个 T3 实例一行。计数覆盖所有完整日志，按登记路径对齐，不沿用 sweep 的七天窗口。子会话、已删 cwd 和未登记项目不进可抽数；冲突日志不重复计数；缺元数据、坏库和权限拒绝各自注明。CLI、IDE 检查共享插件，T3 检查各实例入口。0 登记且有可抽主会话进入顶部“要处理”。诊断不改 capture 行、事件、源摘要库或日志，`status --line` 仍只有 `review` 和 `work_failed`。
+- `verify.sh run` 的 `cli-agy-denoise` 跑 `src/agy.test.ts` 和 `src/extract.test.ts` 的去噪与定位点回归。它覆盖嵌套闭标签、普通 User message 和唤醒字样、缺边界交接、两类完成通知、引用评论与坏 JSON、原始步骤计数、非用户回跳及 ab 键隔离。真实 CLI 在隔离三处根各执行 `remember --from-worker` 和 `get --expand`，回读 L1 来源的路径及 `76#2`，确认展开只含用户正文。
 - IDE/T3 定位和诊断已覆盖隔离目录，真实 IDE 工具 shell 未验证。
 
 ## Real-host evidence

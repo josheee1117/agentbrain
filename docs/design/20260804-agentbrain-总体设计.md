@@ -715,7 +715,7 @@ T3 只靠 A 时没有自动开工或偏好注入，需主动 `ab brief` / `ab se
 
 T3 输入按以下顺序处理，读取和来源展开共用结果：
 
-1. 外层 USER_REQUEST 按宿主结构取出，结束位置锚定其后的 ADDITIONAL_METADATA 或文件尾，不被用户正文里的同名字面标签提前截断。若有 T3 包装，从 `</t3_code_instructions>` 后首个 `<user_request>`，取到紧贴 `<runtime_info>` 前的末个 `</user_request>`；不使用第一个闭标签。先识别委派前缀，再剥包装。
+1. 外层 USER_REQUEST 按宿主结构取出，结束位置取尾部零或多个全大写宿主块前的最后一个闭标签。尾随块包括 ADDITIONAL_METADATA、USER_SETTINGS_CHANGE；没有尾随块时锚定文件尾。不被用户正文里的同名字面标签提前截断。若有 T3 包装，从 `</t3_code_instructions>` 后首个 `<user_request>`，取到紧贴 `<runtime_info>` 前的末个 `</user_request>`；不使用第一个闭标签。先识别委派前缀，再剥包装。
 2. 开头为 `Context handoff (full_thread_summary):` 时，从最后一个 `\n\nUser message:\n` 取当前消息。只有这类宿主交接头才走此分支，普通用户正文里的 `User message:` 不切。缺边界则整轮丢弃、计 stripped，不让摘要成为用户证据。
 3. 规范化后以 `Delegated task node:delegated-task:… in child thread …` 开头的完成通知，以及有明确 T3 后台任务唤醒头的合成 USER_INPUT，整轮不生成 user，计 stripped。不是按正文含“completed”就丢弃。裸消息同样检查，不能把“无包装”直接当成真实用户输入。实例 `60c7502f…/d92d7fb3…` 第 45、60 行是必测样本；当前第 60 行经过 `ownUserText` 仍保留 7117 字（`src/extract.ts:149-166`）。
 4. `<assistant_citations>` 只提取 `citation.comment`，不取 text、prefix、suffix、定位数据或 `[assistant-quote-N]` 占位符。解析其说明文字后的 JSON 数组，缺 comment 返回空，坏 JSON 不回退为整块原文。实例 `ac0a3dfd…/adb838bc…` 第 144 行数组是 `[{id,citation:{text,comment,...}}]`，只保留“是这个”。在用户证据检查入口补同样的 comment 例外，避免 `stripPasted` 再丢掉它；复用 `QUESTION_REPLY` 的提取方式，不放宽其他引用块（`src/extract.ts:131-147`）。
@@ -3307,6 +3307,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-24 用户按 denoise-anchors 单授权实现 §7.8.5。原始步骤首次保留数字定位点，重复步骤使用 `<step>#<n>`；所有带 step_index 的行参与计数，回跳先清空工具配对队列。外层 USER_REQUEST 取尾部零或多个全大写宿主块前的最后一个闭标签，兼容 USER_SETTINGS_CHANGE 和无尾随块。T3 请求以 runtime_info 前的末个闭标签为边界，交接只取末尾当前消息。明确完成通知不生成用户轮；后台唤醒只匹配宿主源码的 `Background task completed.`，不按正文关键词过滤。助手引用只保留非空 citation.comment，并清除行内占位符；去噪和用户证据校验共用提取函数。验证先红后绿，再重放真实日志副本和隔离 CLI 的三处来源展开。不新增配置、表或列，库版本仍为 1，代码可用 git 回退。
 
 - 2026-11-24 用户按 fix-status-review 单授权修正分处诊断。status 跳过 appData 不存在的 CLI、IDE，其他读取异常保留根并报告；已安装的空根和 T3 新实例仍显示尚无对话。resolveProject 恢复目录异常抛错，只在 status 分类处理：ENOENT、ENOTDIR 计目录已删，EACCES、EPERM 计工作目录无法读取，均排除可抽数；未知异常照抛。当前目录无法解析时显示未登记目录。可抽主会话全部超过七天且零登记时说明巡检不会补登记，有近七天可抽主会话时仍提示检查巡检。理由是避免把未安装应用报成空实例、把异常目录登记成全局会话，以及把旧日志误报为巡检停转。回归先红后绿，隔离 HOME、AB_HOME、AGENTBRAIN_HOME、AB_REGISTRY，走真实 status、doctor 和完整验证。不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
 
