@@ -25,6 +25,7 @@ case "${1:-}" in
     step cli-agy-path-pin node --test src/agy-path-pin.test.ts
     step cli-agy-worker node --test --test-name-pattern='Pi、agy|workerIdentity|先规范 agy' src/transcript.test.ts src/transcript-file.test.ts src/cli.test.ts
     step cli-agy-session-state node --test --test-name-pattern='会话状态' src/cli.test.ts
+    step cli-agy-plugin node --test src/agy-plugin.test.ts
     step cli-agy-denoise node --test --test-name-pattern='agy 去噪|agy 定位点|agy 三处去噪|assistant_citations' src/agy.test.ts src/extract.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
 

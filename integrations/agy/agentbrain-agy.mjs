@@ -2,59 +2,83 @@
 // agy 从 stdin 给驼峰 JSON（hookEventName、conversationId、cwd、lastUserInput …），从 stdout 读
 // {"injectSteps":[{"systemMessage":{"systemMessage":"…"}}]}。任何失败都回答 {}，不挡 agy。
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 
 const AB = process.env.AGENTBRAIN_AB || join(homedir(), ".local/bin/ab");
-// pm 队列派到 agy 的任务带 PM_JOB_ID：那是被派活的子代理，只要给子代理的偏好。
-const worker = !!process.env.PM_JOB_ID;
-
-const ab = (args, cwd, input = "") => execFileSync(process.execPath, [AB, ...args], { cwd, input, encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }).trim();
+const ab = (args, hook, env, input = "") => {
+  try {
+    return execFileSync(process.execPath, [AB, ...args], { cwd: hook.cwd, env, input, encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "ignore"] }).trim();
+  } catch { return ""; }
+};
 const inject = (text) => (text ? { injectSteps: [{ systemMessage: { systemMessage: text } }] } : {});
+const readMarker = (file) => existsSync(file) ? readFileSync(file, "utf8") : "";
 
 const BRIEF_TAIL = "要查历史决定、陌生模块或可能踩过的坑时跑 ab search <关键词>、ab get <id>；与现场证据冲突时信现场。用户明确要你记某件事时才用 ab remember --confirmed。";
 
-function brief(hook) {
-  const out = ab(worker ? ["brief", "--worker"] : ["brief"], hook.cwd);
-  return out ? `<agentbrain-brief>\n${out}\n${BRIEF_TAIL}\n</agentbrain-brief>` : "";
+function appRoot(hook) {
+  const fromTranscript = typeof hook.transcriptPath === "string" && /^(.*)\/brain\/[^/]+\/\.system_generated\/logs\/transcript(?:_full)?\.jsonl$/.exec(hook.transcriptPath)?.[1];
+  const acp = process.env.GEMINI_HOME && join(process.env.GEMINI_HOME, "antigravity-acp");
+  const root = fromTranscript || process.env.ANTIGRAVITY_APP_DATA_DIR || (acp && existsSync(acp) ? acp : "");
+  return root && existsSync(root) ? realpathSync(root) : root;
 }
 
-// PreInvocation 在每次调模型前都跑（工具循环里一轮会有很多次）；同一条用户消息只注入一次，注入的系统消息会留在对话里。
-function recall(hook) {
+// prompt seen 只控制 capture 和偏好；brief pending 可以在同一轮工具循环中重试。
+function recall(hook, root, env) {
   const prompt = hook.lastUserInput;
-  if (typeof prompt !== "string" || !prompt || !hook.conversationId) return "";
-  const dir = join(process.env.PLUGIN_DATA || join(tmpdir(), "agentbrain-agy"), "seen");
-  const file = join(dir, createHash("sha1").update(String(hook.conversationId)).digest("hex"));
-  const key = createHash("sha1").update(prompt).digest("hex");
-  try { if (readFileSync(file, "utf8") === key) return ""; } catch {}
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(file, key);
-  capture(hook, "UserPromptSubmit");
-  const raw = ab(["recall", "--hook"], hook.cwd, JSON.stringify({ prompt, cwd: hook.cwd, worker }));
-  const context = raw && JSON.parse(raw)?.hookSpecificOutput?.additionalContext;
-  return typeof context === "string" ? context : "";
+  if (typeof prompt !== "string" || !prompt || !hook.conversationId) return { text: "" };
+  const data = process.env.PLUGIN_DATA || join(tmpdir(), "agentbrain-agy");
+  const sessionKey = createHash("sha1").update(root + "\0" + hook.conversationId).digest("hex");
+  const seenFile = join(data, "seen", sessionKey), briefFile = join(data, "briefs", sessionKey);
+  const promptKey = createHash("sha1").update(prompt).digest("hex");
+  const isNewPrompt = readMarker(seenFile) !== promptKey;
+  const isDone = readMarker(briefFile) === "done";
+  if (!isNewPrompt && isDone) return { text: "" };
+  if (!isDone) {
+    mkdirSync(join(data, "briefs"), { recursive: true });
+    writeFileSync(briefFile, "pending");
+  }
+  if (isNewPrompt) {
+    mkdirSync(join(data, "seen"), { recursive: true });
+    writeFileSync(seenFile, promptKey);
+    capture(hook, "UserPromptSubmit", env);
+  }
+  const raw = ab(["recall", "--hook"], hook, env, JSON.stringify({ prompt, cwd: hook.cwd, session_id: hook.conversationId, transcript_path: hook.transcriptPath, want_session_state: true }));
+  const reply = raw ? JSON.parse(raw) : null;
+  const session = reply?.agentbrain?.session;
+  const additionalContext = isNewPrompt && reply?.hookSpecificOutput?.additionalContext;
+  const context = typeof additionalContext === "string" ? additionalContext : "";
+  let briefText = "";
+  if (session?.brief_present === true) writeFileSync(briefFile, "done");
+  else if (!isDone && typeof session?.worker === "boolean") {
+    const out = ab(session.worker ? ["brief", "--worker"] : ["brief"], hook, env);
+    if (out) briefText = `<agentbrain-brief>\n${out}\n${BRIEF_TAIL}\n</agentbrain-brief>`;
+  }
+  return { text: [briefText, context].filter(Boolean).join("\n"), doneFile: briefText ? briefFile : null };
 }
 
-// 登记会话（设计 §7.7）：转成 ab capture --hook 认的 snake_case。agy 没有会话结束事件，
-// Stop 且不再继续时按 SessionEnd 登记，ab 会拉起分离的 ab work --session；登记失败不影响注入。
-function capture(hook, event) {
+// Stop 且不再继续时按 SessionEnd 登记，ab 会拉起分离的 ab work --session。
+function capture(hook, event, env) {
   if (!hook.conversationId) return;
-  try {
-    ab(["capture", "--hook", "--host", "agy"], hook.cwd, JSON.stringify({ session_id: hook.conversationId, transcript_path: hook.transcriptPath, cwd: hook.cwd, hook_event_name: event }));
-  } catch {}
+  ab(["capture", "--hook", "--host", "agy"], hook, env, JSON.stringify({ session_id: hook.conversationId, transcript_path: hook.transcriptPath, cwd: hook.cwd, hook_event_name: event }));
 }
 
-let out = {};
+let result = { text: "" };
 try {
   const hook = JSON.parse(readFileSync(0, "utf8"));
-  if (!process.env.AGENTBRAIN_REVIEWER) {
-    if (hook.hookEventName === "SessionStart") out = inject(brief(hook));
-    if (hook.hookEventName === "PreInvocation") out = inject(recall(hook));
-    if (hook.hookEventName === "Stop" && hook.continuationActive !== true) capture(hook, "SessionEnd");
+  if (!process.env.AGENTBRAIN_REVIEWER && (hook.hookEventName === "PreInvocation" || (hook.hookEventName === "Stop" && hook.continuationActive !== true))) {
+    const root = appRoot(hook);
+    const env = { ...process.env, ANTIGRAVITY_CONVERSATION_ID: hook.conversationId, ...(root ? { ANTIGRAVITY_APP_DATA_DIR: root } : {}) };
+    if (hook.hookEventName === "PreInvocation") result = recall(hook, root, env);
+    else capture(hook, "SessionEnd", env);
   }
 } catch {
-  out = {};
+  result = { text: "" };
 }
-process.stdout.write(JSON.stringify(out));
+// 同步输出成功后才提交 done，避免输出失败却提前阻止下一次注入。
+writeFileSync(1, JSON.stringify(inject(result.text)));
+if (result.doneFile) {
+  try { writeFileSync(result.doneFile, "done"); } catch {}
+}

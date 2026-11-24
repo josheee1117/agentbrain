@@ -691,11 +691,11 @@ parent 非空的子会话仍不由 sweep 补登记。全部日志数、非子会
 
 CLI、IDE 的既有插件使用原有三个事件（`integrations/agy/hooks.json:3-5`）。新会话无首轮时暂不注 brief；首个 PreInvocation 身份明确后，在模型调用前注入。恢复会话已有 SYSTEM_MESSAGE 中的 `<agentbrain-brief>` 时不重复注。此合同只在 B 成立后扩到 T3 ACP。
 
-brief 状态与现有 prompt 去重状态分开。插件在自己的数据目录按“规范应用根 + 会话 id”保存 pending/done 标记，不存正文、不加配置键。ab 返回非空 brief 且插件成功输出后才置 done；失败或空输出保留 pending，下一次 PreInvocation 重试，不能被 prompt 已 seen 的提前返回挡住。恢复时即使标记丢失，转录中的已注入块也能判 done。插件不自行解析 JSONL。
+brief 状态与现有 prompt 去重状态分开。插件在自己的数据目录按“规范应用根 + 会话 id”保存 pending/done 标记，不存正文、不加配置键。ab 返回非空 brief 且插件成功输出后才置 done；失败或空输出保留 pending，下一次 PreInvocation 重试，不能被 prompt 已 seen 的提前返回挡住。同一 prompt 的 pending 重试只读取会话状态，不再次 capture，也不再次注入 recall 的偏好和提醒。恢复时即使标记丢失，转录中的已注入块也能判 done。插件不自行解析 JSONL。
 
 共用判断由 ab 完成。agy 插件的 `recall --hook` 传 `session_id`、`transcript_path` 和 `want_session_state:true`，返回除原有上下文外的 `agentbrain.session` 元数据，包含 `worker`（true、false 或待定 null）与 `brief_present`。这不是配置键，也不落库；未请求的调用输出不变。插件据它选择 `brief --worker` 或 `brief`，待定时不注主会话规则。先取得身份和状态，再输出本次 brief 与偏好，不复写一份解析器到 `.mjs`。`brief_present` 只检查 SYSTEM_MESSAGE 的 content，不在 USER_INPUT 或整份原文里搜索；读头上限为 262,144 字节。最后一行截断时，先确认行首对象的 type 为 SYSTEM_MESSAGE，再检查已读到的注入标签。身份与 brief 状态分别判断，均使用准入后的完整版路径。
 
-钩子只保证 stdin 坐标，不能假定环境已有会话 id。调用 ab 子进程时补 `ANTIGRAVITY_CONVERSATION_ID=hook.conversationId`，以及从 `hook.transcriptPath` 的固定 brain 日志尾推导的 `ANTIGRAVITY_APP_DATA_DIR`；ab 再核验根与 id。环境只补坐标，宿主仍按父进程链判定。这样 `brief` 的 `detectCtx` 能写带坐标的 inject_log（`src/cli.ts:340-355,437`）；recall 同样补传坐标，并修 `telemetryCtx` 兜底漏 transcript（`:366-390`）。当前 capture 已传两者而 recall 没传（`integrations/agy/agentbrain-agy.mjs:35,45`）。
+钩子只保证 stdin 坐标，不能假定环境已有会话 id。调用 ab 子进程时补 `ANTIGRAVITY_CONVERSATION_ID=hook.conversationId`。规范应用根优先取 `hook.transcriptPath` 匹配 `/^(.*)\/brain\/[^/]+\/\.system_generated\/logs\/transcript(?:_full)?\.jsonl$/` 的根；否则取 `ANTIGRAVITY_APP_DATA_DIR`；再否则取存在的 `<GEMINI_HOME>/antigravity-acp`。存在的根用 realpath；无根时不硬塞空环境坐标。brief 标记与 seen 文件都以 `sha1(规范应用根 + "\0" + conversationId)` 命名，无根时用空串与 id。ab 再核验根与 id，宿主仍按父进程链判定。这样 `brief` 的 `detectCtx` 能写带坐标的 inject_log；recall 与 capture 同样补传坐标。
 
 T3 只靠 A 时没有自动开工或偏好注入，需主动 `ab brief` / `ab search`。30 分钟静置加每 30 分钟巡检，在正常运行、无积压或模型故障时，最后一条消息后约 30 至 60 分钟开始抽取，不承诺完成时间。巡检没加载须报告；积压仍每次最多 10 个窗口。
 
@@ -3307,6 +3307,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-24 用户按 agy-plugin-brief 单授权实现 §7.8.4。SessionStart 返回空对象，PreInvocation 只消费 `agentbrain.session` 的 worker 三态与 brief_present。brief pending/done 与 prompt seen 分开；同一 prompt 重试不重复 capture 或 recall 上下文。规范应用根按 transcript、环境提示、GEMINI_HOME 下 acp 目录依次推导，存在的根取 realpath；标记和 seen 共用根与 id 的键，避免跨根串扰。验证先红后绿，再用隔离 stdin 跑仓库插件与真实 CLI。不改事件集合、宿主配置、库结构或配置键，代码可用 git 回退。
 
 - 2026-11-24 用户按状态合同单授权实现 §7.8.4。`want_session_state:true` 仅新增 `agentbrain.session`，旧 hook 输出不变。brief 状态只读 SYSTEM_MESSAGE，避免派活正文里的字面标签误判；读头与身份判断共用 262,144 字节上限。telemetryCtx 从检测结果补 transcript，stdin 会话 id 覆盖环境 id 时按合并后的 id 重新定位，保留多根冲突的 null。验证先红后绿，覆盖三态、恢复、截断路径、读头截断、三处环境坐标与真实 CLI 的日志对齐。不改变偏好筛选和排序，不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
 
