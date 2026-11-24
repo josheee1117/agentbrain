@@ -1415,7 +1415,11 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     const conflictIds = new Set(agy.conflicts.map((c) => c.id));
     for (const c of agy.conflicts) report.problems.push(`agy 会话 ${c.id} 在多处有完整日志，已跳过：${c.roots.join("，")}`);
     for (const p of agy.problems) {
-      const detail = p.kind === "no_summaries" ? "0 对话，尚无摘要库" : p.kind === "missing_meta" ? `缺会话元数据（${p.count} 份完整日志）` : "无法读取";
+      let detail = p.kind === "no_summaries" ? "0 对话，尚无摘要库" : p.kind === "missing_meta" ? `缺会话元数据（${p.count} 份完整日志）` : "无法读取";
+      if (p.kind === "unreadable") {
+        if (p.count) detail += `（${p.count} 份完整日志）`;
+        if (p.summariesUnreadable) detail += "，摘要库无法读取";
+      }
       report.problems.push(`agy ${p.root}：${detail}`);
     }
     if (opts.sweep && !opts.dryRun) {

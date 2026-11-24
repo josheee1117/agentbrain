@@ -16,10 +16,6 @@ export function agyAppDir(): string {
   return join(homedir(), ".gemini/antigravity-cli");
 }
 
-export function agyBrainDir(): string {
-  return join(agyAppDir(), "brain");
-}
-
 /** 会话 id 的完整记录路径；id 不合法（含 `/`、`..`）返回 null。 */
 export function agyTranscriptPath(id: string, root?: AgyRoot): string | null {
   if (!ID.test(id)) return null;
@@ -165,7 +161,7 @@ function workspaceCwd(value: unknown): string | null {
 export function agyDiscover(roots: AgyRoot[], now: Date, known: (id: string) => boolean): {
   conversations: AgyConversation[];
   conflicts: { id: string; roots: string[] }[];
-  problems: { root: string; kind: "no_summaries" | "missing_meta" | "unreadable"; count?: number }[];
+  problems: { root: string; kind: "no_summaries" | "missing_meta" | "unreadable"; count?: number; summariesUnreadable?: boolean }[];
 } {
   const all: AgyConversation[] = [];
   const problems: ReturnType<typeof agyDiscover>["problems"] = [];
@@ -207,14 +203,14 @@ export function agyDiscover(roots: AgyRoot[], now: Date, known: (id: string) => 
       problems.push({ root: root.root, kind: "unreadable" });
       continue;
     }
-    if (unreadable) problems.push({ root: root.root, kind: "unreadable", count: unreadable });
     let rows: ReturnType<typeof summaryRows> = null;
     let summariesUnreadable = false;
     try { rows = summaryRows(root); } catch {
       summariesUnreadable = true;
-      problems.push({ root: root.root, kind: "unreadable" });
     }
-    if (!rows && !summariesUnreadable) problems.push({ root: root.root, kind: logs.length ? "missing_meta" : "no_summaries", count: logs.length });
+    if (unreadable || summariesUnreadable) problems.push({ root: root.root, kind: "unreadable",
+      ...(unreadable ? { count: unreadable } : {}), ...(summariesUnreadable ? { summariesUnreadable: true } : {}) });
+    if (!rows && !summariesUnreadable && (logs.length || !unreadable)) problems.push({ root: root.root, kind: logs.length ? "missing_meta" : "no_summaries", count: logs.length });
     const metadata = new Map(rows?.flatMap((row) => typeof row.conversation_id === "string" ? [[row.conversation_id, row] as const] : []) ?? []);
     let missingMeta = 0;
     for (const log of logs) {

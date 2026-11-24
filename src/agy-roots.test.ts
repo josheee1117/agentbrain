@@ -125,7 +125,7 @@ for (const suffix of ["", "-wal", "-shm"]) test(`agy 摘要${suffix || "库"}逃
     if (!suffix) rmSync(path);
     symlinkSync(outside, path);
     const result = agyDiscover(agyRoots(), f.now, () => false);
-    assert.deepEqual(result.problems, [{ root: f.apps[1], kind: "unreadable" }]);
+    assert.deepEqual(result.problems, [{ root: f.apps[1], kind: "unreadable", summariesUnreadable: true }]);
     assert.equal(result.conversations[0].cwd, null);
     assert.deepEqual(readFileSync(outside), before);
   } finally { live?.close(); }
@@ -169,6 +169,7 @@ test("agy 应用根和日志逃逸软链均拒绝，chunks、scratch 不计", (t
   const result = agyDiscover(agyRoots(), f.now, () => false);
   assert.deepEqual(result.conversations, []);
   assert.ok(result.problems.filter((p) => p.kind === "unreadable").length >= 3);
+  assert.ok(!result.problems.some((p) => p.kind === "no_summaries"), "有不可读日志时不能报 0 对话");
   assert.equal(allowedTranscript("agy", join(missing, "transcript_full.jsonl"), "escaped"), null);
   assert.equal(allowedTranscript("agy", join(f.apps[1], "brain/escaped/.system_generated/logs/transcript_full.jsonl"), "escaped"), null);
   assert.equal(allowedTranscript("agy", join(f.apps[2], "brain/escaped/.system_generated/logs/transcript_full.jsonl"), "escaped"), null);
@@ -176,6 +177,41 @@ test("agy 应用根和日志逃逸软链均拒绝，chunks、scratch 不计", (t
   const late = join(f.apps[0], "brain/late");
   symlinkSync(outside, late);
   assert.equal(allowedTranscript("agy", join(late, ".system_generated/logs/transcript.jsonl"), "late"), null);
+});
+
+test("agy 无权限日志且无摘要库只报告无法读取，不报 0 对话", async (t) => {
+  const f = fixture(t);
+  const transcript = f.log(f.apps[0], "denied-log");
+  chmodSync(transcript, 0);
+  const result = agyDiscover(agyRoots(), f.now, () => false);
+  assert.equal(result.problems.filter((p) => p.root === f.apps[0]).length, 1);
+  assert.deepEqual(result.problems[0], { root: f.apps[0], kind: "unreadable", count: 1 });
+  const report = await runWork(f.deps, { sweep: false, dryRun: true });
+  assert.equal(report.problems.length, 1);
+  assert.match(report.problems[0], /无法读取.*1 份完整日志/);
+  assert.doesNotMatch(report.problems[0], /0 对话/);
+});
+
+test("agy 日志和摘要库同时不可读合并一行，保留日志数量和摘要库原因", async (t) => {
+  const f = fixture(t);
+  const transcript = f.log(f.apps[0], "denied-log");
+  chmodSync(transcript, 0);
+  writeFileSync(join(f.apps[0], "conversation_summaries.db"), "broken database");
+  const result = agyDiscover(agyRoots(), f.now, () => false);
+  assert.equal(result.problems.filter((p) => p.root === f.apps[0] && p.kind === "unreadable").length, 1);
+  assert.equal(result.problems[0].count, 1);
+  assert.equal(result.problems[0].summariesUnreadable, true);
+  const report = await runWork(f.deps, { sweep: false, dryRun: true });
+  assert.equal(report.problems.length, 1);
+  assert.match(report.problems[0], /无法读取.*1 份完整日志.*摘要库/);
+  assert.doesNotMatch(report.problems[0], /0 对话/);
+  const cli = spawnSync(process.execPath, [join(import.meta.dirname, "cli.ts"), "work", "--sweep"], { cwd: f.repo, env: { ...process.env }, encoding: "utf8", timeout: 30_000 });
+  assert.equal(cli.status, 0, cli.stdout + cli.stderr);
+  const lines = cli.stdout.split("\n").filter((line) => line.includes(f.apps[0]));
+  assert.equal(lines.length, 1, cli.stdout);
+  assert.match(lines[0], /无法读取.*1 份完整日志.*摘要库/);
+  assert.doesNotMatch(cli.stdout, /0 对话/);
+  console.log(JSON.stringify({ command: "node src/cli.ts work --sweep", unreadable: lines }));
 });
 
 test("agy 实例目录无权限不阻断 CLI，实例目录和 brain 软链逃逸报告无法读取", (t) => {
