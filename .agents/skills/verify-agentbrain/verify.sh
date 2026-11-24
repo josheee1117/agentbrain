@@ -274,11 +274,12 @@ writeFileSync('$FAKE_HOME/.codex/sessions/2026/10/12/rollout-2026-10-12T10-00-00
     step cli-codex-zst-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session codex:$ZSID --dry-run
     step cli-codex-zst-work-text bash -c "grep -qF 'codex:$ZSID: 待处理窗口' '$EV/cli-codex-zst-work.log'"
 
-    # 5c. agy（§7.7）：钩子给截断版路径，登记成完整版；dry-run 读完整版、不读注入的系统消息
-    ASID="a9e00000-1111-2222-3333-444444444444"
-    ALOGS="$FAKE_HOME/.gemini/antigravity-cli/brain/$ASID/.system_generated/logs"
-    mkdir -p "$ALOGS"
-    node -e "
+    # 5c. agy（§7.7、§7.8）：CLI、IDE、T3 实例三处共用发现与分处诊断。
+    # 每处用自己的隔离 HOME，一处失败不把别的根的状态断言带偏；$ALOGS 留给第 9 步的 cli-guidance-prefs。
+    agy_log(){ # home appRoot sessionId：完整版 + 截断版日志，静置一小时
+      local logs="$2/brain/$3/.system_generated/logs"
+      mkdir -p "$logs"
+      node -e "
 const { writeFileSync, utimesSync } = require('node:fs');
 const t = new Date(Date.now() - 3600000);
 const steps = [
@@ -286,16 +287,99 @@ const steps = [
   { step_index: 1, type: 'SYSTEM_MESSAGE', status: 'DONE', created_at: t.toISOString(), content: '<agentbrain-prefs>注入的偏好</agentbrain-prefs>' },
   { step_index: 2, type: 'PLANNER_RESPONSE', status: 'DONE', created_at: t.toISOString(), model: 'gemini-test', content: '好的，严格执行 verify.sh' },
 ];
-writeFileSync('$ALOGS/transcript_full.jsonl', steps.map((s) => JSON.stringify(s)).join('\\n') + '\\n');
-writeFileSync('$ALOGS/transcript.jsonl', JSON.stringify(steps[0]) + '\\n');
-utimesSync('$ALOGS/transcript_full.jsonl', t, t);
+writeFileSync('$logs/transcript_full.jsonl', steps.map((s) => JSON.stringify(s)).join('\\n') + '\\n');
+writeFileSync('$logs/transcript.jsonl', JSON.stringify(steps[0]) + '\\n');
+utimesSync('$logs/transcript_full.jsonl', t, t);
 "
+    }
+    agy_summaries(){ # appData sessionId cwd：真实表结构，workspace_uris 是 JSON 数组
+      node -e "
+const { DatabaseSync } = require('node:sqlite');
+const { mkdirSync } = require('node:fs');
+mkdirSync('$1', { recursive: true });
+const db = new DatabaseSync('$1/conversation_summaries.db');
+db.exec('CREATE TABLE conversation_summaries(conversation_id TEXT PRIMARY KEY, workspace_uris TEXT, parent_conversation_id TEXT, last_modified_time TEXT, raw_summary BLOB)');
+db.prepare('INSERT INTO conversation_summaries VALUES(?,?,?,?,?)').run('$2', JSON.stringify(['file://$3']), '', new Date(Date.now() - 3600000).toISOString(), null);
+db.close();
+"
+    }
+    ASID="a9e00000-1111-2222-3333-444444444444"
+    ALOGS="$FAKE_HOME/.gemini/antigravity-cli/brain/$ASID/.system_generated/logs"
+    agy_log "$FAKE_HOME" "$FAKE_HOME/.gemini/antigravity-cli" "$ASID"
     drive_agy_capture(){
       printf '{"session_id":"%s","transcript_path":"%s/transcript.jsonl","cwd":"%s","hook_event_name":"UserPromptSubmit"}\n' "$ASID" "$ALOGS" "$REPO" | env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" capture --hook --host agy
     }
-    step cli-agy-capture drive_agy_capture
-    step cli-agy-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session agy:$ASID --dry-run
-    step cli-agy-work-text bash -c "grep -qF 'agy:$ASID: 待处理窗口 1' '$EV/cli-agy-work.log'"
+    # 摘要库给 status 提供 cwd；登记来自上面的钩子。
+    agy_summaries "$FAKE_HOME/.gemini/antigravity-cli" "$ASID" "$REPO"
+    step cli-agy-cli-capture drive_agy_capture
+    step cli-agy-cli-registered node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$AB_HOME/store.db', { readOnly: true });
+const row = db.prepare(\"SELECT transcript FROM capture_sessions WHERE host='agy' AND session_id=?\").get('$ASID');
+db.close();
+if (row?.transcript !== '$ALOGS/transcript_full.jsonl') { console.error('登记路径应为完整版，实际 ' + row?.transcript); process.exit(1); }
+"
+    step cli-agy-cli-work env HOME="$FAKE_HOME" AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session agy:$ASID --dry-run
+    step cli-agy-cli-work-text bash -c "grep -qF 'agy:$ASID: 待处理窗口 1' '$EV/cli-agy-cli-work.log'"
+    step cli-agy-cli-status bash -c "(cd '$REPO' && env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status) > '$EV/cli-agy-cli-status.log' 2>&1; grep -qF 'agy CLI: 日志 1（可抽 1），已登记 1，只靠 sweep' '$EV/cli-agy-cli-status.log'"
+
+    # 5c-2. IDE：根是 ~/.gemini/antigravity，登记与诊断走同一套
+    ISID="b7d10000-1111-2222-3333-444444444444"
+    IHOME="$S/agy_ide_home"; IAB="$S/agy_ide_ab"; IROOT="$IHOME/.gemini/antigravity"
+    mkdir -p "$IHOME" "$IAB"
+    agy_log "$IHOME" "$IROOT" "$ISID"
+    agy_summaries "$IROOT" "$ISID" "$REPO"
+    drive_agy_ide_capture(){
+      printf '{"session_id":"%s","transcript_path":"%s/brain/%s/.system_generated/logs/transcript.jsonl","cwd":"%s","hook_event_name":"UserPromptSubmit"}\n' "$ISID" "$IROOT" "$ISID" "$REPO" | env HOME="$IHOME" AB_HOME="$IAB" AGENTBRAIN_HOME="$IAB" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" capture --hook --host agy
+    }
+    step cli-agy-ide-capture drive_agy_ide_capture
+    step cli-agy-ide-registered node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$IAB/store.db', { readOnly: true });
+const row = db.prepare(\"SELECT transcript FROM capture_sessions WHERE host='agy' AND session_id=?\").get('$ISID');
+db.close();
+if (row?.transcript !== '$IROOT/brain/$ISID/.system_generated/logs/transcript_full.jsonl') { console.error('IDE 登记路径不对：' + row?.transcript); process.exit(1); }
+"
+    step cli-agy-ide-work env HOME="$IHOME" AB_HOME="$IAB" AGENTBRAIN_HOME="$IAB" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --session agy:$ISID --dry-run
+    step cli-agy-ide-work-text bash -c "grep -qF 'agy:$ISID: 待处理窗口 1' '$EV/cli-agy-ide-work.log'"
+    step cli-agy-ide-status bash -c "(cd '$REPO' && env HOME='$IHOME' AB_HOME='$IAB' AGENTBRAIN_HOME='$IAB' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status) > '$EV/cli-agy-ide-status.log' 2>&1; grep -qF 'agy IDE: 日志 1（可抽 1），已登记 1，只靠 sweep' '$EV/cli-agy-ide-status.log'"
+
+    # 5c-3. T3：两个直接实例，各带 antigravity-acp/brain 和摘要库，诊断必须各自一行
+    THOME="$S/agy_t3_home"; TAB="$S/agy_t3_ab"; TPROV="$THOME/.t3/userdata/providers/antigravity"
+    TSID1="d3e40000-1111-2222-3333-444444444444"; TSID2="f5a60000-1111-2222-3333-444444444444"
+    mkdir -p "$THOME" "$TAB"
+    for pair in "a1b2c3d4:$TSID1" "e5f6a7b8:$TSID2"; do
+      agy_log "$THOME" "$TPROV/${pair%%:*}/antigravity-acp" "${pair##*:}"
+      agy_summaries "$TPROV/${pair%%:*}/antigravity-acp" "${pair##*:}" "$REPO"
+    done
+    drive_agy_t3_capture(){
+      for pair in "a1b2c3d4:$TSID1" "e5f6a7b8:$TSID2"; do
+        printf '{"session_id":"%s","transcript_path":"%s/%s/antigravity-acp/brain/%s/.system_generated/logs/transcript_full.jsonl","cwd":"%s","hook_event_name":"UserPromptSubmit"}\n' "${pair##*:}" "$TPROV" "${pair%%:*}" "${pair##*:}" "$REPO" \
+          | env HOME="$THOME" AB_HOME="$TAB" AGENTBRAIN_HOME="$TAB" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" capture --hook --host agy || return 1
+      done
+    }
+    step cli-agy-t3-capture drive_agy_t3_capture
+    step cli-agy-t3-work env HOME="$THOME" AB_HOME="$TAB" AGENTBRAIN_HOME="$TAB" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --dry-run
+    step cli-agy-t3-work-text bash -c "grep -qF 'agy:$TSID1: 待处理窗口 1' '$EV/cli-agy-t3-work.log' && grep -qF 'agy:$TSID2: 待处理窗口 1' '$EV/cli-agy-t3-work.log'"
+    step cli-agy-t3-status bash -c "(cd '$REPO' && env HOME='$THOME' AB_HOME='$TAB' AGENTBRAIN_HOME='$TAB' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status) > '$EV/cli-agy-t3-status.log' 2>&1; grep -qF 'agy T3 a1b2c3d4: 日志 1（可抽 1），已登记 1，只靠 sweep' '$EV/cli-agy-t3-status.log' && grep -qF 'agy T3 e5f6a7b8: 日志 1（可抽 1），已登记 1，只靠 sweep' '$EV/cli-agy-t3-status.log'"
+
+    # 5c-4. 冲突：CLI、IDE 两棵根同 id 都有完整日志，不登记、不抽取、单列
+    CHOME="$S/agy_conflict_home"; CAB="$S/agy_conflict_ab"; CSID="c0f10000-1111-2222-3333-444444444444"
+    mkdir -p "$CHOME" "$CAB"
+    for app in "$CHOME/.gemini/antigravity-cli" "$CHOME/.gemini/antigravity"; do
+      agy_log "$CHOME" "$app" "$CSID"
+      agy_summaries "$app" "$CSID" "$REPO"
+    done
+    step cli-agy-conflict-sweep env HOME="$CHOME" AB_HOME="$CAB" AGENTBRAIN_HOME="$CAB" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" work --sweep
+    step cli-agy-conflict-sweep-text bash -c "grep -qF 'agy 会话 $CSID 在多处有完整日志，已跳过' '$EV/cli-agy-conflict-sweep.log'"
+    step cli-agy-conflict-rows node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$CAB/store.db', { readOnly: true });
+const n = db.prepare(\"SELECT COUNT(*) AS n FROM capture_sessions WHERE host='agy'\").get().n;
+db.close();
+if (n !== 0) { console.error('冲突会话不该登记，实际 ' + n + ' 行'); process.exit(1); }
+"
+    step cli-agy-conflict-status bash -c "(cd '$REPO' && env HOME='$CHOME' AB_HOME='$CAB' AGENTBRAIN_HOME='$CAB' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' status) > '$EV/cli-agy-conflict-status.log' 2>&1; [ \$(grep -cF 'agy 会话 $CSID 在多处有完整日志' '$EV/cli-agy-conflict-status.log') = 1 ] && grep -qF 'agy CLI: 日志 0（可抽 0），已登记 0，只靠 sweep，冲突' '$EV/cli-agy-conflict-status.log' && grep -qF 'agy IDE: 日志 0（可抽 0），已登记 0，只靠 sweep，冲突' '$EV/cli-agy-conflict-status.log'"
 
     # 6. curate / review / audit drive
     step cli-review env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" node "$ROOT/src/cli.ts" review
