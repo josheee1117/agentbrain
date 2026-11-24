@@ -220,14 +220,16 @@ test("agy 钩子：缺少输入、其他事件、坏 JSON 不挡宿主", (t) => 
   assert.deepEqual([r.status, JSON.parse(r.stdout)], [0, {}]);
 });
 
-test("agy 插件真实 CLI：隔离 CLI、IDE 首轮三态、待定重试与恢复，回读会话坐标", (t) => {
+test("agy 插件真实 CLI：隔离 CLI、IDE 首轮三态、斜杠命令、待定重试与恢复，回读会话坐标", (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-agy-plugin-cli-")));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const cli = join(import.meta.dirname, "cli.ts"), home = join(dir, "home"), repo = join(dir, "repo"), registry = join(dir, "repos"), store = join(dir, "store"), data = join(dir, "data");
   for (const path of [home, repo, registry]) mkdirSync(path);
   assert.equal(spawnSync("git", ["init", "-q", repo]).status, 0);
   writeFileSync(join(registry, "plugin.md"), `- 路径：\`${repo}\`\n`);
-  const env = { PATH: process.env.PATH ?? "", HOME: home, AB_HOME: store, AGENTBRAIN_HOME: store, AB_REGISTRY: registry, AGENTBRAIN_AB: cli, PLUGIN_DATA: data };
+  const calls = join(dir, "cli-calls.jsonl"), tracedCli = join(dir, "traced-cli.mjs");
+  writeFileSync(tracedCli, `import { appendFileSync } from 'node:fs';\nappendFileSync(${JSON.stringify(calls)}, JSON.stringify(process.argv.slice(2)) + '\\n');\nawait import(${JSON.stringify(cli)});\n`);
+  const env = { PATH: process.env.PATH ?? "", HOME: home, AB_HOME: store, AGENTBRAIN_HOME: store, AB_REGISTRY: registry, AGENTBRAIN_AB: tracedCli, PLUGIN_DATA: data };
   const seed = spawnSync(process.execPath, [cli, "remember", "--global", "--confirmed", "--for-workers", "--kind", "rule", "--text", "插件真实验证规则", "--summary", "插件验收"], { cwd: repo, env, encoding: "utf8" });
   assert.equal(seed.status, 0, seed.stderr);
   // Replay the host process name without installing a plugin or starting a real IDE.
@@ -238,11 +240,11 @@ test("agy 插件真实 CLI：隔离 CLI、IDE 首轮三态、待定重试与恢�
     assert.equal(r.status, 0, r.stderr);
     return JSON.parse(r.stdout);
   };
-  for (const appName of ["antigravity-cli", "antigravity"]) for (const worker of [true, false, null]) {
-    const app = join(home, ".gemini", appName), sid = `plugin-${appName}-${worker}`;
+  for (const appName of ["antigravity-cli", "antigravity"]) for (const [worker, slash] of [[true, false], [false, false], [null, false], [false, true]] satisfies [boolean | null, boolean][]) {
+    const app = join(home, ".gemini", appName), sid = `plugin-${appName}-${worker}${slash ? "-slash" : ""}`;
     const logs = join(app, "brain", sid, ".system_generated/logs"), full = join(logs, "transcript_full.jsonl");
     mkdirSync(logs, { recursive: true });
-    const input = worker === true ? "ab brief --worker\n修复插件" : "修复插件";
+    const input = slash ? "/plan 做方案" : worker === true ? "ab brief --worker\n修复插件" : "修复插件";
     const transcript = JSON.stringify({ type: "USER_INPUT", step_index: 0, content: input }) + "\n";
     writeFileSync(full, worker === null ? "" : transcript);
     const turn = { hookEventName: "PreInvocation", conversationId: sid, transcriptPath: join(logs, "transcript.jsonl"), cwd: repo, lastUserInput: input };
@@ -258,9 +260,12 @@ test("agy 插件真实 CLI：隔离 CLI、IDE 首轮三态、待定重试与恢�
       assert.doesNotMatch(output, /agentbrain-prefs|agentbrain-recall/);
     }
     assert.match(output, /<agentbrain-brief>[\s\S]*插件真实验证规则/);
+    if (slash) assert.doesNotMatch(output, /agentbrain-prefs|agentbrain-recall/);
     assert.equal(/<agentbrain [^>]*\bworker/.test(output), worker === true);
     assert.equal(readFileSync(marker, "utf8"), "done");
-    assert.deepEqual(run(turn), {});
+    const called = readFileSync(calls, "utf8");
+    assert.deepEqual(run({ ...turn, invocationNum: 2 }), {});
+    assert.equal(readFileSync(calls, "utf8"), called, "同一 prompt 的第二次 PreInvocation 不调 ab");
     const restored = transcript + JSON.stringify({ type: "SYSTEM_MESSAGE", content: output }) + "\n";
     writeFileSync(full, restored);
     rmSync(marker);
@@ -274,7 +279,7 @@ test("agy 插件真实 CLI：隔离 CLI、IDE 首轮三态、待定重试与恢�
       const briefs = db.prepare("SELECT host,session_id,transcript FROM inject_log WHERE path='brief' AND session_id=?").all(sid);
       assert.deepEqual(briefs.map((row) => ({ ...row })), [{ host: "agy", session_id: sid, transcript: full }]);
       const recalls = db.prepare("SELECT host,session_id,transcript FROM recall_runs WHERE session_id=?").all(sid);
-      assert.equal(recalls.length, worker === null ? 4 : 3);
+      assert.equal(recalls.length, slash ? 1 : worker === null ? 4 : 3);
       assert.ok(recalls.every((row) => row.host === "agy" && row.transcript === full));
       t.diagnostic(JSON.stringify({ appName, worker, sid, output, marker, state: "done", capture: captures[0], briefs, recall_count: recalls.length, transcript_unchanged: readFileSync(full, "utf8") === restored }));
     } finally { db.close(); }

@@ -241,18 +241,24 @@ async function cmdRecall(argv: string[]): Promise<void> {
     if (!query.trim()) return;
   }
   const store = open();
-  const ctx = hookRaw ? telemetryCtx(store, hookRaw, cwd) : null;
-  const worker = hookRaw ? hookRaw.worker === true ? true : workerIdentity(ctx?.transcript) : false;
-  let cite = false;
   try {
-    cite = citeEnabled(store.workDb);
-  } catch {
-    cite = false;
-  }
-  try {
+    const ctx = hookRaw ? telemetryCtx(store, hookRaw, cwd) : null;
+    const worker = hookRaw ? hookRaw.worker === true ? true : workerIdentity(ctx?.transcript) : false;
+    let cite = false;
+    try {
+      cite = citeEnabled(store.workDb);
+    } catch {
+      cite = false;
+    }
     if (values.hook) {
       // 每轮钩子不再自动检索（§11.9.3）：斜杠命令开头的提问不注入
-      if (query.trim().startsWith("/")) return;
+      if (query.trim().startsWith("/")) {
+        if (hookRaw?.want_session_state === true) process.stdout.write(JSON.stringify({
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "" },
+          agentbrain: { session: { worker, brief_present: hasBriefInjected(ctx?.transcript) } },
+        }) + "\n");
+        return;
+      }
 
       // 1. 常驻偏好（guidanceBlock，不变）
       const used: string[] = [];
@@ -387,7 +393,11 @@ function telemetryCtx(store: Store, raw: Record<string, unknown>, cwd: string): 
       host = found.detection.host;
       session_id = sid ?? found.detection.session_id;
       const file = sid && sid !== found.detection.session_id ? locateTranscript(host, sid) : found.detection.transcript;
-      transcript = file ? (host === "opencode" || host === "agy" ? file : realpathSync(file)) : null;
+      try {
+        transcript = file ? (host === "opencode" || host === "agy" ? file : realpathSync(file)) : null;
+      } catch {
+        transcript = null; // 定位后文件可能已消失
+      }
     }
   }
   return { host, session_id, transcript, project_id: projectIdOf(store, cwd) };

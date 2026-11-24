@@ -955,6 +955,77 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   assert.equal(slash.out, "");
 });
 
+for (const prompt of ["/plan 做方案", "  /help"]) test(`recall --hook 会话状态：斜杠命令 ${JSON.stringify(prompt)} 只按需返回状态`, (t) => {
+  const own = join(dir, `recall-slash-${prompt.trim().split(" ")[0].slice(1)}`);
+  const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "斜杠命令不注入这条偏好", "--summary", "偏好"], alpha, own);
+  assert.equal(pref.code, 0, pref.err);
+  assert.equal(ab(["guidance", pref.out.match(/\[([0-9a-f]{8})\]/)![1]], alpha, own).code, 0);
+  const logs = join(fakeHome, ".gemini/antigravity-cli/brain/slash-state/.system_generated/logs");
+  mkdirSync(logs, { recursive: true });
+  const full = join(logs, "transcript_full.jsonl");
+  for (const worker of [true, false, null]) for (const brief_present of [true, false]) {
+    const lines = [];
+    if (worker !== null) lines.push({ type: "USER_INPUT", step_index: 0, content: worker ? "ab brief --worker\n任务" : prompt });
+    if (brief_present) lines.push({ type: "SYSTEM_MESSAGE", content: "<agentbrain-brief>规则</agentbrain-brief>" });
+    writeFileSync(full, lines.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    for (const flag of [undefined, false, "true", 1, true]) {
+      const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt, cwd: alpha, transcript_path: full, want_session_state: flag }));
+      assert.equal(result.code, 0, result.err);
+      if (flag !== true) assert.equal(result.out, "", "旧调用方保持空串输出");
+      else {
+        assert.notEqual(result.out, "", "请求状态的斜杠命令不能返回空串");
+        assert.deepEqual(JSON.parse(result.out), {
+          hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "" },
+          agentbrain: { session: { worker, brief_present } },
+        });
+      }
+    }
+    t.diagnostic(JSON.stringify({ prompt, worker, brief_present, additionalContext: "" }));
+  }
+  const db = new DatabaseSync(join(own, "store.db"));
+  try {
+    assert.equal(db.prepare("SELECT count(*) AS n FROM recall_runs").get()?.n, 0, "斜杠命令不记录召回");
+    assert.equal(db.prepare("SELECT count(*) AS n FROM inject_log WHERE path='recall'").get()?.n, 0, "斜杠命令不标记偏好已交付");
+    assert.equal(db.prepare("PRAGMA user_version").get()?.user_version, 1);
+  } finally { db.close(); }
+});
+
+for (const failAt of [1, 2]) test(`recall --hook 会话状态：定位 realpath 第 ${failAt} 次失败仍关闭 store`, (t) => {
+  const own = join(dir, `recall-realpath-${failAt}`);
+  const fault = join(dir, `realpath-fault-${failAt}.mjs`);
+  const transcript = join(transcriptDir, `2026-01-01T00-00-00-000Z_${SESSION}.jsonl`);
+  writeFileSync(fault, `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { Store } from ${JSON.stringify(join(import.meta.dirname, "store.ts"))};
+const realpath = fs.realpathSync, close = Store.prototype.close;
+let calls = 0, closed = 0;
+fs.realpathSync = (file, ...args) => {
+  if (file === ${JSON.stringify(transcript)} && ++calls === ${failAt}) throw Object.assign(new Error('fixture transcript disappeared'), { code: 'ENOENT' });
+  return realpath(file, ...args);
+};
+syncBuiltinESMExports();
+Store.prototype.close = function () { close.call(this); closed++; };
+process.on('exit', () => console.error(JSON.stringify({ calls, closed })));
+`);
+  const r = spawnSync(process.execPath, ["--import", networkGuard, "--import", fault, CLI, "recall", "--hook"], {
+    cwd: alpha, encoding: "utf8", input: JSON.stringify({ prompt: "干活", want_session_state: true }),
+    env: { ...process.env, HOME: fakeHome, AB_HOME: own, AGENTBRAIN_HOME: own, AB_REGISTRY: repos, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const state = JSON.parse(r.stderr.trim().split("\n").at(-1)!);
+  assert.equal(state.calls, failAt, "确实触发定位异常");
+  assert.equal(state.closed, 1, "定位异常也要关闭真实 store");
+  if (failAt === 1) assert.equal(r.stdout, "", "检测异常沿用召回失败时的静默输出");
+  else {
+    assert.deepEqual(JSON.parse(r.stdout).agentbrain.session, { worker: null, brief_present: false });
+    const db = new DatabaseSync(join(own, "store.db"));
+    try { assert.equal(db.prepare("SELECT transcript FROM recall_runs ORDER BY id DESC LIMIT 1").get()?.transcript, null); }
+    finally { db.close(); }
+  }
+  t.diagnostic(JSON.stringify({ failAt, ...state, stdout: r.stdout }));
+});
+
 test("recall --hook 会话状态：按需输出，身份和已注入 brief 独立", (t) => {
   const own = join(dir, "recall-session-state");
   const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "会话状态主会话偏好", "--summary", "偏好"], alpha, own);

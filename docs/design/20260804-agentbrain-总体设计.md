@@ -3308,6 +3308,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-24 用户按 fix-recall-state 单授权修复状态合同。斜杠命令仍不注入偏好和召回提醒，也不写 recall_runs；只有显式请求 `want_session_state:true` 时返回空 additionalContext 与 worker、brief_present，避免 agy 插件一直保持 pending。会话定位和身份判断纳入 store 的 try/finally；定位后的非 opencode、非 agy 文件在 realpath 时消失则将 transcript 置 null。验证先红后绿，覆盖斜杠命令状态组合、异常关闭和插件与真实 CLI 联调，再跑全量测试、类型检查及隔离 CLI 验证。不改插件实现、配置或库结构，库版本保持 1；代码可用 git 回退。
+
 - 2026-11-24 用户按 agy-plugin-brief 单授权实现 §7.8.4。SessionStart 返回空对象，PreInvocation 只消费 `agentbrain.session` 的 worker 三态与 brief_present。brief pending/done 与 prompt seen 分开；同一 prompt 重试不重复 capture 或 recall 上下文。规范应用根按 transcript、环境提示、GEMINI_HOME 下 acp 目录依次推导，存在的根取 realpath；标记和 seen 共用根与 id 的键，避免跨根串扰。验证先红后绿，再用隔离 stdin 跑仓库插件与真实 CLI。不改事件集合、宿主配置、库结构或配置键，代码可用 git 回退。
 
 - 2026-11-24 用户按状态合同单授权实现 §7.8.4。`want_session_state:true` 仅新增 `agentbrain.session`，旧 hook 输出不变。brief 状态只读 SYSTEM_MESSAGE，避免派活正文里的字面标签误判；读头与身份判断共用 262,144 字节上限。telemetryCtx 从检测结果补 transcript，stdin 会话 id 覆盖环境 id 时按合并后的 id 重新定位，保留多根冲突的 null。验证先红后绿，覆盖三态、恢复、截断路径、读头截断、三处环境坐标与真实 CLI 的日志对齐。不改变偏好筛选和排序，不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
