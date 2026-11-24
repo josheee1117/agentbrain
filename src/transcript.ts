@@ -5,7 +5,7 @@
  */
 import { CODEX_INJECTED, linesOf } from "./source.ts";
 import type { Host } from "./l2.ts";
-import { opencodeParts, opencodeSession } from "./opencode.ts";
+import { opencodeParts } from "./opencode.ts";
 import { readTranscript } from "./transcript-file.ts";
 
 export type TurnRole = "user" | "assistant" | "tool";
@@ -45,8 +45,9 @@ export interface Cleaned {
   aliases?: Map<string, string | null>;
 }
 
-/** worker 派活提示的约定标记：父 agent 让子代理先跑 `ab brief --worker`。 */
-const WORKER_PROMPT_MARK = /\bab brief --worker\b/;
+/** 首轮派活的开工标记，允许项目名和其他 brief 参数放在 --worker 前。 */
+const WORKER_PROMPT_MARK = /\bab brief(?:[ \t]+\S+)*?[ \t]+--worker\b/;
+const T3_WORKER_PREFIX = /^\s*\[T3 Code: (?:the agent in T3 thread "[^"\n]+" sent this message, not the user\.|this message came through T3 Code's tools, not from the user typing in this chat\.)\]/;
 /** pi 会话名：pi-worker、pi-worker: xxx、worker。 */
 const PI_WORKER_NAME = /^(?:pi-)?worker\b/i;
 
@@ -56,14 +57,30 @@ function textOf(content: unknown): string {
   return content.map((c: any) => (typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "")).join("\n");
 }
 
-/** pi worker：会话名是 worker、带 parentSession、或第一条 user 消息是带 `ab brief --worker` 的派活提示。 */
-export function isPiWorker(lines: any[]): boolean {
+/** Pi 与 agy 共用首轮判断。传入原始输入，不先剥掉宿主包装。 */
+function piAgyIdentity(lines: any[]): boolean | null {
+  if (lines.some((e) =>
+    (e?.type === "session" && e.parentSession) ||
+    (e?.type === "session_info" && typeof e.name === "string" && PI_WORKER_NAME.test(e.name.trim())) ||
+    (e?.type === "SYSTEM_MESSAGE" && typeof e.content === "string" && AGY_WORKER_BRIEF.test(e.content)),
+  )) return true;
   for (const e of lines) {
-    if (e?.type === "session" && e.parentSession) return true;
-    if (e?.type === "session_info" && typeof e.name === "string" && PI_WORKER_NAME.test(e.name.trim())) return true;
-    if (e?.type === "message" && e.message?.role === "user") return WORKER_PROMPT_MARK.test(textOf(e.message.content));
+    if (typeof e === "string") {
+      // 读头可能截在首条输入的 JSON 字符串里，只检查这一条，不扫系统提示或后续正文。
+      if (!/"type"\s*:\s*"USER_INPUT"/.test(e) && !(/"type"\s*:\s*"message"/.test(e) && /"role"\s*:\s*"user"/.test(e))) continue;
+      const start = /"(?:content|text)"\s*:\s*"/.exec(e);
+      const text = start ? e.slice(start.index + start[0].length).replace(/\\"/g, '"').replace(/\\n/g, "\n") : "";
+      return WORKER_PROMPT_MARK.test(text) || T3_WORKER_PREFIX.test(text) ? true : null;
+    }
+    const content = e?.type === "USER_INPUT" ? textOf(e.content)
+      : e?.type === "message" && e.message?.role === "user" ? textOf(e.message.content) : null;
+    if (content !== null) return WORKER_PROMPT_MARK.test(content) || T3_WORKER_PREFIX.test(content);
   }
-  return false;
+  return null;
+}
+
+export function isPiWorker(lines: any[]): boolean {
+  return piAgyIdentity(lines) === true;
 }
 
 /** Codex：session_meta 的 source 是子 agent 或 exec，或 originator 是 Claude Code / codex_exec。 */
@@ -339,11 +356,6 @@ function readAgy(lines: any[], b: Builder): void {
   }
 }
 
-function isAgyWorker(lines: any[], turns: Turn[]): boolean {
-  return lines.some((e) => e?.type === "SYSTEM_MESSAGE" && typeof e.content === "string" && AGY_WORKER_BRIEF.test(e.content)) ||
-    WORKER_PROMPT_MARK.test(turns.find((t) => t.role === "user")?.text ?? "");
-}
-
 /** 文件读不了时抛错，由调用方记为 source_unavailable。 */
 export function cleanTranscript(host: Host, file: string): Cleaned {
   if (host === "opencode") {
@@ -366,7 +378,7 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
   const b = new Builder();
   if (host === "agy") {
     readAgy(lines, b);
-    return { turns: b.turns, stripped: b.stripped, cwd: null, subagent: false, worker: isAgyWorker(lines, b.turns) };
+    return { turns: b.turns, stripped: b.stripped, cwd: null, subagent: false, worker: piAgyIdentity(lines) === true };
   }
   if (host === "claude") readClaude(lines, b);
   else if (host === "codex") readCodex(lines, b);
@@ -383,63 +395,63 @@ export function cleanTranscript(host: Host, file: string): Cleaned {
   return { turns: b.turns, stripped: b.stripped, cwd, subagent: host === "codex" && isCodexSubagent(lines), worker, ...(b.aliases.size ? { aliases: b.aliases } : {}) };
 }
 
-/**
- * 每轮召回用：这个宿主会话是不是被委派的 worker（不是用户本人在对话）。只读文件开头一小段，读不了按主会话处理。
- * Codex：session_meta 里 source 是子 agent、或 source=exec（codex exec）、或 originator 是 Claude Code（Claude 委派给 Codex 的实现会话）。
- * Claude：开头条目带 isSidechain（子代理）。
- * Pi：会话名是 worker、带 parentSession、或首条 user 消息是带 `ab brief --worker` 的派活提示（见 isPiWorker）。
- */
-export function isWorkerTranscript(file: string | null | undefined, maxBytes = 16_384): boolean {
-  if (!file) return false;
-  if (file.startsWith("opencode://")) {
-    try {
-      return !!opencodeSession(file)?.parent_id || cleanTranscript("opencode", file).worker;
-    } catch {
-      return false;
-    }
-  }
-  let head: any[];
-  let raw = "";
-  try {
-    raw = readTranscript(file, maxBytes);
-    head = raw.split("\n").slice(0, 20).flatMap((l) => {
-      try {
-        return [JSON.parse(l)];
-      } catch {
-        return [];
-      }
-    });
-  } catch {
-    return false;
-  }
-  if (head.some((e) => e?.isSidechain === true)) return true;
-  if (head[0]?.type === "session" && head[0]?.version !== undefined) return isPiWorkerFile(file, raw, head);
-  const meta = head.find((e) => e?.type === "session_meta")?.payload;
-  if (!meta) {
-    // Codex 的 session_meta 一行常带几十 KB 的 base_instructions，读到的开头解析不了；originator/source 排在前面，按原文匹配
-    if (!/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw)) return false;
-    return /"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw);
-  }
-  return isCodexWorkerMeta(meta);
+/** true 表示宿主信号或首轮阳性标记；false 表示完整首轮无标记；null 表示首轮不完整且无阳性标记。 */
+export function workerIdentity(file: string | null | undefined): boolean | null {
+  return readWorkerIdentity(file, 16_384);
 }
 
-/** pi 的系统提示常有几十 KB，首条 user 消息不一定在开头 16KB 里：需要时再多读一段（仍有上限）。 */
-const PI_HEAD_MAX_BYTES = 262_144;
-function isPiWorkerFile(file: string, raw: string, head: any[]): boolean {
-  if (isPiWorker(head)) return true;
-  if (head.some((e) => e?.type === "message" && e.message?.role === "user")) return false;
-  let more = raw;
-  try {
-    more = readTranscript(file, PI_HEAD_MAX_BYTES);
-  } catch {
-    return false;
-  }
-  const lines = more.split("\n").flatMap((l) => {
+/** 兼容既有 boolean 调用方：只有确定是 worker 才返回 true，读不了仍返回 false。 */
+export function isWorkerTranscript(file: string | null | undefined, maxBytes = 16_384): boolean {
+  return readWorkerIdentity(file, maxBytes) === true;
+}
+
+const WORKER_HEAD_MAX_BYTES = 262_144;
+function readWorkerIdentity(file: string | null | undefined, maxBytes: number): boolean | null {
+  if (!file) return null;
+  if (file.startsWith("opencode://")) {
     try {
-      return [JSON.parse(l)];
+      const cleaned = cleanTranscript("opencode", file);
+      return cleaned.worker ? true : cleaned.turns.some((t) => t.role === "user") ? false : null;
     } catch {
-      return [];
+      return null;
+    }
+  }
+  let raw: string;
+  try {
+    raw = readTranscript(file, maxBytes);
+  } catch {
+    return null;
+  }
+  const parseHead = (text: string): any[] => text.split("\n").filter(Boolean).map((l) => {
+    try {
+      return JSON.parse(l);
+    } catch {
+      return l;
     }
   });
-  return isPiWorker(lines);
+  const head = parseHead(raw);
+  if (head.some((e) => e?.isSidechain === true)) return true;
+  const meta = head.find((e) => e?.type === "session_meta")?.payload;
+  if (isCodexWorkerMeta(meta)) return true;
+  // Codex 的 session_meta 常带几十 KB 的 base_instructions，保持既有原文阳性信号。
+  if (/^\{"(?:timestamp|type)"[^\n]*"session_meta"/.test(raw) &&
+    (/"originator"\s*:\s*"(?:Claude Code|codex_exec)"/.test(raw) || /"source"\s*:\s*(?:"exec"|\{\s*"subagent")/.test(raw))) return true;
+  const identity = piAgyIdentity(head);
+  if (identity !== null) return identity;
+  const piAgy = head.some((e) => {
+    const type = typeof e === "string" ? /"type"\s*:\s*"([^"]+)"/.exec(e)?.[1] : e?.type;
+    return /^(?:session|session_info|message|USER_INPUT|SYSTEM_MESSAGE|PLANNER_RESPONSE|GENERIC)$/.test(type);
+  });
+  if (piAgy) {
+    // 两宿主的系统提示都可能把首条输入推到 16KB 之后，读头共用同一个上限。
+    try {
+      return piAgyIdentity(parseHead(readTranscript(file, WORKER_HEAD_MAX_BYTES)));
+    } catch {
+      return null;
+    }
+  }
+  return head.some((e) =>
+    (e?.type === "user" && !e.isMeta && !e.isCompactSummary && e.message?.role === "user") ||
+    (e?.type === "response_item" && e.payload?.type === "message" && e.payload?.role === "user"),
+  ) ? false : null;
 }

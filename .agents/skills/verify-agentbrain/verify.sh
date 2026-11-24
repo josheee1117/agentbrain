@@ -22,6 +22,7 @@ case "${1:-}" in
     step cli-agy-roots node --test src/agy-roots.test.ts
     step cli-agy-locate node --test src/agy-locate.test.ts src/host.test.ts
     step cli-agy-path-pin node --test src/agy-path-pin.test.ts
+    step cli-agy-worker node --test --test-name-pattern='Pi、agy|workerIdentity|先规范 agy' src/transcript.test.ts src/transcript-file.test.ts src/cli.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
@@ -320,9 +321,9 @@ db.close();
     step cli-guidance env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --kind rule --text "偏好测试：改动后先跑测试" --summary "验证规范" --global --confirmed
     GUIDE_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-guidance.log" 2>/dev/null | head -1)
     step cli-guidance-mark env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID"
-    step cli-guidance-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\"}\n' '$REPO' | env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qF '偏好测试：改动后先跑测试'"
+    step cli-guidance-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$ALOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qF '偏好测试：改动后先跑测试'"
     step cli-guidance-off env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID" --off
-    step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\"}\n' '$REPO' | env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
+    step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$ALOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
 
     # 10. 数据安全（admin.md，设计 §12.6）：单独一个库，备份 → 再写一条 → 恢复预览 → 恢复 → 清除被拒 → status 新增各行 → 权限
     ADM="$S/admin_home"; A="env AB_HOME=$ADM AB_REGISTRY=$AB_REGISTRY HOME=$FAKE_HOME node $ROOT/src/cli.ts"

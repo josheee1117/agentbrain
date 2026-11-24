@@ -2,6 +2,7 @@
 
 ## Sub-features
 - 宿主每轮钩子 (`ab recall --hook`)：不再按本轮提问自动检索注入记忆；改为输出常驻偏好 (`<agentbrain-prefs>`) + `<agentbrain-recall>` 提醒（要不要查历史记忆由模型判断）；引用开关开启时输出回答报告要求
+- 身份入口先通过 `telemetryCtx` / `allowedTranscript` 规范路径，再调用 `workerIdentity`。只有完整首轮无标记才确认主会话；待定时不调用 `guidanceBlock`，提醒照常，`raw.worker=true` 可强制 worker。
 - 文本检索保留：`ab recall <文本>` 仍支持按关键词和向量召回记忆（供手动查或对照评测使用）
 - 宿主集成接口支持：Claude Code hook (UserPromptSubmit)、Pi 扩展 `agentbrain-recall`、Codex 注入
 - 结果格式化输出：生成 `<agentbrain-recall>` 与 `<agentbrain-prefs>` 注入块，不再输出 `want_count`

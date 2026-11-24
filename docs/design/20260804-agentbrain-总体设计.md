@@ -3308,6 +3308,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-24 用户按 worker-identity 单授权实现 §7.8.3 的共用身份判断。`workerIdentity` 返回 true、false 或 null，分别表示已知 worker、完整首轮无标记、首轮待定；既有 `isWorkerTranscript` 和 `cleanTranscript.worker` 保持 boolean。Pi、agy 共用两类 T3 首轮前缀、带项目参数的开工标记和 262,144 字节读头上限。`recall --hook` 先规范路径，身份待定不调用 `guidanceBlock`，全局规则读取和提醒不变。测试覆盖截断路径、超长首行及未知身份，并用隔离 HOME 和临时库走真实 CLI。不加配置、表或列，库版本仍为 1；代码可用 git 回退。
+
 - 2026-11-24 用户按 agy-path-pin 单授权实现 §7.8.2 第 5 条。agy 登记在短写事务内核验已有路径，返回 new、touched 或 conflict；异根、无法确认本根及多根完整日志冲突均不改会话行，hook 不启动 work，手动 capture 明确失败。合法提示指向未落盘的另一根也不能替换已有路径。引用扫描优先使用已登记路径，没有基线时只补找唯一合法来源；读取前复用 agy 准入，失效软链不能串根。非 agy 保持原选择规则，Codex 换文件与旧进度接续不变。验证覆盖逐字段回读、work.log 不存在、真实 get --expand、全量测试与 verify.sh run。只使用隔离 HOME 和临时库，不新增配置、表或列，库版本仍为 1；代码可用 git 回退。
 
 - 2026-11-24 用户按 fix-roots-review 单授权修正发现异常报告。有不可读完整日志时不报 0 对话；同根日志和摘要库失败合成一条 unreadable，count 只计不可读日志，可选 summariesUnreadable 标明摘要库也失败，kind 枚举不变。不新增配置、表或列，库版本仍为 1。回归覆盖权限拒绝、逃逸链接、合并报错及真实 sweep 输出；代码可直接回退。

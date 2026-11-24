@@ -30,7 +30,7 @@ import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
-import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
+import { cleanTranscript, isWorkerTranscript, workerIdentity } from "./transcript.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
 import { agyLocate, agySessionId } from "./agy.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
@@ -226,7 +226,6 @@ async function cmdRecall(argv: string[]): Promise<void> {
   });
   let query: string;
   let cwd: string;
-  let worker = false;
   const t0 = performance.now();
   let hookRaw: Record<string, unknown> | null = null;
   if (values.hook) {
@@ -236,7 +235,6 @@ async function cmdRecall(argv: string[]): Promise<void> {
     if (typeof raw.prompt !== "string") return;
     query = raw.prompt;
     cwd = typeof raw.cwd === "string" && raw.cwd ? raw.cwd : process.cwd();
-    worker = raw.worker === true || isWorkerTranscript(typeof raw.transcript_path === "string" ? raw.transcript_path : null);
   } else {
     query = positionals.join(" ");
     cwd = process.cwd();
@@ -244,6 +242,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
   }
   const store = open();
   const ctx = hookRaw ? telemetryCtx(store, hookRaw, cwd) : null;
+  const worker = hookRaw ? hookRaw.worker === true ? true : workerIdentity(ctx?.transcript) : false;
   let cite = false;
   try {
     cite = citeEnabled(store.workDb);
@@ -259,7 +258,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
       const used: string[] = [];
       let prefs = "";
       try {
-        prefs = guidanceBlock(store.project().props.values(), worker, new Set(), used);
+        if (worker !== null) prefs = guidanceBlock(store.project().props.values(), worker, new Set(), used);
       } catch {
         prefs = "";
       }
@@ -283,14 +282,14 @@ async function cmdRecall(argv: string[]): Promise<void> {
     const stale: string[] = [];
     let recalled: string;
     try {
-      recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker);
+      recalled = await recall(store, query, cwd, () => createEmbedder(RECALL_EMBED_TIMEOUT_MS).embedder, used, stale, undefined, worker === true);
     } catch (e) {
       throw e;
     }
     let prefs = "";
     if (!query.trim().startsWith("/")) {
       try {
-        prefs = guidanceBlock(store.project().props.values(), worker, new Set(used), used);
+        prefs = guidanceBlock(store.project().props.values(), worker === true, new Set(used), used);
       } catch {
         prefs = "";
       }

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { zstdCompressSync } from "node:zlib";
 import { allowedTranscript, readTranscript, resolveTranscript } from "./transcript-file.ts";
 import { expandSource, latestAnchor, linesOf } from "./source.ts";
+import * as transcript from "./transcript.ts";
 import { cleanTranscript, isWorkerTranscript } from "./transcript.ts";
 import { modelOf } from "./telemetry.ts";
 
@@ -24,10 +25,13 @@ function env() {
   const home = join(dir, "home");
   const roots = { codex: join(home, ".codex/sessions"), codexArch: join(home, ".codex/archived_sessions"), claude: join(home, ".claude/projects/p"), pi: join(home, ".pi/agent/sessions") };
   for (const d of [roots.codex, roots.codexArch, roots.claude, roots.pi]) mkdirSync(d, { recursive: true });
-  const old = process.env.HOME;
-  process.env.HOME = home;
+  const old = { HOME: process.env.HOME, AB_HOME: process.env.AB_HOME, AGENTBRAIN_HOME: process.env.AGENTBRAIN_HOME, AB_REGISTRY: process.env.AB_REGISTRY };
+  Object.assign(process.env, { HOME: home, AB_HOME: join(dir, "store"), AGENTBRAIN_HOME: join(dir, "store"), AB_REGISTRY: join(dir, "repos") });
   const restore = () => {
-    process.env.HOME = old;
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   };
   return { dir, home, roots, restore };
 }
@@ -333,6 +337,71 @@ test("expandSource：使用准入返回的真实路径，不再次读取符号�
   } finally {
     t.mock.restoreAll();
     syncBuiltinESMExports();
+    e.restore();
+  }
+});
+
+test("Pi、agy：首轮在 16KB 后仍识别，262KB 截断仅匹配首条输入原文", () => {
+  const e = env();
+  try {
+    const prompts = [
+      '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]',
+      "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]",
+      "先跑 ab brief repo --worker",
+    ];
+    for (const host of ["pi", "agy"] as const) {
+      const input = (content: string) => host === "pi"
+        ? { type: "message", id: "u", message: { role: "user", content: [{ type: "text", text: content }] } }
+        : { type: "USER_INPUT", step_index: 0, content };
+      const header = host === "pi" ? { type: "session", version: 3, id: "s" } : { type: "SYSTEM_MESSAGE", content: "宿主上下文" };
+      for (const [i, prompt] of prompts.entries()) {
+        const late = join(e.dir, `${host}-late-${i}.jsonl`);
+        writeFileSync(late, [header, { type: host === "pi" ? "custom" : "SYSTEM_MESSAGE", content: "x".repeat(20_000) }, input(prompt)].map((l) => JSON.stringify(l)).join("\n") + "\n");
+        assert.equal(isWorkerTranscript(late), true, `${host} 首轮在 16KB 后`);
+        writeFileSync(late, [{ ...header, padding: "x".repeat(20_000) }, input(prompt)].map((l) => JSON.stringify(l)).join("\n") + "\n");
+        assert.equal(isWorkerTranscript(late), true, `${host} 第一行宿主头本身超过 16KB`);
+        const huge = join(e.dir, `${host}-huge-${i}.jsonl`);
+        const { type, ...body } = input(`${prompt}\n${"x".repeat(300_000)}`);
+        writeFileSync(huge, JSON.stringify({ type, padding: "x".repeat(20_000), ...body }) + "\n");
+        assert.throws(() => JSON.parse(readTranscript(huge, 262_144)), SyntaxError);
+        assert.equal(isWorkerTranscript(huge), true, `${host} 首行超过 262KB`);
+      }
+      const falsePositive = join(e.dir, `${host}-huge-main.jsonl`);
+      writeFileSync(falsePositive, JSON.stringify(input(`请解释这句：${prompts[0]} ${"x".repeat(300_000)}`)) + "\n");
+      assert.equal(isWorkerTranscript(falsePositive), false, "原文回退不能扫描正文里的 T3 前缀");
+      const system = join(e.dir, `${host}-system-only.jsonl`);
+      writeFileSync(system, JSON.stringify({ type: host === "pi" ? "message" : "SYSTEM_MESSAGE", message: { role: "system", content: prompts[0] }, content: prompts[0] }) + "\n");
+      assert.equal(isWorkerTranscript(system), false, "系统提示里的 T3 前缀不是用户输入");
+    }
+  } finally {
+    e.restore();
+  }
+});
+
+test("workerIdentity：完整首轮才确认主会话，无首轮或读取失败保持 null", () => {
+  const e = env();
+  try {
+    assert.equal(typeof transcript.workerIdentity, "function");
+    for (const host of ["pi", "agy"] as const) {
+      const p = join(e.dir, `${host}-identity.jsonl`);
+      const input = (content: string) => host === "pi" ? { type: "message", message: { role: "user", content } } : { type: "USER_INPUT", content };
+      writeFileSync(p, JSON.stringify(input("用户的完整首轮")) + "\n");
+      assert.equal(transcript.workerIdentity(p), false);
+      writeFileSync(p, JSON.stringify(input("ab brief repo --worker")) + "\n");
+      assert.equal(transcript.workerIdentity(p), true);
+      writeFileSync(p, JSON.stringify(input("x".repeat(300_000))) + "\n");
+      assert.equal(transcript.workerIdentity(p), null);
+      writeFileSync(p, JSON.stringify(host === "pi" ? { type: "session", version: 3 } : { type: "SYSTEM_MESSAGE", content: "宿主注入" }) + "\n");
+      assert.equal(transcript.workerIdentity(p), null);
+    }
+    const named = join(e.dir, "named.jsonl");
+    writeFileSync(named, JSON.stringify({ type: "session_info", name: "pi-worker" }) + "\n");
+    assert.equal(transcript.workerIdentity(named), true, "宿主阳性信号不依赖首轮");
+    for (const p of [null, undefined, join(e.dir, "missing.jsonl")]) {
+      assert.equal(transcript.workerIdentity(p), null);
+      assert.equal(isWorkerTranscript(p), false, "保留 boolean 入口的读不了行为");
+    }
+  } finally {
     e.restore();
   }
 });

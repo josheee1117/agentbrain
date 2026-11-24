@@ -85,6 +85,7 @@ function ab(args: string[], cwd: string, storeHome = home, extraEnv: Record<stri
       env: {
         ...process.env,
         AB_HOME: storeHome,
+        AGENTBRAIN_HOME: storeHome,
         AB_REGISTRY: repos,
         HOME: fakeHome,
         PATH: `${bin}:${process.env.PATH}`,
@@ -458,6 +459,7 @@ function recall(args: string[], cwd: string, storeHome: string, stdin?: string):
     env: {
       ...process.env,
       AB_HOME: storeHome,
+      AGENTBRAIN_HOME: storeHome,
       AB_REGISTRY: repos,
       HOME: fakeHome,
       PATH: `${bin}:${process.env.PATH}`,
@@ -943,7 +945,7 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   const pref = remember(["--confirmed", "--global", "--kind", "rule", "--text", "说人话", "--summary", "偏好"]);
   const prefId = pref.out.match(/\[([0-9a-f]{8})\]/)![1];
   assert.equal(ab(["guidance", prefId], alpha, own).code, 0);
-  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha }));
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, transcript_path: join(transcriptDir, `2026-01-01T00-00-00-000Z_${SESSION}.jsonl`) }));
   assert.equal(hit.code, 0, hit.err);
   const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } };
   assert.match(j.hookSpecificOutput.additionalContext, /说人话/);
@@ -951,6 +953,47 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /别在 alpha 计数里用全局锁/);
   const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 计数", cwd: alpha }));
   assert.equal(slash.out, "");
+});
+
+test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不注主会话偏好", () => {
+  const own = join(dir, "recall-worker-store");
+  const pref = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "只给主会话的工作偏好", "--summary", "偏好"], alpha, own);
+  assert.equal(pref.code, 0, pref.err);
+  assert.equal(ab(["guidance", pref.out.match(/\[([0-9a-f]{8})\]/)![1]], alpha, own).code, 0);
+  assert.equal(ab(["remember", "--global", "--confirmed", "--for-workers", "--kind", "rule", "--text", "所有代理都要看的全局规则", "--summary", "规则"], alpha, own).code, 0);
+  const logs = join(fakeHome, ".gemini/antigravity-cli/brain/worker-recall/.system_generated/logs");
+  mkdirSync(logs, { recursive: true });
+  const full = join(logs, "transcript_full.jsonl");
+  const short = join(logs, "transcript.jsonl");
+  writeFileSync(short, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: "截断版不含派活前缀" }) + "\n");
+  const hook = (transcript_path: string | null, worker?: boolean) => {
+    const result = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "开始干活", cwd: alpha, transcript_path, worker }));
+    assert.equal(result.code, 0, result.err);
+    return JSON.parse(result.out).hookSpecificOutput.additionalContext as string;
+  };
+  for (const prefix of [
+    '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]',
+    "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]",
+  ]) {
+    writeFileSync(full, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: `${prefix}\n<USER_REQUEST>任务</USER_REQUEST>` }) + "\n");
+    const canonical = hook(full);
+    assert.equal(hook(short), canonical, "两种路径必须得到相同身份与输出");
+    assert.doesNotMatch(canonical, /<agentbrain-prefs>|只给主会话/);
+  }
+  writeFileSync(full, JSON.stringify({ type: "SYSTEM_MESSAGE", content: "首轮还未落盘" }) + "\n");
+  for (const path of [full, null, join(logs, "missing.jsonl")]) {
+    const pending = hook(path);
+    assert.match(pending, /要不要查历史记忆由你判断/);
+    assert.doesNotMatch(pending, /<agentbrain-prefs>|只给主会话/);
+  }
+  const rules = ab(["brief", "--worker"], alpha, own);
+  assert.equal(rules.code, 0, rules.err);
+  assert.match(rules.out, /所有代理都要看的全局规则/);
+  assert.doesNotMatch(rules.out, /只给主会话/);
+  writeFileSync(full, JSON.stringify({ type: "USER_INPUT", step_index: 0, content: "用户的完整首轮" }) + "\n");
+  assert.match(hook(full), /只给主会话的工作偏好/);
+  assert.doesNotMatch(hook(full, true), /只给主会话/);
+  assert.doesNotMatch(hook(null, false), /<agentbrain-prefs>/, "false 不能确认尚无首轮的会话身份");
 });
 
 test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab status", async () => {

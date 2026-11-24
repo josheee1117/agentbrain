@@ -1,17 +1,52 @@
 /** 运行：node --test src/transcript.test.ts */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cleanTranscript, isAbCommand, stripInjected } from "./transcript.ts";
+import { cleanTranscript, isAbCommand, isWorkerTranscript, stripInjected } from "./transcript.ts";
 
-const dir = mkdtempSync(join(tmpdir(), "ab-tr-"));
+const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-tr-")));
 const file = (name: string, lines: object[]) => {
   const p = join(dir, name);
   writeFileSync(p, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
   return p;
 };
+
+test("Pi、agy：T3 前缀和带项目参数的开工标记共用首轮判断，剥包装前识别", (t) => {
+  const old = { HOME: process.env.HOME, AB_HOME: process.env.AB_HOME, AGENTBRAIN_HOME: process.env.AGENTBRAIN_HOME, AB_REGISTRY: process.env.AB_REGISTRY };
+  Object.assign(process.env, { HOME: join(dir, "home"), AB_HOME: join(dir, "store"), AGENTBRAIN_HOME: join(dir, "store"), AB_REGISTRY: join(dir, "repos") });
+  t.after(() => {
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  const delegated = [
+    '[T3 Code: the agent in T3 thread "parent" sent this message, not the user.]\n修一下',
+    "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n修一下",
+    "先跑 `ab brief repo --worker`",
+    "先跑 `ab brief --worker repo`",
+    "先跑 `ab brief --scene code repo --worker`",
+    "先跑 `ab brief --worker`",
+  ];
+  for (const host of ["pi", "agy"] as const) {
+    const input = (content: string, i: number) => host === "pi"
+      ? { type: "message", id: `u${i}`, parentId: i ? `u${i - 1}` : null, message: { role: "user", content } }
+      : { type: "USER_INPUT", step_index: i, content };
+    for (const [i, prompt] of delegated.entries()) {
+      const content = host === "agy" ? `${prompt}\n<USER_REQUEST>\n任务\n</USER_REQUEST>` : prompt;
+      const p = file(`worker-${host}-${i}.jsonl`, [input(content, 0)]);
+      assert.equal(cleanTranscript(host, p).worker, true, `${host}: ${prompt}`);
+      assert.equal(isWorkerTranscript(p), true, `${host}: ${prompt}`);
+    }
+    for (const [i, prompt] of ["正文里讨论 T3 Code 的子代理", `请解释这段文字：${delegated[0]}`, "用户自己开的会话"].entries()) {
+      const p = file(`main-${host}-${i}.jsonl`, [input(prompt, 0), input(delegated[1], 1)]);
+      assert.equal(cleanTranscript(host, p).worker, false, `${host}: ${prompt}`);
+      assert.equal(isWorkerTranscript(p), false, `${host}: ${prompt}`);
+    }
+  }
+});
 
 test("Claude：剥掉 recall 注入、system-reminder 和 ab 调用及其输出；工具报错留首尾", () => {
   const p = file("c.jsonl", [
