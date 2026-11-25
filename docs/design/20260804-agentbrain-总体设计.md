@@ -1569,47 +1569,51 @@ ab view 卡片:
 
 验收：固定 12 对人工标注样例，覆盖范围收窄/放宽各 2 对、已同步历史的重复/补充各 2 对、真正当前冲突 2 对、范围不明 2 对。每条启用路径各跑一遍，12 对关系正确且目标引用正确，历史组零冲突。对已确认、未确认目标各测试一次落 L1、投影、`ab get` 与 `ab view`；改动只能是新提议、关系与展示标记，目标正文、范围和确认状态逐字段不变。再追加跨会话印证、用户只确认提议、归档提议、显式 resolution，检查只有后两类用户处置能解除提醒。删 L3 重建后同样成立。对全局与项目、子代理读取分别验证，不可读提议不得泄漏正文或 id。
 
-### 9.7 代码变更驱动的记忆重核（CANDIDATE，2026-11-23 用户同意写入设计；实现按 4 张单逐张授权）
+### 9.7 代码变更驱动的记忆重核与需求收口更新（CANDIDATE，2026-11-23 定稿，2026-11-25 实测修订；单 1 已授权实现）
 
-> 来源：用户 2026-11-23 提出「需求做完后知识库要在某个节点自动更新，要解决粒度、核验和各层联动」。原方案经 Claude Opus 与 Gemini Neon 两轮评审定稿，记录在 pm `docs/agentbrain/2026-11-23-kb-change-reverify/`（`final-plan.md` 与 `reviews/`）。本节只写进 agentbrain 的部分；pm 侧接线由 pm 自己的单子做。
+> 来源：用户 2026-11-23 提出「需求做完后知识库要在某个节点自动更新，要解决粒度、核验和各层联动」。原方案经 Claude Opus 与 Gemini Neon 两轮评审定稿，记录在 pm `docs/agentbrain/2026-11-23-kb-change-reverify/`（`final-plan.md` 与 `reviews/`）。2026-11-25 在正式库只读副本、隔离沙箱与 6 个近期真实交付需求上实测复核后，补齐了 cherry-pick 非祖先平移、标识符共变预筛、存量决定补锚点、`quotepath=false`，以及用户拍板同意的三项补充（需求收口正向提炼、未确认草稿退场、pm 侧收尾门禁），拆为 6 张单按单逐张授权推进。本节写 agentbrain 侧设计与两仓拆单总账；pm 侧实现落 pm 仓库。
 
-**结论**：代码改了，就找出引用了被改文件的旧记忆，只读主干代码重新核验；核出不符的按确认来源决定还给不给 agent 看。首版只按文件路径和锚点找，不做语义召回，也不做每次上线的模型裁决。零新表，不升 `SCHEMA_VERSION`，配置键新增 0。
+**结论**：反向侧，代码改了就找出引用或锚定了被改文件的旧记忆，只读主干代码重新核验；核出不符的按确认来源决定还给不给 agent 看。正向侧，需求收尾清灶时单次提炼 ≤3 条带锚点的定稿候选，并允许未确认自动草稿被同项目新草稿退场而不触碰任何已确认条目。零新表，不升 `SCHEMA_VERSION`，配置键新增 0。
 
-#### 9.7.1 现网断点（2026-11-23，基于 `3d98d83` 与正式库只读副本）
+#### 9.7.1 现网断点（2026-11-23 基线 + 2026-11-25 实测复核）
 
 | # | 现象 | 位置 |
 |---|---|---|
-| 1 | `verify_queue` 实际是死路径：§11.9 取消每轮自动召回后，只剩手动 `ab recall <文本>` 会往里放；正式库 0 行。pm ADR 0033 删掉的 `tools/board`、`features/board.md` 相关 30 条仍是 active、代码核验转正 | `src/store.ts:456-460`，`src/recall.ts:123` |
-| 2 | 入队项没有 `code_evidence` 就被直接出队；代码核验只认坑和事实 | `src/work.ts:1344-1345`，`src/work.ts:55` |
-| 3 | 被判与代码不符（`stale`）的已确认条目照常注入：`recallable()` 在看 stale 之前因 `confirmed` 返回 true；`brief.ts` 不看 stale；`ab confirm` 遇到已确认直接退出，`confirm` 事件也不清 stale，误判无法回滚 | `src/visibility.ts:39`，`src/l2.ts:486-490`，`src/cli.ts:849-851` |
-| 4 | 核验读原目录工作区，而 pm ADR 0028 规定原目录停在测试分支；主干前进而原目录 HEAD 没动时，要么核错分支，要么当成提交没变跳过 | `src/work.ts:1358-1367` |
-| 5 | 入队项不走 §12.6.12 的退避，只比 `last.head === head`；无法核验和证据不足的条目会随每次无关提交重新入队 | `src/work.ts:1362-1367` |
+| 1 | `verify_queue` 实际是死路径：§11.9 取消每轮自动召回后，只剩手动 `ab recall <文本>` 会往里放；正式库 0 行。pm ADR 0033 删掉的 `tools/board`、`features/board.md` 相关 30 条代码转正条（含无引文共 71 条）仍是 active | `Store.queueReverify`（`src/store.ts`）、`cmdRecall`（`src/cli.ts`） |
+| 2 | 入队项没有 `code_evidence` 就被直接出队；代码核验只认坑和事实 | `verifyStep` / `CODE_VERIFIABLE`（`src/work.ts`） |
+| 3 | 被判与代码不符（`stale`）的已确认条目照常注入：`recallable()` 在看 stale 之前因 `confirmed` 返回 true；`brief()` 不滤也不标 stale；`ab confirm` 遇到已确认直接退出，`fold()` 的 `confirm` 事件也不清 stale，误判无法回滚 | `recallable`（`src/visibility.ts`）、`brief`（`src/brief.ts`）、`fold`（`src/l2.ts`）、`cmdConfirm`（`src/cli.ts`） |
+| 4 | 核验读原目录工作区，而 pm ADR 0028 规定原目录停在测试分支；主干前进而原目录 HEAD 没动时，要么核错分支，要么当成提交没变跳过 | `verifyStep`（`src/work.ts`） |
+| 5 | 入队项不走 §12.6.12 的退避，只比 `last.head === head`；无法核验和证据不足的条目会随每次无关提交重新入队 | `verifyStep`（`src/work.ts`） |
+| 6 | 仅靠单会话自动抽取会产生大量相互矛盾的未确认过程草稿且漏抽需求最终决定；同一需求内新草稿写 `supersedes` 后，旧未确认草稿仅挂 `pending_corrections` 仍占召回与待确认视图 | `fold`（`src/l2.ts`）、`recallable`（`src/visibility.ts`） |
 
 #### 9.7.2 和原方案相比
 
 | 原方案 | 本节 | 依据 |
 |---|---|---|
-| 两阶段节点挂在 pm_new 的需求收口和上线 | pm_new 已停用。主触发是 `ab work --sweep`，pm 的 `tools/req log 上线` 只做后台加速 | pm 和 agentbrain 自身直接提交主干，不经过 `req log` |
-| 收口时自动改仓内文档（L0/L1） | 不做。文档由项目 agent 随需求分支改，pm 拆线和初验时检查 | pm 分工：主会话和负责人不改业务仓 |
-| 另起 G0/G1/G2 粒度分档 | 记忆失效只看 diff，不分档 | 改一行常量也可能让引用它的坑过时 |
-| 4 路召回加模型裁决 | 首版只做路径和锚点反查，其余见 9.7.8 | 需求、T3 线程和 pi 会话之间没有持久对应关系；语义召回的精度没验证过 |
+| 两阶段节点挂在 pm_new 的需求收口和上线 | pm_new 已停用。反向主触发是 `ab work --sweep` + pm `tools/req log 上线` 后台加速；正向提炼挂在 `req log 清灶` 与 `ab synthesize` | pm 和 agentbrain 自身直接提交主干，不经过 `req log`；2026-11-25 实测仅单会话抽取会产生 114 条碎片并漏掉核心架构决定 |
+| 收口时自动改仓内文档（L0/L1） | 不做。文档由项目 agent 随需求分支改，pm 拆线、初验与 `req log 清灶` 机械门禁检查 | pm 分工：主会话和负责人不改业务仓 |
+| 另起 G0/G1/G2 粒度分档 | 记忆失效只看 diff，不分档；正向提炼在需求收口节点固定产出 ≤3 条定稿候选 | 改一行常量也可能让引用它的坑过时 |
+| 4 路召回加模型裁决 | 首版做路径、锚点反查与离线存量 `decision` 一次性补锚点，不做每次上线的模型裁决与语义召回 | 存量 321 条项目 `decision` 100% 无代码证据，2026-11-25 实测仅 1 次离线调用（~20.7k tokens/96 条）即可补锚点，运行时零 LLM 成本 |
 | 规则和决定一起处理 | 规则不进代码失效，决定进 | 抽样 30 条规则，80% 是流程或偏好；抽样 30 条决定，83–90% 和代码挂钩，其中至少 3 条已过时 |
 
-保留不变：只追加事件，不原地改写；对已确认条目的替代只进待确认纠正（`src/l2.ts:508-523` 已实现）；历史设计稿不回头改。
+保留不变：只追加事件，不原地改写；对已确认条目的替代只进待确认纠正（`fold` 里 `pending_corrections` 不变）；历史设计稿不回头改；用户确认过的条目（含跨会话印证与代码转正）永不自动归档或自动降为 `superseded_draft`。
 
 #### 9.7.3 判定「可能过时」
 
-每条记忆自带基线，不设项目级水位。
+每条记忆自带基线，不设项目级水位。所有执行路径列出或 diff 的 Git 命令必须带 `-c core.quotepath=false`，避免中文文件名（如本设计文档）被八进制转义导致路径匹配失真。
 
-- 基线 `base` 取以下三者中最新的一个：`code_evidence.head`（`src/l2.ts:257`）、新增的 `anchor_head`、`verify_attempts` 里最近一次非出错的 head。
+- 基线 `base` 取以下三者中最新的一个：`code_evidence.head`、`anchor_head`、`verify_attempts` 里最近一次非出错的 head。
 - 目标 `trunk-ref`：主干名取 pm `repos/<项目>.md` 的「- 主干：」行。`origin/<主干>` 和本地 `<主干>` 互为祖先时取较新的那个，分叉时取 `origin/<主干>`。
-- 命中：`git diff --name-only <base> <trunk-ref> -- <引文路径 ∪ 锚点路径>` 非空。同一个 base 的条目一起跑。
+- 若 `base` 是 `trunk-ref` 的祖先：计算 `git -c core.quotepath=false diff --name-only <base> <trunk-ref> -- <引文路径 ∪ 锚点路径>`，非空即命中；同一个 `base` 的条目一起跑。
+- 若 `base` **不是** `trunk-ref` 的祖先（常见于功能分支合并或 cherry-pick 进主干）：不再一刀切跳过，先算 `mb = merge-base <base> <trunk-ref>`，按主干真实内容三分支判定（2026-11-25 正式库 237 条非祖先记忆实测：`169` 条 71.3% 已被 cherry-pick 到主干且引文完好、`32` 条 13.5% 主干分叉后已改坏引文、仅 `36` 条 15.2% 属真正未合主干）：
+  1. 若所有引文在 `trunk-ref` 上仍逐字存在（已 cherry-pick 合入且未改坏）：不跳过，将该条核验基线平移吸附到 `trunk-ref`（记一条当前 `trunk-ref` 的 `verify_attempts`），后续主干再改动即可正常触发。
+  2. 否则若文件在 `trunk-ref` 存在且 `merge-base..trunk-ref` 改过该路径（或引文已断 / 有锚点命中）：照常命中，交由预筛/入队在 `trunk-ref` 上重核。
+  3. 否则（`merge-base..trunk-ref` 未碰该文件，或文件尚未合入主干）：视为分支独有未上线代码，跳过，等合入主干或手动 `ab verify <id>`。
 
-以下跳过，不入队：
+其余跳过/降级规则：
 
 | 情形 | 处理 | 实测（2026-11-23） |
 |---|---|---|
-| base 不是 trunk-ref 的祖先（还在开发分支上） | 跳过，等合进主干，或手动 `ab verify <id>` | agentbrain 15 个 head 里 8 个、insuranceagent 5 个里 5 个 |
 | 路径在 base 的树里本来就不存在（被 gitignore 或没进 git） | 跳过这条路径 | 21 条 |
 | base 已被 gc 或 rebase 掉（`git cat-file` 失败） | 不跳过，改为对 trunk-ref 做机械核对 | 0 例 |
 | 上次结果是无法核验，或还在 §12.6.12 的退避期内 | 不入队，只能手动 `ab verify <id>` | — |
@@ -1618,44 +1622,50 @@ pm 实测：273 条有引文，54 个不同 head，命中 160 条，约 0.35 秒
 
 #### 9.7.4 机械预筛和入队上限
 
-- 有引文的条目先做零成本核对：文件还在、引文逐字还在、`git diff -U0` 旧侧改动行和引文 `[行首-3, 行尾+3]` 不交叠，就跳过模型。按 base 批量跑。
+- 有引文的条目先做零成本核对：只有当文件在 `trunk-ref` 存在、引文逐字还在、`git -c core.quotepath=false diff -U0` 旧侧改动行与引文 `[行首-3, 行尾+3]` 不交叠，**且本次 diff 增删行中不包含引文里的任何非常规标识符（长度 ≥4、剔除语言保留字后的词元）**时，才跳过模型。按 base 批量跑。
+  - 2026-11-25 实测依据：全库 `141` 条被 `±3 行` 跳过的条目中，抽样 `14` 条调真实模型重核，标识符共变组抓到远距离契约变更失效 `[d16d321e]`（`ai-data` `packages/contracts/src/index.ts`，改动距引文超 25 行，仅标识符共变命中），无标识符共变组 `contradicted` 为 `0/6`；全库放行增量 `80` 条，运行时零 LLM 成本。
 - 只有锚点的条目没有行号，不预筛，直接入队。
-- 单次 `--changed` 最多入队 20 条（代码常量）。超出时按以下顺序取，并报出截掉的数量：文件被删 > 引文断裂 > 锚点命中 > 改动行交叠。
-- 消费仍由 `ab work --sweep` 按 `MAX_VERIFY_PER_RUN = 3`（`src/work.ts:49`）来；同一条在同一个 head 上不重复核。
-- 实测：全库 414 → 226，pm 160 → 113。上线前回放必须从被跳过的条目里抽 10 条人工判断，报出预筛漏报率。
+- 单次 `--changed` 最多入队 20 条（代码常量）。超出时按以下顺序取，并报出截掉的数量：文件被删 > 引文断裂 > 锚点命中 > 改动行交叠或标识符共变。
+- 消费仍由 `ab work --sweep` 按 `MAX_VERIFY_PER_RUN = 3`（`src/work.ts`）来；同一条在同一个 head 上不重复核。
+- 上线前回放必须从被跳过的条目里抽 10 条人工判断，报出预筛漏报率。
 
 #### 9.7.5 核验与止损
 
-- 核验只读 trunk-ref（`git show`、`git grep <ref>`、`git ls-tree`），不切换、不改动工作区。
+- 核验只读 `trunk-ref`（`git -c core.quotepath=false` 驱动的 `show` / `grep` / `ls-tree` / `log` / `blame`），不切换、不改动工作区。
 - `CODE_VERIFIABLE` 加入 `decision`。决定核出 verified 时只写代码证据、清 stale，**不把未确认的决定自动转正**；坑和事实的自动转正不变（§8.4、§9.4 不变）。
 - 核出 contradicted 后，按确认来源处理：
 
 | 确认来源 | `ab brief` / 每轮召回 | 其他 |
 |---|---|---|
 | 用户确认、跨会话印证 | 照常注入，正文前加 `[与代码不符@<短sha>，待用户核实]`；brief 末尾加一行汇总 | `ab status`「要处理」列出 |
-| 代码核验转正，或未确认 | 不注入 | `ab search`、`ab get`、`ab status` 仍可见 |
+| 代码核验转正，或未确认 | 不注入（含 `guidanceBlock`、不计入 `inject_log`） | `ab search`、`ab get`、`ab status` 仍可见 |
 
   理由：用户确认的条目被判不符，可能是决定被推翻，也可能是代码偏离了决定（实测一例正是 bug），也可能是误报。只凭一次模型判断就拿掉，等于替用户撤销决定。代码转正的条目唯一的依据已经被同一机制推翻，留着只会占 `BRIEF_MAX_CHARS` 和 `RECALL_MAX_ITEMS` 的预算。现网 `confirmed && stale` 为 0 条，这条规则是首扫之前先装好的护栏。
-- 回滚有两条路：`ab verify <id>` 强制重核（绕过 stale 和同 head 去重），通过就清 stale；`ab confirm <id>` 对 stale 条目写 `confirm({ by: "user", override_stale: true })` 清掉 stale，并在当前 head 记一条 `verify_attempts`，防止同一 head 上再误判。
+- 回滚有两条路：`ab verify <id>` 强制重核（绕过 stale 和同 head 去重），通过就清 stale；`ab confirm <id>` 对 stale 条目写 `confirm({ by: "user", override_stale: true })` 清掉 stale，并在当前本地仓库 head（能解出时）记一条 `verify_attempts`（`verified`）并出队，防止同一 head 上再误判。
+- **未确认草稿退场（2026-11-25 用户批准）**：在 L2 投影 `fold()` 中，当一条活跃且未确认的条目 `p` 带 `p.supersedes = old.id`，且 `old` 同时满足 `old.state === "active"`、`!old.confirmed`、`old.origin === "extract"`、`old.project_id === p.project_id` 时，给 `old` 派生 `superseded_draft = p.id`（L1 不追加修改旧条目的事件，原 `old.pending_corrections` 保持不动；若把 `p` 归档，重新投影后 `old.superseded_draft` 自动恢复为 `null`）。
+  - 带有 `superseded_draft` 的旧草稿不再进入 `recallable()`、`brief` 待确认计数与 `expiry` 到期待复审清单，但在 `ab search`、`ab get` 仍可查到并标 `[已被草稿 <8位id> 替代]`。
+  - 若 `old` 已被任何来源确认（`user` / `corroboration` / `code`）或 `origin !== "extract"` 或跨项目，严禁设置 `superseded_draft`，仍按原有待确认纠正规则保留不动。
 
 #### 9.7.6 触发
 
 | 入口 | 做法 |
 |---|---|
-| `ab work --sweep`（主） | 每个项目每天最多扫一次，不联网，用本地已有的 ref；扫描日记在 `work_meta` 的 `verify_scan_day:<project>`。**代码合入时默认关**，正式库首扫经用户放行后才打开 |
-| pm `tools/req log <需求> 上线 --lane <线>`（加速） | 按 `lane.repo` 在后台另起进程跑 `git fetch origin <主干> && ab verify --changed <repo>`，限时 15 秒，失败写 `work.log`，不影响 `req log` 的退出码。多仓需求按线逐仓触发 |
-| 手动 | `ab verify --changed <project>`、`ab verify <id>` |
+| `ab work --sweep`（主，反向） | 每个项目每天最多扫一次，不联网，用本地已有的 ref；扫描日记在 `work_meta` 的 `verify_scan_day:<project>`。**代码合入时默认关**，正式库首扫经用户放行后才打开 |
+| pm `tools/req log <需求> 上线 --lane <线>`（加速，反向） | 按 `lane.repo` 在后台另起进程跑 `git fetch origin <主干> && ab verify --changed <repo>`，限时 15 秒，失败写 `work.log`，不影响 `req log` 的退出码。多仓需求按线逐仓触发 |
+| 需求收口正向提炼（`ab synthesize`，单 4） | `pm tools/req log <需求> 清灶` 后（或手动执行 `ab synthesize <project> --spec <文件>... [--diff-base <ref>]`）单次调模型，输入需求定谱/README/ADR、`git -c core.quotepath=false diff --stat` 与命中路径/主题的存量记忆，产出 ≤3 条带合法 `anchors` 与可选 `supersedes` 的**未确认候选**写入 L1，终端打印候选确认指令与同主题未确认过程草稿清理提示；不自动转正、不自动归档 |
+| 手动 | `ab verify --changed <project>`、`ab verify <id>`、`ab synthesize ...` |
 
 #### 9.7.7 接口和数据形状
 
 ```text
 ab verify --changed <project> [--ref <git-ref>] [--run] [--dry-run] [--json]
     默认只入队、不调模型；--run 同步最多核 3 条
-    输出：trunk-ref、命中数、各类跳过数、预筛跳过数、入队数、截掉数
+    输出：trunk-ref、命中数、各类跳过数、基线平移数、预筛跳过数、入队数、截掉数
 ab verify <id-prefix> [--ref <git-ref>]
 ab remember | correct ... [--anchor <relpath | repo:relpath>]...   最多 5 个
 ab tag <id-prefix> [--anchor ... | --anchor none]
 ab confirm <id-prefix>        对 stale 条目写 override_stale
+ab synthesize <project> --spec <file>... [--diff-base <ref>] [--dry-run] [--json]   需求收口提炼（单 4）
 ```
 
 ```ts
@@ -1664,41 +1674,46 @@ RememberBody.anchors?: string[]; RememberBody.anchor_head?: string
 TagBody.anchors?: string[]                     // 整组替换，[] 清空，缺省不动
 ConfirmBody.override_stale?: boolean           // by === "user" 时投影清 target.stale
 Proposition.anchors: string[]                  // 缺省 []
+Proposition.superseded_draft: string | null    // 仅由未确认 extract 草稿被同项目未确认 supersede 时派生
 work_meta: "verify_scan_day:<project>" → "YYYY-MM-DD"
 ```
 
 - 锚点只收仓内相对路径或 `<repo>:<relpath>`，拒绝绝对路径、`..`、`.git`、以 `/` 结尾的目录。`--changed <repo>` 同时匹配本仓路径和全库带 `<repo>:` 前缀的跨仓锚点。
+- 所有 Git 路径枚举/diff 调用固定带 `-c core.quotepath=false`。
 - 和 §12.6.1 纪律的关系：只在已有事件体里加可选字段，复用已有的 `work_meta` 表，不加事件种类、表或列，所以不升版本号。旧代码读到新字段会忽略它：看不到锚点，也不会因 `override_stale` 清掉 stale，结果只是保守，不会写坏。
-- 和 §2.2 的关系：20 条、5 个锚点、15 秒、每天一次都是代码常量，配置键新增 0。
+- 和 §2.2 的关系：20 条、5 个锚点、15 秒、每天一次、收口提炼上限 3 条都是代码常量，配置键新增 0。
 
 #### 9.7.8 拆单、验收和授权
 
-| 单 | 内容 | 验收 |
-|---|---|---|
-| 1 止损护栏 | 9.7.5 的注入规则（brief、召回、展示、status），`ab confirm` 清 stale，`ab verify <id>`（先读工作区或显式 `--ref`） | 三类确认来源被标 stale 后，brief 和召回的注入数符合上表；`ab confirm` 一键恢复；`inject_log` 里 stale 条目经 brief 或召回注入的次数为 0（用户确认的除外） |
-| 2 变更驱动重核 | 只读 `--ref`、trunk-ref 选取、9.7.3 的判定和排除、9.7.4 的预筛，修断点 2、4、5，`ab verify --changed`，sweep 每日一次（默认关） | 负例：改无关行 0 入队；删文件、改常量必入队；非祖先 head 和 gitignore 路径不入队；无法核验的不重复入队；原目录停在别的分支甚至有未提交改动时仍按主干核，工作区不变。在 /tmp 副本回放 pm ADR 0033、0034 的提交区间，board 相关条目全部命中，报出预筛压缩比和抽检漏报率 |
-| 3 锚点和决定核验 | `anchors` / `anchor_head`、`--anchor`、决定纳入核验但不自动转正 | 锚点格式校验、跨仓匹配、决定入队后能被消费且不转正 |
-| pm 侧（不在本仓） | `req log 上线` 后台加速；拆线、初验模板补「要不要改活文档、候选决定挂哪些锚点」 | 由 pm 验收 |
+| 单 | 仓 | 内容 | 验收 |
+|---|---|---|---|
+| **1 止损护栏与草稿退场**（2026-11-25 已授权开始实现） | agentbrain | 9.7.5 注入规则（brief、召回、常驻偏好、status、展示）、`ab confirm` `override_stale`、未确认 `extract` 草稿 `superseded_draft` 投影与过滤、`ab verify <id> [--ref]`（含只读 ref 工具与决定不自动转正） | 三类确认来源与未确认条被标 `stale` 后，brief/recall/guidance 与 `inject_log` 符合上表；`ab confirm` 一键清 `stale` 并防同 head 复发；`ab verify <id> [--ref]` 不改脏工作区且决定不转正；未确认草稿退场可逆且绝不伤及已确认条目 |
+| **2 变更驱动重核**（待单独授权） | agentbrain | 只读 `--ref`、trunk-ref 选取、9.7.3 三分支非祖先基线判定、9.7.4 `±3 行 OR 标识符共变` 预筛、`-c core.quotepath=false`、修断点 2/4/5、`ab verify --changed`、sweep 每日一次（默认关） | 负例：改无关行且无标识符命中 0 入队；删文件/改常量/远距离改同标识符必入队；非 cherry-pick 未合入分支和 gitignore 路径不入队；cherry-pick 原文完好自动平移基线；原目录停在别分支有脏改动仍按主干核。在 `/tmp` 副本回放 pm ADR 0033、0034 与 cherry-pick 仓库，报压缩比与漏报率 |
+| **3 锚点、决定核验与存量补锚点**（待单独授权） | agentbrain | `anchors` / `anchor_head`、`--anchor`、决定纳入核验但不自动转正；一次性离线脚本为存量 ~321 条项目级 `decision` 生成补锚点预览单，经用户确认后写入 `tag` 事件 | 锚点格式校验（含中文路径）、跨仓匹配、决定入队消费不转正；存量回填预览单幂等生成与用户确认写入 |
+| **4 需求收口正向提炼**（待单独授权） | agentbrain | `ab synthesize` CLI 与结构化提炼流程（喂入定谱/ADR、`diff --stat`、存量记忆，产出 ≤3 条带锚点未确认候选 + 草稿清理提示） | 隔离库回放真实已收尾需求：产出 ≤3 条候选、锚点 100% 合法、可提 `supersedes` 但零自动转正/零自动归档 |
+| **pm-1 流程接线**（不在本仓） | pm | `req log 上线` 后台 `ab verify --changed` 加速器；`req log 清灶` 接 `ab synthesize`；拆线/初验模板补活文档与候选决定锚点提示 | 由 pm 验收（`ab` 不可用时 `req log` 照常） |
+| **pm-2 收尾机械门禁与忽略告警**（不在本仓） | pm | `req log 清灶` / `pm_tidy.py` 零模型检查：`README.md`「可复用」禁止留模板占位词、`repos/*.md` 禁多段 `## 现状` 堆叠且超 7 天告警；`verify-status` 发现 `.gitignore` 忽略 `.agents/skills/verify-*` 时报错 | 由 pm 验收（临时仓库与真实档案校验通过） |
 
-顺序 1 → 2 → 3；pm 侧可以和 3 同时做。每张单开工前由用户说「开始实现」。
+顺序 `ab-1 → ab-2 → ab-3 → ab-4`；`pm-2` 可随时与 `agentbrain` 并行，`pm-1` 在 `ab-2` 之后（其 `synthesize` 接线等 `ab-4`）。每张 `agentbrain` 单开工前由用户说「开始实现」。
 
 需要用户点头的节点：
 
-1. 每张单的「开始实现」。
-2. 单 2 合入后：先交 /tmp 副本的回放报告，用户放行后才在正式库首扫（预计写入 150 条以上 `verify` 事件），并打开每日扫描。
+1. 每张单的「开始实现」（单 1 已于 2026-11-25 获批）。
+2. 单 2 合入后：先交 `/tmp` 副本的回放报告，用户放行后才在正式库首扫（预计写入 150 条以上 `verify` 事件），并打开每日扫描。
+3. 单 3 离线存量 `decision` 补锚点：先交预览单，用户放行后再写 `tag` 事件。
 
 #### 9.7.9 首版不做
 
-- 自动改写仓内文档。
+- 自动改写仓内文档（L0/L1/L2 仅做提醒与门禁，不代写正文）。
 - 规则（`rule`）的代码失效。
-- 符号名反查、语义分桶召回、需求到会话的血缘、每次上线的模型裁决。
+- 全库无锚点记忆的语义分桶召回、需求到会话的血缘、每次上线的模型裁决。
 - pm 看板读 `store.db`。
-- 自动归档、自动改写已确认条目、自动从项目级升到全局。
+- 自动归档或自动改写已确认条目（包括跨会话印证与代码转正）、自动从项目级升到全局。
 
 #### 9.7.10 第二版的触发条件（满足任一）
 
-1. 跑满 2 周或 10 次真实上线后，出现至少 3 起「代码已改、旧的决定没有锚点导致漏检、并误导了 agent」：先离线给存量约 250 条和代码挂钩的决定补锚点，仍不够再只对决定试语义召回。
-2. 多次出现「改了实现、引文那几行没动，预筛放过了」：加符号名反查。
+1. 补齐首版锚点并跑满 2 周或 10 次真实上线后，仍出现至少 3 起「无代码指针的纯概念决定因架构调整过时且误导 agent」：试点针对无锚点决定的语义召回。
+2. 多次出现「跨文件或重命名符号导致单文件标识符共变预筛仍漏检」：引入跨文件符号引用反查。
 3. `override_stale` 次数超过 contradicted 总数的 20%：先收紧代码核验提示词，暂停扩大召回。
 
 ---
@@ -3121,8 +3136,8 @@ Dogfood 用于发现新失败场景，不替代固定 fixture 和不变量测试
 
 原 P1 的 L1/Purge 状态机不再是 throwaway：它就是切片 1 的 `store.ts` 及其测试。原 T0 三项：#15 已由用户口述关闭；#7 降为可选（真有值得搬的记忆手动录入）；§7.4 已关闭。
 
-2026-11-23：§9.7 代码变更驱动重核不占上表的切片编号，按它自己的 4 张单逐张授权推进。
-2026-11-23：先推进 §7.8 的 Antigravity 三处接入，再推进 §9.7；两节都须另获实现授权。
+2026-11-23：§9.7 代码变更驱动重核不占上表的切片编号，按它自己的拆单（2026-11-25 修订为 agentbrain 4 张单 + pm 2 张单）逐张授权推进。
+2026-11-23：先推进 §7.8 的 Antigravity 三处接入，再推进 §9.7；§7.8 已合入 `docs/agentbrain-v2-design`（`b535bf6`），2026-11-25 用户授权开始 §9.7 单 1（`ab-1`）。
 
 ---
 
@@ -3307,6 +3322,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-25 用户批准修订 §9.7 并授权单 1（`ab-1`）开始实现：基于正式库只读副本与 6 个真实交付需求核查结论，补入 cherry-pick 非祖先三分支基线判定（237 条中 71.3% 原文已在主干、13.5% 主干分叉改坏）、`±3 行 OR 非常规标识符共变`机械预筛（抓到 `[d16d321e]` 远距离失效）、Git 路径 `-c core.quotepath=false`、单 3 附带存量 ~321 条项目决定离线补锚点；采纳用户拍板三项：① 新增单 4 `ab synthesize` 需求收口正向提炼（≤3 条未确认候选，零自动转正/归档）；② `fold()` 新增同项目未确认 `extract` 草稿被未确认 `supersedes` 替代时派生 `superseded_draft`（不改已确认条目、可逆）；③ pm 侧拆出 `pm-2` 收尾机械门禁与 `.gitignore` 忽略技能告警。拆单更新为 `ab-1..ab-4` + `pm-1..pm-2`，其余单仍按单授权。
 
 - 2026-11-24 用户按 fix-recall-state 单授权修复状态合同。斜杠命令仍不注入偏好和召回提醒，也不写 recall_runs；只有显式请求 `want_session_state:true` 时返回空 additionalContext 与 worker、brief_present，避免 agy 插件一直保持 pending。会话定位和身份判断纳入 store 的 try/finally；定位后的非 opencode、非 agy 文件在 realpath 时消失则将 transcript 置 null。验证先红后绿，覆盖斜杠命令状态组合、异常关闭和插件与真实 CLI 联调，再跑全量测试、类型检查及隔离 CLI 验证。不改插件实现、配置或库结构，库版本保持 1；代码可用 git 回退。
 
