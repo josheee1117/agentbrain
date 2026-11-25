@@ -18,7 +18,8 @@ import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState }
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
 import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
-import { chatChain, chatClient, loadChatConfig } from "./llm.ts";
+import { chatChain, chatClient, loadChatConfig, type Chat } from "./llm.ts";
+import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } from "./codeverify.ts";
 import { allowedTranscript } from "./transcript-file.ts";
 import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
@@ -127,6 +128,7 @@ function marks(p: Proposition): string {
     unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
     p.stale ? "[与代码不符]" : "",
+    p.superseded_draft ? `[已被草稿 ${short(p.superseded_draft)} 替代]` : "",
   ].join("");
 }
 
@@ -735,6 +737,7 @@ function cmdGet(argv: string[]): void {
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
+      p.superseded_draft ? `[已被草稿 ${short(p.superseded_draft)} 替代] 不再召回或计入待确认。归档新草稿用 ab archive ${short(p.superseded_draft)}，保留其中一条用 ab confirm <id>。` : "",
       // 并入、替代的对方在下面"关联"里列；冲突和待确认纠正在这里带操作提示。
       p.merged_into ? `已判定为重复并归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
       ...p.conflicts.map((id) => {
@@ -854,25 +857,79 @@ async function cmdCorrect(argv: string[]): Promise<void> {
   }
 }
 
+function projectRepo(store: Store, p: Proposition): string | null {
+  const name = store.listProjects().find(project => project.id === p.project_id)?.name;
+  return name ? loadRegistry().find(entry => entry.name === name)?.path ?? null : null;
+}
+
 function cmdConfirm(argv: string[]): void {
   const { positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true });
   if (!positionals[0]) die("用法: ab confirm <id 前缀>");
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
-    if (p.confirmed) {
+    if (p.confirmed && !p.stale) {
       console.log(`已是确认状态 [${short(p.id)}] ${p.text}`);
       return;
     }
     const found = detectHost();
     const det = found.ok ? found.detection : null;
-    store.lifecycle("confirm", p.id, det?.session_id ?? null);
-    console.log(`已确认 [${short(p.id)}] ${p.text}`);
+    if (p.stale) {
+      const root = projectRepo(store, p);
+      let head: string | null = null;
+      if (root) {
+        try { head = new RepoTools(root).head(); } catch { /* 本地仓库不可用时仍允许用户确认 */ }
+      }
+      const now = new Date();
+      store.commit([{ kind: "confirm", project_id: p.project_id, session_id: det?.session_id ?? null, target_id: p.id, body: { by: "user", override_stale: true } }], tx => {
+        if (head) {
+          intake.recordVerify(tx, p.id, head, "verified", now);
+          intake.dequeueReverify(tx, p.id);
+        }
+      });
+    } else store.lifecycle("confirm", p.id, det?.session_id ?? null);
+    console.log(`已确认${p.stale ? "并清除与代码不符标记" : ""} [${short(p.id)}] ${p.text}`);
     // §12.6.7 T7：在 agent 会话里执行也记成用户确认，所以把这件事说出来，并记下是哪个会话执行的
     if (det) console.log(`这次记为用户确认，由 ${det.host} 会话 ${(det.session_id ?? "未知").slice(0, 8)} 执行。只有用户明确说认可时才该执行这条命令；如果不是，请如实告诉用户。`);
   } finally {
     store.close();
   }
+}
+
+async function cmdVerify(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({ args: argv, options: { ref: { type: "string" }, changed: { type: "boolean" } }, strict: true, allowPositionals: true });
+  if (values.changed) die("--changed 扫描尚未实现，本单只支持 ab verify <id> [--ref <git-ref>]");
+  if (positionals.length !== 1) die("用法: ab verify <id 前缀> [--ref <git-ref>]");
+  const store = open();
+  try {
+    const p = findByPrefix(store, positionals[0]);
+    if (p.project_id === null) die("全局记忆不能按项目代码核验");
+    const root = projectRepo(store, p);
+    if (!root) die("找不到该记忆的本地项目仓库");
+    const tools = values.ref !== undefined ? new GitRefRepoTools(root, values.ref) : new RepoTools(root);
+    const head = tools.head();
+    if (!head) die("项目仓库无法解析 HEAD");
+    const cfg = loadChatConfig(home());
+    if ("error" in cfg) die(`核验模型配置不可用：${cfg.error}`);
+    const base = chatChain(cfg, readKey, (c, k) => chatClient(c, k, undefined));
+    if ("error" in base) die(`核验模型不可用：${base.message}`);
+    let model = base.model;
+    const chat: Chat = async (messages, opts) => {
+      const r = await base.chat(messages, opts);
+      if (r.model) model = r.model;
+      return r;
+    };
+    const result = await verifyProposition(chat, tools, p);
+    const now = new Date();
+    const appends = result.verdict === "verified" || result.verdict === "contradicted"
+      ? [{ kind: "verify" as const, project_id: p.project_id, session_id: null, target_id: p.id, body: { outcome: result.verdict, head, refs: result.refs, model, prompt_version: VERIFY_PROMPT_VERSION } }]
+      : [];
+    store.commit(appends, tx => {
+      intake.recordVerify(tx, p.id, head, result.verdict, now);
+      intake.dequeueReverify(tx, p.id);
+    });
+    console.log(`核验 [${short(p.id)}] ${result.verdict} @${head.slice(0, 7)}${p.kind === "decision" && !p.confirmed && result.verdict === "verified" ? "，只写代码证据并清除 stale，不自动转正" : ""}`);
+  } finally { store.close(); }
 }
 
 function cmdArchive(argv: string[]): void {
@@ -1576,6 +1633,8 @@ const USAGE = `用法:
                                     再列双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
                                     --expand 展开记下这条时的原始讨论；原对话不在时先列库里存的原话
                                     （Pensieve 导入条打开原 md 文件）
+  ab verify <id 前缀> [--ref <git-ref>]
+                                    强制单条代码重核；--ref 只读目标提交，不切分支或改工作区；决定不自动转正
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab tag <id 前缀> --scene <design,code,review|none>
@@ -1776,6 +1835,7 @@ async function main(): Promise<void> {
     if (cmd === "search") return await cmdSearch(rest);
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
+    if (cmd === "verify") return await cmdVerify(rest);
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "tag") return cmdTag(rest);
     if (cmd === "guidance") return cmdGuidance(rest);

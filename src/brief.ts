@@ -2,7 +2,8 @@
 import type { Store } from "./store.ts";
 import { SCENES, type PropKind, type Proposition, type Scene } from "./l2.ts";
 import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
-import { active, disputed, short, TRUST_LABEL } from "./present.ts";
+import { active, disputed, short, stalePrefix, TRUST_LABEL } from "./present.ts";
+import { staleBlocked, staleWarning } from "./visibility.ts";
 import { reviewList } from "./expiry.ts";
 
 export const BRIEF_MAX_CHARS = 2000;
@@ -31,7 +32,7 @@ function lines(list: Proposition[], kinds: PropKind[], budget: number, used: str
   for (const p of rows) {
     // §12.6.7 T1：不是用户确认的条目标出转正来源；没标的就是用户确认过的（见 TRUST_LEGEND）
     const trust = p.confirmed_by && p.confirmed_by !== "user" ? `（${TRUST_LABEL[p.confirmed_by]}）` : "";
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${trust}${disputed(p)}\n`;
+    const line = `- [${short(p.id)}] ${stalePrefix(p)}${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${trust}${disputed(p)}\n`;
     if (text.length + line.length > budget) continue;
     text += line;
     used.push(p.id);
@@ -90,6 +91,14 @@ export function expiryReminder(store: Store, projectName: string | undefined, no
   return `到期未复审 ${due.length} 条（最老超期 ${oldest} 天）：ab review 看清单，ab confirm 留用，ab review --archive 归档。`;
 }
 
+export function staleReminder(store: Store, projectName: string | undefined, worker = false): string | null {
+  const pid = projectName ? store.listProjects().find(p => p.name === projectName)?.id : undefined;
+  const n = active(store).filter(p => staleWarning(p) && (p.project_id === null
+    ? !worker || (p.for_workers && p.kind === "rule")
+    : p.project_id === pid && (!worker || p.kind === "rule" || p.kind === "pitfall"))).length;
+  return n ? `与代码不符 ${n} 条（待用户核实）：ab status 看清单，ab verify <id> 重核，ab confirm <id> 保留。` : null;
+}
+
 /** 什么时候该先搜（§11.5 (i)，2026-10-16 用户批准）。算在固定部分里：超预算时先截条目，不截这行。主会话和子代理都给。 */
 export const SEARCH_HINT = "遇到这几类情况先 ab search <关键词> 再动手：用户提到\"上次/之前/我们定过\"；要改不熟悉的模块或配置；报错看不出原因；要做设计取舍。看一条的来龙去脉用 ab get。";
 
@@ -108,7 +117,7 @@ function contentBudgets(fixed: string[], titles: string[], cap = BRIEF_MAX_CHARS
 
 /** used（可选）收集实际输出的条目 id，供到期复审记"最近被注入"。scenes 是 --scene 给的场景（§11.10）。 */
 export function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean, used: string[] = [], scenes: Scene[] = []): string {
-  const all = active(store);
+  const all = active(store).filter(p => !staleBlocked(p) && !p.superseded_draft);
   const global = all.filter((p) => p.project_id === null);
   const pending: Proposition[] = [];
 
@@ -216,6 +225,8 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   if (conflict) tails.push(conflict);
   const expiry = expiryReminder(store, project?.name);
   if (expiry) tails.push(expiry);
+  const stale = staleReminder(store, project?.name, worker);
+  if (stale) tails.push(stale);
   // 场景段有单独预算；标题和提示的字符从通用段预算里扣，两段加起来不超总上限。
   const sceneReserve = sceneRows.length ? sceneTitle.length + 1 + SCENE_OVERHEAD_RESERVE : 0;
   const budgets = contentBudgets(

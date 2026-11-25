@@ -28,6 +28,7 @@ case "${1:-}" in
     step cli-agy-plugin node --test src/agy-plugin.test.ts
     step cli-agy-denoise node --test --test-name-pattern='agy 去噪|agy 定位点|agy 三处去噪|assistant_citations' src/agy.test.ts src/extract.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
+    step cli-stale-guard env AB1_EVIDENCE="$EV" node --test src/stale-guard.test.ts src/stale-cli.test.ts src/codeverify.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
     S=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-XXXXXX")")

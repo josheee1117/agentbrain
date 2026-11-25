@@ -184,6 +184,7 @@ export interface VerifyBody extends ModelProvenance {
 export interface ConfirmBody {
   by?: ConfirmedBy;
   sessions?: string[];
+  override_stale?: boolean;
 }
 
 /** archive 事件体。ab work 归档过期提议、或判定为重复后并入 into 时带 reason。用 reactivate 可撤销。 */
@@ -243,6 +244,7 @@ export interface Proposition {
   superseded_by?: string;
   /** 指向本条、仍 active 且未获用户确认的纠正，读路径必须标出（§9.2）。 */
   pending_corrections: string[];
+  superseded_draft: string | null;
   origin: Origin;
   basis?: Basis;
   trigger?: string;
@@ -370,6 +372,7 @@ export function fold(rows: EventRow[]): Projection {
         state: "active",
         supersedes: b.supersedes,
         pending_corrections: [],
+        superseded_draft: null,
         origin: b.origin ?? "manual",
         basis: b.basis,
         trigger: b.trigger,
@@ -435,6 +438,7 @@ export function fold(rows: EventRow[]): Projection {
       target.confirmed = true;
       if ((b.by ?? "user") === "user") target.unreconciled = false; // §9.4.4：只有用户能解除
       if ((b.by ?? "user") === "user") target.demoted = null;
+      if ((b.by ?? "user") === "user" && b.override_stale === true) target.stale = null;
       if (target.demoted) {
         // 撤销过的条目不再自动转正（旧版本写下的事件按顺序重放时也一样）
         if (target.confirmed_by !== "user") {
@@ -478,8 +482,8 @@ export function fold(rows: EventRow[]): Projection {
       const b = JSON.parse(r.body) as VerifyBody;
       if (b.outcome === "verified") {
         target.stale = null;
-        if (target.demoted) continue; // 撤销过的条目代码核验也不再转正
         target.code_evidence = { head: b.head, refs: b.refs };
+        if (target.demoted || target.kind === "decision") continue; // 决定只补代码证据，撤销过的条目不再转正
         if (!target.confirmed) {
           target.confirmed_by = "code";
           target.confirmed_event = by;
@@ -520,6 +524,14 @@ export function fold(rows: EventRow[]): Projection {
     }
     target.state = "superseded";
     target.superseded_by = p.id;
+  }
+  // 草稿退场只看最终替代状态，不能让已被替代的草稿继续隐藏旧条目。
+  for (const p of props.values()) {
+    if (p.state !== "active" || p.confirmed || !p.supersedes) continue;
+    const target = props.get(p.supersedes);
+    if (target?.state !== "active" || target.confirmed || target.origin !== "extract" || target.project_id !== p.project_id) continue;
+    const previous = target.superseded_draft ? props.get(target.superseded_draft) : undefined;
+    if (!previous || p.seq > previous.seq) target.superseded_draft = p.id;
   }
   const conflict_pairs: ConflictPair[] = [];
   for (const pair of pairs.values()) {

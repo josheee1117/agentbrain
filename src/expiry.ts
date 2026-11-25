@@ -60,7 +60,7 @@ export function sourceClock(): Clock {
 export function reviewList(props: Iterable<Proposition>, usage: Map<string, Usage>, now: Date, clock: Clock = ownClock): ReviewItem[] {
   const out: ReviewItem[] = [];
   for (const p of props) {
-    if (p.state !== "active" || p.confirmed) continue;
+    if (p.state !== "active" || p.confirmed || p.superseded_draft) continue;
     const lastUsed = usage.get(p.id)?.last_used ?? null;
     const start = clock(p);
     const since = lastUsed && lastUsed > start ? lastUsed : start;

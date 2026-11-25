@@ -2,10 +2,10 @@
 import type { Embedder, Store } from "./store.ts";
 import type { Proposition } from "./l2.ts";
 import { indexText } from "./store.ts";
-import { isConfirmedCorrection, RECALL_KINDS, recallable } from "./visibility.ts";
+import { isConfirmedCorrection, RECALL_KINDS, recallable, staleBlocked } from "./visibility.ts";
 import { resolveProject } from "./registry.ts";
 import { CITE_CHECK_BUDGET_MS, citationsStale } from "./citecheck.ts";
-import { disputed, KIND_LABEL, short } from "./present.ts";
+import { disputed, KIND_LABEL, short, stalePrefix } from "./present.ts";
 import { LexIndex, lexTokens } from "./lexical.ts";
 
 export const RECALL_MAX_ITEMS = 3;
@@ -122,7 +122,7 @@ export async function recall(
   for (const p of picked) {
     const outdated = !!here && !!p.code_evidence && !p.stale && citationsStale(here.path, p.code_evidence.refs, deadline);
     const body = p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ");
-    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${p.confirmed ? "" : "（未确认）"}${corrections.includes(p) ? `（纠正，替代 [${short(p.supersedes!)}]）` : ""}${disputed(p)}${outdated ? "（可能过时）" : ""}: ${body}`;
+    let line = `- [${short(p.id)}] ${KIND_LABEL[p.kind]}${p.confirmed ? "" : "（未确认）"}${corrections.includes(p) ? `（纠正，替代 [${short(p.supersedes!)}]）` : ""}${disputed(p)}${outdated ? "（可能过时）" : ""}: ${stalePrefix(p)}${body}`;
     const used = head.length + rows.join("\n").length + (rows.length ? 1 : 0) + tail.length;
     const room = RECALL_MAX_CHARS - used;
     if (room <= 0) break;
@@ -157,6 +157,8 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
     .filter(
       (p) =>
         p.state === "active" &&
+        !staleBlocked(p) &&
+        !p.superseded_draft &&
         p.project_id === null &&
         p.guidance &&
         !p.scenes.length &&
@@ -174,7 +176,7 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
   const lines: string[] = [];
   let used = head.length + tail.length;
   for (const p of rows) {
-    const line = `- [${short(p.id)}] ${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}`;
+    const line = `- [${short(p.id)}] ${stalePrefix(p)}${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}`;
     const add = line.length + (lines.length ? 1 : 0);
     if (used + add > GUIDANCE_MAX_CHARS) continue;
     lines.push(line);

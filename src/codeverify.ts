@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { CodeRef, Proposition } from "./l2.ts";
+import { KIND_LABEL, type CodeRef, type Proposition } from "./l2.ts";
 import { parseJsonLoose, promptVersion, WorkFailure, type Chat, type ChatMessage, type ToolSpec } from "./llm.ts";
 import { hasSecret, sanitize } from "./sanitize.ts";
 
@@ -34,13 +34,18 @@ export class RepoTools {
   }
 
   /** 仓库内相对路径 → 绝对路径。绝对路径、..、.git、符号链接逃逸、git pathspec 魔法一律拒绝。 */
-  resolve(rel: unknown): string {
+  protected scopedPath(rel: unknown): string {
     if (typeof rel !== "string" || rel.includes("\0") || isAbsolute(rel) || /^[:-]/.test(rel)) throw new RepoEscape(`不允许的路径: ${String(rel)}`);
     const parts = rel.split(/[\\/]+/).filter((p) => p && p !== ".");
     if (parts.includes(".git")) throw new RepoEscape(`不允许读 .git: ${rel}`);
     const abs = resolve(this.root, ...parts);
+    if (abs !== this.root && !abs.startsWith(this.root + sep)) throw new RepoEscape(`路径越出仓库: ${rel}`);
+    return abs;
+  }
+
+  resolve(rel: unknown): string {
+    const abs = this.scopedPath(rel);
     const inside = (p: string) => p === this.root || p.startsWith(this.root + sep);
-    if (!inside(abs)) throw new RepoEscape(`路径越出仓库: ${rel}`);
     let real: string;
     try {
       real = realpathSync(abs);
@@ -52,13 +57,27 @@ export class RepoTools {
   }
 
   git(args: string[]): string {
-    return execFileSync("git", ["--literal-pathspecs", "-C", this.root, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-pager", ...args], {
+    return execFileSync("git", ["--literal-pathspecs", "-C", this.root, "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.hooksPath=/dev/null", "--no-pager", ...args], {
       encoding: "utf8",
       timeout: GIT_TIMEOUT_MS,
       maxBuffer: 4 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "/", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_NOSYSTEM: "1" },
     });
+  }
+
+  protected revision(): string[] { return []; }
+
+  protected search(pattern: string): string {
+    return this.git(["grep", "-n", "-I", "-F", "--no-textconv", "--untracked", "-e", pattern, "--", "."]);
+  }
+
+  protected list(rel: unknown): string {
+    return readdirSync(this.resolve(rel), { withFileTypes: true })
+      .filter(d => d.name !== ".git")
+      .slice(0, MAX_LIST_ENTRIES)
+      .map(d => d.isDirectory() ? `${d.name}/` : d.name)
+      .join("\n");
   }
 
   head(): string | null {
@@ -81,7 +100,7 @@ export class RepoTools {
     if (typeof sha !== "string" || !/^[0-9a-f]{7,40}$/.test(sha)) return null;
     try {
       if (this.git(["cat-file", "-t", sha]).trim() !== "commit") return null;
-      this.git(["merge-base", "--is-ancestor", sha, "HEAD"]);
+      this.git(["merge-base", "--is-ancestor", sha, this.revision()[0] ?? "HEAD"]);
       return sanitize(this.git(["show", "-s", "--format=%H%n%B", sha])).text;
     } catch {
       return null;
@@ -96,7 +115,7 @@ export class RepoTools {
         const pattern = args.pattern;
         if (typeof pattern !== "string" || !pattern || pattern.length > MAX_PATTERN_CHARS) return "错误：pattern 必须是 1 到 200 字的字符串";
         try {
-          out = this.git(["grep", "-n", "-I", "-F", "--no-textconv", "--untracked", "-e", pattern, "--", "."]);
+          out = this.search(pattern);
         } catch (e) {
           out = (e as { status?: number }).status === 1 ? "（没有匹配）" : `错误：${(e as Error).message.split("\n")[0]}`;
         }
@@ -107,21 +126,16 @@ export class RepoTools {
         const end = Math.min(lines.length, start + MAX_READ_LINES - 1, Math.floor(Number(args.end_line) || start + MAX_READ_LINES - 1));
         out = lines.slice(start - 1, end).map((l, i) => `${start + i}: ${l}`).join("\n") || "（空）";
       } else if (name === "list_dir") {
-        const abs = this.resolve(args.path ?? ".");
-        out = readdirSync(abs, { withFileTypes: true })
-          .filter((d) => d.name !== ".git")
-          .slice(0, MAX_LIST_ENTRIES)
-          .map((d) => (d.isDirectory() ? `${d.name}/` : d.name))
-          .join("\n");
+        out = this.list(args.path ?? ".");
       } else if (name === "git_log") {
         const n = Math.min(20, Math.max(1, Math.floor(Number(args.n) || 10)));
         const extra = args.path ? ["--", relative(this.root, this.resolve(args.path)) || "."] : [];
-        out = this.git(["log", `-n${n}`, "--date=short", "--format=%h %ad %s", ...extra]);
+        out = this.git(["log", `-n${n}`, "--date=short", "--format=%h %ad %s", ...this.revision(), ...extra]);
       } else if (name === "git_blame") {
         const abs = this.resolve(args.path);
         const start = Math.max(1, Math.floor(Number(args.start_line) || 1));
         const end = Math.max(start, Math.min(start + 50, Math.floor(Number(args.end_line) || start)));
-        out = this.git(["blame", "--no-textconv", "-s", "-L", `${start},${end}`, "--", relative(this.root, abs)]);
+        out = this.git(["blame", "--no-textconv", "-s", "-L", `${start},${end}`, ...this.revision(), "--", relative(this.root, abs)]);
       } else {
         return `错误：没有工具 ${name}`;
       }
@@ -155,6 +169,48 @@ export class RepoTools {
   }
 }
 
+export class GitRefRepoTools extends RepoTools {
+  readonly commitSha: string;
+
+  constructor(root: string, ref: string) {
+    super(root);
+    if (!ref || ref.startsWith("-") || /[\s\0]/.test(ref)) throw new Error("不允许的 git ref");
+    this.commitSha = this.git(["rev-parse", "--verify", `${ref}^{commit}`]).trim();
+  }
+
+  protected override revision(): string[] { return [this.commitSha]; }
+
+  override head(): string { return this.commitSha; }
+
+  override resolve(rel: unknown): string {
+    const abs = this.scopedPath(rel);
+    const path = relative(this.root, abs);
+    if (path) this.git(["cat-file", "-t", `${this.commitSha}:${path}`]);
+    return abs;
+  }
+
+  override fileLines(rel: unknown): string[] | null {
+    const path = relative(this.root, this.scopedPath(rel));
+    const object = `${this.commitSha}:${path}`;
+    if (this.git(["cat-file", "-t", object]).trim() !== "blob") return null;
+    if (Number(this.git(["cat-file", "-s", object]).trim()) > MAX_FILE_BYTES) return null;
+    if (!this.git(["ls-tree", this.commitSha, "--", path]).startsWith("100")) return null;
+    return sanitize(this.git(["show", object])).text.split("\n");
+  }
+
+  protected override search(pattern: string): string {
+    return this.git(["grep", "-n", "-I", "-F", "--no-textconv", "-e", pattern, this.commitSha, "--", "."])
+      .split("\n").map(line => line.startsWith(this.commitSha + ":") ? line.slice(this.commitSha.length + 1) : line).join("\n");
+  }
+
+  protected override list(rel: unknown): string {
+    const path = relative(this.root, this.resolve(rel));
+    const tree = path ? `${this.commitSha}:${path}` : this.commitSha;
+    return this.git(["ls-tree", "--format=%(objecttype) %(path)", tree]).trimEnd().split("\n")
+      .slice(0, MAX_LIST_ENTRIES).map(line => line.startsWith("tree ") ? line.slice(5) + "/" : line.slice(line.indexOf(" ") + 1)).join("\n");
+  }
+}
+
 const TOOLS: ToolSpec[] = [
   { type: "function", function: { name: "search_code", description: "在仓库里按字面字符串搜索（git grep -F），返回 路径:行号:内容", parameters: { type: "object", properties: { pattern: { type: "string" } }, required: ["pattern"] } } },
   { type: "function", function: { name: "read_file", description: "读仓库内文件的若干行（带行号），一次最多 200 行", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path"] } } },
@@ -163,7 +219,7 @@ const TOOLS: ToolSpec[] = [
   { type: "function", function: { name: "git_blame", description: "某个文件若干行的 blame", parameters: { type: "object", properties: { path: { type: "string" }, start_line: { type: "integer" }, end_line: { type: "integer" } }, required: ["path", "start_line"] } } },
 ];
 
-const SYSTEM = `你是 agentbrain 的代码核验员。给你一条项目记忆（坑或事实），你用只读工具查这个仓库的真实代码，判断代码是否支持它。记忆可能带详情正文（body），body 里每个可核对的断言也要一并核实：给结论时对能对上的断言给证据；只要有一处 contradicted，整条就标 contradicted；全部可核对断言都 verified 才算 verified。
+const SYSTEM = `你是 agentbrain 的代码核验员。给你一条项目记忆（坑、事实或决定），你用只读工具查这个仓库的真实代码，判断代码是否支持它。记忆可能带详情正文（body），body 里每个可核对的断言也要一并核实：给结论时对能对上的断言给证据；只要有一处 contradicted，整条就标 contradicted；全部可核对断言都 verified 才算 verified。
 
 只有代码才算证据，你的印象和记忆里的说法都不算。工具调用最多 ${MAX_TOOL_CALLS} 次。
 
@@ -193,7 +249,7 @@ export interface VerifyResult {
 
 /** 一条记忆的一次核验。模型调用失败抛 WorkFailure；证据对不上降为 inconclusive。 */
 export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Proposition): Promise<VerifyResult> {
-  const subject = sanitize([`种类：${prop.kind === "pitfall" ? "坑" : "事实"}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : "", prop.body ? `详情正文：${prop.body}` : ""].filter(Boolean).join("\n")).text;
+  const subject = sanitize([`种类：${KIND_LABEL[prop.kind]}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : "", prop.body ? `详情正文：${prop.body}` : ""].filter(Boolean).join("\n")).text;
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM },
     { role: "user", content: `<memory>\n${subject}\n</memory>` },

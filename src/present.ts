@@ -2,7 +2,13 @@
 import type { Store } from "./store.ts";
 import { KIND_LABEL, type PropKind, type Proposition, type Who } from "./l2.ts";
 
+import { staleWarning } from "./visibility.ts";
+
 export { KIND_LABEL };
+
+export function stalePrefix(p: Pick<Proposition, "stale" | "confirmed" | "confirmed_by">): string {
+  return staleWarning(p) ? `[与代码不符@${p.stale!.head.slice(0, 7)}，待用户核实] ` : "";
+}
 
 export function short(id: string): string {
   return id.slice(0, 8);

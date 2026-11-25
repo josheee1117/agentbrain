@@ -22,9 +22,17 @@ function disputedUnconfirmed(p: Proposition): boolean {
   return p.unreconciled || !!p.stale || p.conflicts.length > 0 || !!p.supersedes || p.pending_corrections.length > 0;
 }
 
+export function staleBlocked(p: Proposition): boolean {
+  return !!p.stale && (!p.confirmed || p.confirmed_by === "code");
+}
+
+export function staleWarning(p: Pick<Proposition, "stale" | "confirmed" | "confirmed_by">): boolean {
+  return !!p.stale && p.confirmed && p.confirmed_by !== "code";
+}
+
 /** 能占保底位的纠正：已确认、替代过旧条目，且自己没有争议。 */
 export function isConfirmedCorrection(p: Proposition): boolean {
-  return p.confirmed && !!p.supersedes && !p.pending_corrections.length && !p.conflicts.length;
+  return p.confirmed && !!p.supersedes && !p.pending_corrections.length && !p.conflicts.length && !p.stale;
 }
 
 /**
@@ -34,6 +42,8 @@ export function isConfirmedCorrection(p: Proposition): boolean {
  */
 export function recallable(p: Proposition, worker: boolean): boolean {
   if (p.state !== "active") return false;
+  if (p.superseded_draft) return false;
+  if (staleBlocked(p)) return false;
   if (isConfirmedCorrection(p)) return true;
   if (!RECALL_KINDS.includes(p.kind)) return false;
   if (p.confirmed) return true;

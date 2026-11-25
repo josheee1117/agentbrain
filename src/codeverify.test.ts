@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as codeverify from "./codeverify.ts";
 import { RepoEscape, RepoTools, verifyProposition } from "./codeverify.ts";
 import type { Chat, ChatMessage } from "./llm.ts";
 import type { Proposition } from "./l2.ts";
@@ -50,6 +51,51 @@ test("证据核对：文件引文逐字对得上才算，commit 必须是 HEAD �
   assert.equal(tools.check({ path: "nope.ts", line_start: 1, line_end: 1, quote: "whatever" }), null);
   assert.deepEqual(tools.check({ commit: head.slice(0, 12), quote: "从 0.35 调到 0.45" }), { commit: head, quote: "从 0.35 调到 0.45" });
   assert.equal(tools.check({ commit: "deadbeefdeadbeef", quote: "从 0.35 调到 0.45" }), null);
+});
+
+test("只读 ref 工具读取中文目标树，不碰别分支的脏工作区", async () => {
+  const refRoot = join(base, "ref-repo");
+  mkdirSync(refRoot);
+  const runGit = (...args: string[]) => execFileSync("git", ["-C", refRoot, ...args], { encoding: "utf8" });
+  runGit("init", "-q");
+  mkdirSync(join(refRoot, "目录"));
+  writeFileSync(join(refRoot, "目录/中文.ts"), "const CACHE_LIMIT = 42;\n");
+  writeFileSync(join(refRoot, "large.txt"), "x".repeat(1_000_001));
+  symlinkSync("/etc/passwd", join(refRoot, "link"));
+  runGit("add", ".");
+  runGit("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "目标 ref 的缓存决定");
+  const target = runGit("rev-parse", "HEAD").trim();
+  runGit("branch", "target");
+  runGit("checkout", "-qb", "other");
+  runGit("rm", "-q", "目录/中文.ts");
+  runGit("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "工作区分支已删文件");
+  const foreign = runGit("rev-parse", "HEAD").trim();
+  writeFileSync(join(refRoot, "dirty.txt"), "CACHE_LIMIT = 999;\n");
+  const before = runGit("status", "--porcelain=v1");
+  const t = new codeverify.GitRefRepoTools(refRoot, "target");
+  assert.equal(t.head(), target);
+  assert.deepEqual(t.fileLines("目录/中文.ts"), ["const CACHE_LIMIT = 42;", ""]);
+  assert.equal(t.fileLines("large.txt"), null);
+  assert.equal(t.fileLines("link"), null);
+  assert.match(t.run("search_code", { pattern: "CACHE_LIMIT" }), /目录\/中文.ts:1:const CACHE_LIMIT = 42/);
+  assert.doesNotMatch(t.run("search_code", { pattern: "CACHE_LIMIT" }), /999|dirty/);
+  assert.equal(t.run("list_dir", { path: "目录" }), "中文.ts");
+  assert.match(t.run("list_dir", { path: "." }), /目录\//);
+  assert.doesNotMatch(t.run("git_log", {}), /工作区分支/);
+  assert.match(t.run("git_log", { path: "目录/中文.ts" }), /目标 ref/);
+  assert.match(t.run("git_blame", { path: "目录/中文.ts", start_line: 1 }), /CACHE_LIMIT = 42/);
+  assert.equal(t.commitMessage(foreign), null);
+  assert.match(t.commitMessage(target)!, /目标 ref/);
+  assert.deepEqual(t.check({ path: "目录/中文.ts", line_start: 1, quote: "CACHE_LIMIT = 42" }), { path: "目录/中文.ts", line_start: 1, line_end: 1, quote: "CACHE_LIMIT = 42" });
+  for (const path of ["../outside", "/etc/passwd", ".git/HEAD", ":(top)目录", "-x", "a\0b"])
+    assert.match(t.run("read_file", { path }), /^错误：/);
+  for (const ref of ["-x", "bad ref", "bad\0ref", "", "missing"]) assert.throws(() => new codeverify.GitRefRepoTools(refRoot, ref));
+  const chat = scripted([() => final({ verdict: "verified", evidence: [{ path: "目录/中文.ts", line_start: 1, quote: "CACHE_LIMIT = 42" }] })]);
+  assert.equal((await verifyProposition(chat, t, { ...prop, kind: "decision" })).verdict, "verified");
+  assert.match(chat.seen[0][1].content!, /种类：决定/);
+  assert.match(chat.seen[0][0].content!, /坑、事实或决定/);
+  assert.equal(runGit("rev-parse", "HEAD").trim(), foreign);
+  assert.equal(runGit("status", "--porcelain=v1"), before);
 });
 
 /** 按脚本回放的模型：先调工具，再给结论。记下每次请求，供断言。 */

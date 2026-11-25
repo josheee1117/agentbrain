@@ -3323,6 +3323,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 
 ## 21. 修订记录
 
+- 2026-11-25 按已授权的 §9.7 单 1 实现止损护栏与草稿退场。`brief`、`recall` 和常驻偏好按确认来源处理 stale，用户确认及跨会话印证保留警告，代码转正及未确认停注。`confirm` 用可选 `override_stale` 清除标记，并在能解析本地 HEAD 时同事务记录核验和出队。单条 `verify [--ref]` 强制重核，ref 工具只读提交树，决定只补代码证据而不自动转正。撤销过自动转正的条目仍保存新核验证据，但保持未确认和撤销原因。L2 在既有替代状态计算结束后派生 `superseded_draft`，只让同项目未确认 extract 草稿退场。只认最终仍 active 的替代草稿，归档替代草稿后恢复。测试先失败后修复，真实 CLI 使用隔离库、临时 Git 仓库和本地模型替身。库版本仍为 1，无新表、列、事件种类或配置键。变更扫描、锚点和需求提炼不在本单范围。
+
 - 2026-11-25 用户批准修订 §9.7 并授权单 1（`ab-1`）开始实现：基于正式库只读副本与 6 个真实交付需求核查结论，补入 cherry-pick 非祖先三分支基线判定（237 条中 71.3% 原文已在主干、13.5% 主干分叉改坏）、`±3 行 OR 非常规标识符共变`机械预筛（抓到 `[d16d321e]` 远距离失效）、Git 路径 `-c core.quotepath=false`、单 3 附带存量 ~321 条项目决定离线补锚点；采纳用户拍板三项：① 新增单 4 `ab synthesize` 需求收口正向提炼（≤3 条未确认候选，零自动转正/归档）；② `fold()` 新增同项目未确认 `extract` 草稿被未确认 `supersedes` 替代时派生 `superseded_draft`（不改已确认条目、可逆）；③ pm 侧拆出 `pm-2` 收尾机械门禁与 `.gitignore` 忽略技能告警。拆单更新为 `ab-1..ab-4` + `pm-1..pm-2`，其余单仍按单授权。
 
 - 2026-11-24 用户按 fix-recall-state 单授权修复状态合同。斜杠命令仍不注入偏好和召回提醒，也不写 recall_runs；只有显式请求 `want_session_state:true` 时返回空 additionalContext 与 worker、brief_present，避免 agy 插件一直保持 pending。会话定位和身份判断纳入 store 的 try/finally；定位后的非 opencode、非 agy 文件在 realpath 时消失则将 transcript 置 null。验证先红后绿，覆盖斜杠命令状态组合、异常关闭和插件与真实 CLI 联调，再跑全量测试、类型检查及隔离 CLI 验证。不改插件实现、配置或库结构，库版本保持 1；代码可用 git 回退。

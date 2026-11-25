@@ -10,6 +10,7 @@ import { reviewList, sourceClock } from "./expiry.ts";
 import { opencodeDbPath, recentOpencodeSessions } from "./opencode.ts";
 import { listBackups } from "./admin.ts";
 import { agyDiscover, agyRoots } from "./agy.ts";
+import { staleWarning } from "./visibility.ts";
 
 export interface AgyRootStatus {
   label: string;
@@ -253,6 +254,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
         ]
       : ["失败窗口: 没有"];
     const conflicts = proj.conflict_pairs.length;
+    const stale = all.filter(p => p.state === "active" && staleWarning(p)).length;
     const due = reviewList(all, store.usage(), ctx.now, sourceClock()).length;
     const todo = [
       ...agy.todo,
@@ -264,6 +266,7 @@ export function statusReport(store: Store, ctx: StatusContext): string {
       code?.dirty ? `代码有 ${code.dirty} 个文件没提交：后台任务和钩子跑的就是这份没提交的代码` : "",
       conflicts ? `冲突 ${conflicts} 对未解决：ab get 看双方，ab archive 错的一条` : "",
       due ? `到期待复审 ${due} 条：ab review` : "",
+      stale ? `与代码不符 ${stale} 条（待用户核实）：ab verify <id> 重核，ab confirm <id> 保留` : "",
       !embedder ? `向量不可用（${reason}）：搜索只剩全文检索` : "",
       st.sessions.scanned ? `近 7 天 ${st.sessions.scanned} 个会话钩子没登记、靠扫描补上：检查该宿主的钩子（${fmtCounts(st.sessions.scannedByHost)}）` : "",
     ].filter(Boolean);
