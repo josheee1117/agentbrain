@@ -35,8 +35,10 @@ case "${1:-}" in
     step cli-agy-plugin node --test src/agy-plugin.test.ts
     step cli-agy-denoise node --test --test-name-pattern='agy 去噪|agy 定位点|agy 三处去噪|assistant_citations' src/agy.test.ts src/extract.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
-    step cli-stale-guard env AB1_EVIDENCE="$EV" node --test src/stale-guard.test.ts src/stale-cli.test.ts src/codeverify.test.ts
-    step cli-change-verify env AB1_EVIDENCE="$EV/change-verify" node --test src/changeverify.test.ts src/registry.test.ts src/stale-cli.test.ts
+    step stale-guard node --test src/stale-guard.test.ts src/codeverify.test.ts
+    step change-prescreen node --test src/changeverify.test.ts src/registry.test.ts
+    step cli-stale-guard env AB1_EVIDENCE="$EV/stale-guard" node --test --test-name-pattern="^ab-1" src/stale-cli.test.ts
+    step cli-change-verify env AB1_EVIDENCE="$EV/change-verify" node --test --test-name-pattern="^ab-2" src/stale-cli.test.ts
     step cli-change-sweep node --test --test-name-pattern='ab-2|用前核对排队|§12.6.12' src/work.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)

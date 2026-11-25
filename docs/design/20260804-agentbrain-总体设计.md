@@ -1604,7 +1604,7 @@ ab view 卡片:
 
 每条记忆自带基线，不设项目级水位。所有执行路径列出或 diff 的 Git 命令必须带 `-c core.quotepath=false`，避免中文文件名（如本设计文档）被八进制转义导致路径匹配失真。
 
-- 基线 `base` 取以下三者中最新的一个：`code_evidence.head`、`anchor_head`、`verify_attempts` 里最近一次非出错的 head。
+- 基线 `base` 取以下三者中最新的一个：`code_evidence.head`、`anchor_head`、`verify_attempts` 里最近一次 `verified`/`shifted` 的 head。
 - 目标 `trunk-ref`：主干名取 pm `repos/<项目>.md` 的「- 主干：」行。`origin/<主干>` 和本地 `<主干>` 互为祖先时取较新的那个，分叉时取 `origin/<主干>`。
 - 若 `base` 是 `trunk-ref` 的祖先：计算 `git -c core.quotepath=false diff --name-only <base> <trunk-ref> -- <引文路径 ∪ 锚点路径>`，非空即命中；同一个 `base` 的条目一起跑。
 - 若 `base` **不是** `trunk-ref` 的祖先（常见于功能分支合并或 cherry-pick 进主干）：不再一刀切跳过，先算 `mb = merge-base <base> <trunk-ref>`，按主干真实内容三分支判定（2026-11-25 正式库 237 条非祖先记忆实测：`169` 条 71.3% 已被 cherry-pick 到主干且引文完好、`32` 条 13.5% 主干分叉后已改坏引文、仅 `36` 条 15.2% 属真正未合主干）：
@@ -3324,6 +3324,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-25 按 fix-ab2-review 修复单 2。只有 `verified` 或 `shifted` 的核验记录可作基线，证据不足退避到期后仍从代码证据提交比较，避免删除或断裂引文漏检。非法路径逐条跳过，全非法引文计入未跟踪路径，不平移基线。ab-1 与 ab-2 的真实 CLI 用例各用独立临时环境，验证脚本分别执行并记录证据。删除未产出的 anchor 优先级、冗余单侧提交分支及单处调用的仓库包装。每日自动扫描仍关闭，不改 L2 或存储结构。
 
 - 2026-11-25 用户授权实现 §9.7 单 2。`registry` 读取主干名，扫描与 sweep 核验只读本地已有主干提交。扫描复用 `verify_queue` 和 `verify_attempts`，按祖先关系选基线，保留非祖先三分支判定、缺失基线回退和机械预筛。预筛跳过不更新核验记录，保留旧侧行号。队列中的决定及无代码证据条目进入核验，首次未确认核验仍只处理坑和事实。入队退避复用无法核验、同 head 和证据不足的规则，新 head 上的确定结论不受 24 小时限制。CLI `verify --changed` 默认只入队，`--run` 持租约消费最多 3 条。stale 确认优先记录主干 head，无论仓库可用与否都出队。每日本地扫描用代码常量默认关闭。零新表、列、事件种类或配置键，`SCHEMA_VERSION` 保持 1，不改 `src/l2.ts`。本单验证只使用隔离库、临时 Git 仓库和本地 HTTP mock，不运行正式库回放或首扫。
 

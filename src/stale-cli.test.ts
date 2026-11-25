@@ -11,7 +11,7 @@ import type { ChatMessage } from "./llm.ts";
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索与恢复", async (t) => {
+for (const suite of ["ab-1", "ab-2"]) test(`${suite} 真实 CLI：stale 确认与变更重核`, async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab1-cli-")));
   const home = join(dir, "home"), ab = join(dir, "ab"), repos = join(dir, "pm/repos"), repo = join(dir, "repo"), bin = join(dir, "bin");
   for (const p of [home, ab, repos, repo, bin]) mkdirSync(p, { recursive: true });
@@ -75,6 +75,7 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     store.queueReverify([p.id], new Date());
   };
   try {
+    if (suite === "ab-2") {
     await t.test("ab-2 真实 CLI：扫描、预演、JSON、租约、3 条消费和主干确认", async () => {
       writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n- 主干：\`target\`\n`);
       const ids: string[] = [];
@@ -157,6 +158,55 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
         assert.equal(intake.queuedReverify(store.workDb).has(prop(id).id), false);
       } finally { writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`); }
     });
+    await t.test("ab-2 真实 CLI：证据不足退避到期后重查删除与断裂，非法路径单条隔离", async () => {
+      git("checkout", "-f", "target");
+      writeFileSync(join(repo, "deleted.ts"), "const CACHE_LIMIT = 42;\n");
+      git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "H1 evidence");
+      const h1 = git("rev-parse", "HEAD").trim();
+      const ids: string[] = [];
+      for (const path of ["deleted.ts", "中文.ts"]) {
+        const id = prop(await remember("decision", `ab2 退避重查 ${path}`)).id;
+        ids.push(id);
+        store.commit([{ kind: "verify", project_id: prop(id).project_id, session_id: null, target_id: id, body: { outcome: "verified", head: h1, refs: [{ path, line_start: 1, line_end: 1, quote: "CACHE_LIMIT = 42" }] } }], () => {});
+      }
+      rmSync(join(repo, "deleted.ts"));
+      writeFileSync(join(repo, "中文.ts"), "const CACHE_LIMIT = 99;\n");
+      git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "H2 invalidates evidence");
+      const h2 = git("rev-parse", "HEAD").trim();
+      verdict = "inconclusive";
+      const attempt = JSON.parse(await ok("verify", "--changed", "testrepo", "--run", "--json"));
+      assert.equal(attempt.run.inconclusive, 2);
+      for (const id of ids.slice(0, 2)) {
+        assert.equal(intake.lastVerify(store.workDb, id)?.outcome, "inconclusive:1");
+        assert.equal(prop(id).code_evidence?.head, h1);
+        intake.recordVerify(store.workDb, id, h2, "inconclusive:1", new Date(Date.now() - 2 * 86_400_000));
+      }
+      writeFileSync(join(repo, "unrelated"), "H3\n");
+      git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "H3 unrelated");
+      const h3 = git("rev-parse", "HEAD").trim(), before = requests.length;
+      writeFileSync(join(repo, "中文.ts"), "const CACHE_LIMIT = 999;\n");
+      const dirty = git("status", "--porcelain=v1");
+      for (const dryRun of [true, false]) {
+        const r = JSON.parse(await ok("verify", "--changed", "testrepo", ...(dryRun ? ["--dry-run"] : []), "--json"));
+        assert.equal(r.head, h3);
+        assert.deepEqual(r.items.map((item: { id: string; priority: string }) => [item.id, item.priority]), [[ids[0], "deleted"], [ids[1], "broken"]]);
+        assert.equal(r.skipped.untracked_path, 0);
+        assert.equal(r.skipped.unchanged, 0);
+        for (const id of ids) assert.equal(intake.queuedReverify(store.workDb).has(id), !dryRun);
+        assert.equal(requests.length, before);
+        assert.equal(git("rev-parse", "HEAD").trim(), h3);
+        assert.equal(git("status", "--porcelain=v1"), dirty);
+        assert.equal(readFileSync(join(repo, "中文.ts"), "utf8"), "const CACHE_LIMIT = 999;\n");
+      }
+      for (const id of ids) intake.dequeueReverify(store.workDb, id);
+      const invalid = prop(await remember("decision", "ab2 非法路径隔离")).id;
+      store.commit([{ kind: "verify", project_id: prop(invalid).project_id, session_id: null, target_id: invalid, body: { outcome: "verified", head: h1, refs: [{ path: "-dash.ts", line_start: 1, line_end: 1, quote: "CACHE_LIMIT = 42" }] } }], () => {});
+      const mixed = JSON.parse(await ok("verify", "--changed", "testrepo", "--json"));
+      assert.equal(mixed.skipped.untracked_path, 1);
+      assert.deepEqual(mixed.items.map((item: { id: string; priority: string }) => [item.id, item.priority]), [[ids[0], "deleted"], [ids[1], "broken"]]);
+      assert.equal(intake.queuedReverify(store.workDb).has(invalid), false);
+    });
+    } else {
     for (const mode of ["rule", "archived"]) {
       await t.test(`ab verify 拒绝 ${mode}`, async () => {
         const id = await remember(mode === "rule" ? "rule" : "pitfall", `不可核验${mode}`);
@@ -341,6 +391,7 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     assert.match(await ok("search", "自动旧草稿"), /自动旧草稿/);
     assert.equal(git("rev-parse", "HEAD").trim(), current); assert.equal(git("status", "--porcelain=v1"), dirty);
     assert.equal(readFileSync(join(repo, "中文.ts"), "utf8"), "const CACHE_LIMIT = 999;\n");
+    }
     logs.push(JSON.stringify({ verify_attempts: store.workDb.prepare("SELECT * FROM verify_attempts").all(), inject_log: store.workDb.prepare("SELECT * FROM inject_log").all(), verify_queue: store.workDb.prepare("SELECT * FROM verify_queue").all(), projection: [...store.project().props.values()], git: { target, current, dirty }, schema: store.schema }, null, 2));
   } finally {
     if (evidence) { writeFileSync(join(evidence, "cli-e2e.log"), logs.join("\n")); writeFileSync(join(evidence, "mock-requests.json"), JSON.stringify(requests, null, 2)); }

@@ -8,7 +8,7 @@ import { skipQueuedVerify, type VerifyRunResult } from "./work.ts";
 
 export const MAX_CHANGED_ENQUEUE = 20;
 type FileRef = Extract<CodeRef, { path: string }>;
-export type ChangePriority = "deleted" | "broken" | "anchor" | "overlap_or_ident";
+export type ChangePriority = "deleted" | "broken" | "overlap_or_ident";
 export interface ChangeScanResult {
   project: string;
   trunkRef: string | null;
@@ -117,14 +117,11 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
   const chooseBase = (p: Proposition): string => {
     const evidence = p.code_evidence!.head;
     const last = intake.lastVerify(db, p.id);
-    if (!last || last.outcome.startsWith("error:") || last.head === evidence) return evidence;
+    if (!last || (last.outcome !== "verified" && last.outcome !== "shifted") || last.head === evidence) return evidence;
     if (isCommit(evidence) && isCommit(last.head)) {
       if (ancestor(evidence, last.head)) return last.head;
       if (ancestor(last.head, evidence)) return evidence;
       if (ancestor(evidence, target.sha) !== ancestor(last.head, target.sha)) return ancestor(evidence, target.sha) ? evidence : last.head;
-    } else {
-      if (isCommit(evidence) && ancestor(evidence, target.sha)) return evidence;
-      if (isCommit(last.head) && ancestor(last.head, target.sha)) return last.head;
     }
     return time(evidence) > time(last.head) ? evidence : last.head;
   };
@@ -173,7 +170,11 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
     const base = chooseBase(p);
     if (base === target.sha) { result.skipped.same_head++; continue; }
     // normalize through the same scoped-path boundary as read-only code verification
-    const normalized = refs.map(ref => ({ ...ref, path: tools.path(ref.path) }));
+    const normalized: FileRef[] = [];
+    for (const ref of refs) {
+      try { normalized.push({ ...ref, path: tools.path(ref.path) }); } catch { /* 单条非法路径跳过，不中断整批 */ }
+    }
+    if (!normalized.length) { result.skipped.untracked_path++; continue; }
     if (!isCommit(base)) {
       const priority = checkQuotes(normalized);
       if (priority) hit(p, priority); else shift(p);
@@ -209,7 +210,7 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
       else { result.prescreened++; result.prescreenedIds.push(p.id); }
     }
   }
-  const priorityOrder: Record<ChangePriority, number> = { deleted: 1, broken: 2, anchor: 3, overlap_or_ident: 4 };
+  const priorityOrder: Record<ChangePriority, number> = { deleted: 1, broken: 2, overlap_or_ident: 3 };
   result.items.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || a.seq - b.seq);
   result.hits = result.items.length;
   result.items = result.items.slice(0, MAX_CHANGED_ENQUEUE);

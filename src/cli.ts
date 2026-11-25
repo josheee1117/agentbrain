@@ -858,11 +858,6 @@ async function cmdCorrect(argv: string[]): Promise<void> {
   }
 }
 
-function projectRepo(store: Store, p: Proposition): string | null {
-  const name = store.listProjects().find(project => project.id === p.project_id)?.name;
-  return name ? loadRegistry().find(entry => entry.name === name)?.path ?? null : null;
-}
-
 function cmdConfirm(argv: string[]): void {
   const { positionals } = parseArgs({ args: argv, strict: true, allowPositionals: true });
   if (!positionals[0]) die("用法: ab confirm <id 前缀>");
@@ -936,7 +931,8 @@ async function cmdVerify(argv: string[]): Promise<void> {
     if (p.state !== "active") die(`只能核验仍有效的记忆，这条是 ${p.state}: ${short(p.id)}`);
     if (p.kind === "rule") die("规则不走代码核验");
     if (p.superseded_draft) die(`已被草稿 ${short(p.superseded_draft)} 替代的旧草稿不走代码核验；先归档替代草稿或核验新草稿`);
-    const root = projectRepo(store, p);
+    const name = store.listProjects().find(project => project.id === p.project_id)?.name;
+    const root = name ? loadRegistry().find(entry => entry.name === name)?.path ?? null : null;
     if (!root) die("找不到该记忆的本地项目仓库");
     try { realpathSync(root); } catch { die(`本地项目仓库不可用：${root}`); }
     let tools: RepoTools;

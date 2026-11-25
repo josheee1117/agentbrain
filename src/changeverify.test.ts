@@ -159,6 +159,42 @@ test("非祖先三分支：未上线跳过、cherry-pick 平移、主干改坏�
   assert.equal(e.git("rev-parse", "HEAD"), head);
 });
 
+for (const priority of ["deleted", "broken"] as const) test(`退避到期：${priority} 在无关 H3 上仍按代码证据重核`, t => {
+  const e = fixture(t); const id = e.memory();
+  if (priority === "deleted") rmSync(join(e.repo, "中文.ts"));
+  else { e.lines[19] = "const CACHE_LIMIT = 99;"; e.file("中文.ts", e.lines.join("\n")); }
+  const h2 = e.commit("H2 invalidates evidence");
+  intake.recordVerify(e.store.workDb, id, h2, "inconclusive:1", e.now);
+  assert.equal(e.scan().skipped.same_head, 1);
+  e.file("unrelated", "H3\n"); const h3 = e.commit("H3 unrelated");
+  assert.equal(e.scan().skipped.backoff, 1);
+  e.now.setDate(e.now.getDate() + 2);
+  for (const dryRun of [true, false]) {
+    const r = e.scan(dryRun);
+    assert.equal(r.head, h3);
+    assert.deepEqual(r.items, [{ id, seq: e.store.project().props.get(id)!.seq, priority }]);
+    assert.equal(r.skipped.untracked_path, 0);
+    assert.equal(r.skipped.unchanged, 0);
+    assert.equal(intake.queuedReverify(e.store.workDb).has(id), !dryRun);
+    assert.equal(intake.lastVerify(e.store.workDb, id)?.head, h2);
+  }
+});
+
+for (const head of ["tracked", "missing"]) test(`路径隔离：非法引文混排不影响正常条目，${head} 基线不误平移`, t => {
+  const e = fixture(t);
+  const bad = { ...e.ref, path: "-dash.ts" };
+  const invalid = e.memory([bad], head === "tracked" ? e.base : "f".repeat(40));
+  const normal = e.memory();
+  const mixed = e.memory([bad, e.ref]);
+  e.lines[19] = "const CACHE_LIMIT = 99;"; e.file("中文.ts", e.lines.join("\n")); e.commit();
+  const r = e.scan();
+  assert.equal(r.skipped.untracked_path, 1);
+  assert.equal(r.shifted, 0);
+  assert.deepEqual(r.items.map(item => [item.id, item.priority]), [[normal, "broken"], [mixed, "broken"]]);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(invalid), false);
+  assert.equal(intake.lastVerify(e.store.workDb, invalid), undefined);
+});
+
 test("同一基线超过 200 个引文路径，末批中文文件变更仍入队", t => {
   const e = fixture(t);
   const refs: CodeRef[] = [];
