@@ -2,7 +2,7 @@
 import type { Embedder, Store } from "./store.ts";
 import type { Proposition } from "./l2.ts";
 import { indexText } from "./store.ts";
-import { isConfirmedCorrection, RECALL_KINDS, recallable, staleBlocked } from "./visibility.ts";
+import { isConfirmedCorrection, RECALL_KINDS, recallable } from "./visibility.ts";
 import { resolveProject } from "./registry.ts";
 import { CITE_CHECK_BUDGET_MS, citationsStale } from "./citecheck.ts";
 import { disputed, KIND_LABEL, short, stalePrefix } from "./present.ts";
@@ -157,8 +157,6 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
     .filter(
       (p) =>
         p.state === "active" &&
-        !staleBlocked(p) &&
-        !p.superseded_draft &&
         p.project_id === null &&
         p.guidance &&
         !p.scenes.length &&

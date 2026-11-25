@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -11,6 +12,8 @@ import { isConfirmedCorrection, recallable, searchable } from "./visibility.ts";
 import { reviewList } from "./expiry.ts";
 import { statusReport } from "./status.ts";
 import { logInjections } from "./telemetry.ts";
+import { runWork, type WorkDeps } from "./work.ts";
+import * as intake from "./intake.ts";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-stale-")));
 const repos = join(dir, "pm/repos"), alpha = join(dir, "alpha");
@@ -116,6 +119,66 @@ test("决定核出 verified 只存代码证据并清 stale；坑与事实仍自�
     }
   } finally { s.close(); }
 });
+
+for (const mode of ["rule", "archived", "supersedes", "unreconciled", "demoted"]) {
+  test(`verified 不越过自动转正边界：${mode}`, () => {
+    const s = new Store(":memory:", ":memory:");
+    try {
+      const pid = s.ensureProject("alpha");
+      const old = s.remember(pid, null, false, { kind: "pitfall", text: "旧草稿", origin: "extract", confirmed: false, source });
+      const id = s.remember(pid, null, false, { kind: mode === "rule" ? "rule" : "pitfall", text: "核验对象", confirmed: false, source, supersedes: mode === "supersedes" ? old : undefined, unreconciled: mode === "unreconciled" });
+      if (mode === "archived") s.lifecycle("archive", id, null);
+      if (mode === "demoted") {
+        verify(s, id, "verified");
+        s.lifecycle("unconfirm", id, null, { reason: "worker_prompt" });
+      }
+      verify(s, id, "contradicted"); verify(s, id, "verified");
+      const p = s.project().props.get(id)!;
+      assert.equal(p.confirmed, false);
+      assert.equal(p.confirmed_by, null);
+      assert.equal(p.stale, null);
+      assert.deepEqual(p.code_evidence, mode === "demoted" ? null : { head, refs: [] });
+      if (mode === "supersedes") assert.equal(s.project().props.get(old)!.superseded_draft, id);
+    } finally { s.close(); }
+  });
+}
+
+for (const queued of [false, true]) {
+  test(`sweep 跳过已退场草稿：${queued ? "已入队" : "首次核验"}`, async () => {
+    const repo = realpathSync(mkdtempSync(join(dir, "sweep-")));
+    const s = new Store(join(repo, "ab/store.db"), join(repo, "ab/index.db"));
+    try {
+      execFileSync("git", ["init", "-q", repo]);
+      writeFileSync(join(repo, "proof.txt"), "CACHE_LIMIT = 42\n");
+      execFileSync("git", ["-C", repo, "add", "proof.txt"]);
+      execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"]);
+      const pid = s.ensureProject("alpha");
+      const old = s.remember(pid, null, false, { kind: queued ? "decision" : "pitfall", text: "旧草稿", origin: "extract", confirmed: false, source });
+      if (queued) verify(s, old, "verified");
+      const next = s.remember(pid, null, false, { kind: "pitfall", text: "待确认纠正", supersedes: old, confirmed: false, source });
+      const active = s.remember(pid, null, false, { kind: "note", text: "缓存限制是 42", confirmed: false, source });
+      if (queued) s.queueReverify([old], new Date());
+      const before = intake.lastVerify(s.workDb, old);
+      let calls = 0;
+      const deps: WorkDeps = {
+        store: s, now: () => new Date(), embedder: null, registry: [{ name: "alpha", path: repo }], registryDir: repos,
+        resolveProject: () => null, projectId: () => pid,
+        chat: { model: "fixture", chat: async () => {
+          calls++;
+          return { tokens: 1, message: { role: "assistant", content: JSON.stringify({ verdict: "verified", evidence: [{ path: "proof.txt", line_start: 1, quote: "CACHE_LIMIT = 42" }] }) } };
+        } },
+      };
+      const report = await runWork(deps, { sweep: true, dryRun: false });
+      assert.equal(report.verify.verified, 1);
+      assert.equal(calls, 1, "只核验仍有效的事实");
+      assert.equal(s.project().props.get(active)!.confirmed_by, "code");
+      assert.equal(s.project().props.get(old)!.confirmed, false);
+      assert.equal(s.project().props.get(old)!.superseded_draft, next);
+      assert.deepEqual(intake.lastVerify(s.workDb, old), before);
+      assert.ok(!intake.queuedReverify(s.workDb).has(old));
+    } finally { s.close(); rmSync(repo, { recursive: true, force: true }); }
+  });
+}
 
 test("过时纠正不占保底位", () => {
   const s = new Store(":memory:", ":memory:");

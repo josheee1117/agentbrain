@@ -21,7 +21,7 @@ import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./reg
 import { chatChain, chatClient, loadChatConfig, type Chat } from "./llm.ts";
 import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } from "./codeverify.ts";
 import { allowedTranscript } from "./transcript-file.ts";
-import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, piSessionId, runWork, type WorkDeps } from "./work.ts";
+import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, nextVerifyOutcome, piSessionId, runWork, type WorkDeps } from "./work.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
@@ -904,9 +904,16 @@ async function cmdVerify(argv: string[]): Promise<void> {
   try {
     const p = findByPrefix(store, positionals[0]);
     if (p.project_id === null) die("全局记忆不能按项目代码核验");
+    if (p.state !== "active") die(`只能核验仍有效的记忆，这条是 ${p.state}: ${short(p.id)}`);
+    if (p.kind === "rule") die("规则不走代码核验");
     const root = projectRepo(store, p);
     if (!root) die("找不到该记忆的本地项目仓库");
-    const tools = values.ref !== undefined ? new GitRefRepoTools(root, values.ref) : new RepoTools(root);
+    let tools: RepoTools;
+    try {
+      tools = values.ref !== undefined ? new GitRefRepoTools(root, values.ref) : new RepoTools(root);
+    } catch {
+      die(values.ref !== undefined ? `无法解析 --ref ${values.ref}，请检查提交或分支是否有效` : `本地项目仓库不可用：${root}`);
+    }
     const head = tools.head();
     if (!head) die("项目仓库无法解析 HEAD");
     const cfg = loadChatConfig(home());
@@ -919,16 +926,22 @@ async function cmdVerify(argv: string[]): Promise<void> {
       if (r.model) model = r.model;
       return r;
     };
-    const result = await verifyProposition(chat, tools, p);
+    let result;
+    try {
+      result = await verifyProposition(chat, tools, p);
+    } catch (e) {
+      die(`核验失败：${e instanceof Error ? e.message : String(e)}`);
+    }
     const now = new Date();
     const appends = result.verdict === "verified" || result.verdict === "contradicted"
       ? [{ kind: "verify" as const, project_id: p.project_id, session_id: null, target_id: p.id, body: { outcome: result.verdict, head, refs: result.refs, model, prompt_version: VERIFY_PROMPT_VERSION } }]
       : [];
     store.commit(appends, tx => {
-      intake.recordVerify(tx, p.id, head, result.verdict, now);
+      intake.recordVerify(tx, p.id, head, result.verdict === "inconclusive" ? nextVerifyOutcome(intake.lastVerify(tx, p.id)?.outcome, result.verdict) : result.verdict, now);
       intake.dequeueReverify(tx, p.id);
     });
-    console.log(`核验 [${short(p.id)}] ${result.verdict} @${head.slice(0, 7)}${p.kind === "decision" && !p.confirmed && result.verdict === "verified" ? "，只写代码证据并清除 stale，不自动转正" : ""}`);
+    const after = store.project().props.get(p.id)!;
+    console.log(`核验 [${short(p.id)}] ${result.verdict} @${head.slice(0, 7)}${!p.confirmed && !after.confirmed && result.verdict === "verified" ? "，不自动转正" : ""}`);
   } finally { store.close(); }
 }
 

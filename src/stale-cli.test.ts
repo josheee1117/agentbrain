@@ -11,7 +11,7 @@ import type { ChatMessage } from "./llm.ts";
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索与恢复", async () => {
+test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索与恢复", async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab1-cli-")));
   const home = join(dir, "home"), ab = join(dir, "ab"), repos = join(dir, "pm/repos"), repo = join(dir, "repo"), bin = join(dir, "bin");
   for (const p of [home, ab, repos, repo, bin]) mkdirSync(p, { recursive: true });
@@ -33,7 +33,7 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
   git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "另一分支");
   writeFileSync(join(repo, "中文.ts"), "const CACHE_LIMIT = 999;\n");
   const current = git("rev-parse", "HEAD").trim(), dirty = git("status", "--porcelain=v1");
-  let verdict = "verified", quote = "CACHE_LIMIT = 42";
+  let verdict = "verified", quote = "CACHE_LIMIT = 42", httpStatus = 200;
   const requests: { messages: ChatMessage[] }[] = [];
   const server = createServer(async (req, res) => {
     assert.equal(req.url, "/v1/chat/completions");
@@ -41,6 +41,7 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     for await (const chunk of req) body += chunk;
     const payload: { messages: ChatMessage[] } = JSON.parse(body);
     requests.push(payload);
+    if (httpStatus !== 200) { res.writeHead(httpStatus); res.end("fixture model failure"); return; }
     const tools = payload.messages.filter(m => m.role === "tool");
     const message: ChatMessage = tools.length ? { role: "assistant", content: JSON.stringify({ verdict, evidence: [{ path: "中文.ts", line_start: 1, quote }] }) }
       : { role: "assistant", content: null, tool_calls: [{ id: "read", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "中文.ts" }) } }] };
@@ -74,6 +75,76 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     store.queueReverify([p.id], new Date());
   };
   try {
+    for (const mode of ["rule", "archived"]) {
+      await t.test(`ab verify 拒绝 ${mode}`, async () => {
+        const id = await remember(mode === "rule" ? "rule" : "pitfall", `不可核验${mode}`);
+        if (mode === "archived") await ok("archive", id);
+        const before = requests.length;
+        const r = await run("verify", id, "--ref", "target");
+        assert.notEqual(r.status, 0);
+        assert.match(r.err, mode === "rule" ? /规则不走代码核验/ : /只能核验仍有效的记忆.*archived/);
+        assert.equal(requests.length, before);
+        assert.equal(prop(id).confirmed, false);
+        assert.equal(intake.lastVerify(store.workDb, prop(id).id), undefined);
+      });
+    }
+    for (const mode of ["supersedes", "unreconciled", "demoted"]) {
+      await t.test(`ab verify 对 ${mode} 只核验不自动转正`, async () => {
+        const pid = store.ensureProject("testrepo");
+        const old = store.remember(pid, null, false, { kind: "pitfall", text: "退场草稿", origin: "extract", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "回归" } });
+        const id = mode === "supersedes"
+          ? /已纠正 \[([0-9a-f]{8})\]/.exec(await ok("correct", old.slice(0, 8), "--text", "缓存限制纠正", "--summary", "回归"))?.[1]
+          : store.remember(pid, null, false, { kind: "pitfall", text: `缓存限制${mode}`, confirmed: false, unreconciled: mode === "unreconciled", source: { host: null, session_id: null, transcript: null, anchor: null, summary: "回归" } });
+        assert.ok(id);
+        if (mode === "demoted") store.lifecycle("unconfirm", prop(id).id, null, { reason: "worker_prompt" });
+        const out = await ok("verify", id.slice(0, 8), "--ref", "target");
+        assert.equal(prop(id).confirmed, false);
+        assert.equal(prop(id).confirmed_by, null);
+        assert.match(out, /不自动转正/);
+        assert.equal(prop(id).code_evidence?.head ?? null, mode === "demoted" ? null : target);
+        assert.equal(intake.lastVerify(store.workDb, prop(id).id)?.outcome, "verified");
+        if (mode === "supersedes") assert.equal(prop(old).superseded_draft, prop(id).id);
+      });
+    }
+    const errorsId = await remember("decision", "核验失败场景");
+    for (const ref of ["missing", "-invalid", "bad ref"]) {
+      await t.test(`ab verify ref 错误不输出堆栈：${ref}`, async () => {
+        const r = await run("verify", errorsId, `--ref=${ref}`);
+        assert.notEqual(r.status, 0);
+        assert.match(r.err, /--ref/);
+        assert.equal(r.err.trim().split("\n").length, 1);
+        assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/);
+      });
+    }
+    await t.test("ab verify 仓库目录缺失不输出堆栈", async () => {
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${join(dir, "missing-repo")}\`\n`);
+      try {
+        const r = await run("verify", errorsId);
+        assert.notEqual(r.status, 0);
+        assert.match(r.err, /仓库.*不可用/);
+        assert.equal(r.err.trim().split("\n").length, 1);
+        assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/);
+      } finally { writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`); }
+    });
+    await t.test("ab verify 模型 HTTP 500 不输出堆栈", async () => {
+      httpStatus = 500;
+      try {
+        const r = await run("verify", errorsId, "--ref", "target");
+        assert.notEqual(r.status, 0);
+        assert.match(r.err, /核验失败.*500/);
+        assert.equal(r.err.trim().split("\n").length, 1);
+        assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/);
+      } finally { httpStatus = 200; }
+    });
+    await t.test("ab verify 证据不足从 1 次递增到 2 次", async () => {
+      verdict = "inconclusive";
+      try {
+        for (const n of [1, 2]) {
+          await ok("verify", errorsId, "--ref", "target");
+          assert.equal(intake.lastVerify(store.workDb, prop(errorsId).id)?.outcome, `inconclusive:${n}`);
+        }
+      } finally { verdict = "verified"; }
+    });
     const matrix: { id: string; trust: string | null }[] = [];
     for (const trust of ["user", "corroboration", "code", null]) {
       const id = await remember("rule", `缓存守卫规则${trust ?? "未确认"}`, trust === "user", true);
@@ -126,7 +197,9 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
       verdict = outcome;
       store.queueReverify([prop(id).id], new Date());
       await ok("verify", id, "--ref", "target");
-      assert.equal(intake.lastVerify(store.workDb, prop(id).id)?.outcome, outcome);
+      const recorded = intake.lastVerify(store.workDb, prop(id).id)?.outcome;
+      if (outcome === "inconclusive") assert.match(recorded!, /^inconclusive:/);
+      else assert.equal(recorded, outcome);
       assert.ok(!intake.queuedReverify(store.workDb).has(prop(id).id));
       assert.equal(prop(id).stale?.head, current);
     }

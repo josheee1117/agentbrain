@@ -1329,12 +1329,12 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   const queued = intake.queuedReverify(db);
   const all = [...deps.store.project().props.values()];
   // 召回时引文核对失败的条目（已按代码确认过）排在最前，重新核验
-  const requeued = all.filter((p) => queued.has(p.id) && p.state === "active" && p.project_id !== null && !!p.code_evidence && !p.stale);
+  const requeued = all.filter((p) => queued.has(p.id) && p.state === "active" && p.project_id !== null && !!p.code_evidence && !p.stale && !p.superseded_draft);
   for (const id of queued) if (!requeued.some((p) => p.id === id)) intake.dequeueReverify(db, id);
   const todo = [
     ...requeued.sort((a, b) => a.seq - b.seq),
     ...all
-      .filter((p) => p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale)
+      .filter((p) => p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale && !p.superseded_draft)
       // 从没核过（或上次只是出错）的排前面，别让反复重核的旧条目占住每次 3 条的名额
       .sort((a, b) => Number(seenVerify(db, a.id)) - Number(seenVerify(db, b.id)) || a.seq - b.seq),
   ];
