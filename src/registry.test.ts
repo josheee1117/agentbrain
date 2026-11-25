@@ -7,7 +7,21 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { isRegistryHome, registryDir, resolveProject } from "./registry.ts";
+import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
+
+test("ab-2 清单解析主干：反引号、裸名称与缺省 null", () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab2-reg-")));
+  try {
+    for (const [name, line] of [["quoted", "- 主干：`release/main`"], ["bare", "- 主干：main"], ["absent", "# 无主干"]]) {
+      writeFileSync(join(dir, `${name}.md`), `${line}\n`);
+    }
+    assert.deepEqual(loadRegistry(dir), [
+      { name: "absent", path: null, trunk: null },
+      { name: "bare", path: null, trunk: "main" },
+      { name: "quoted", path: null, trunk: "release/main" },
+    ]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("worktree 解析回主仓库对应的项目；未登记目录返回 null", () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-reg-")));

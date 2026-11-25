@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 export interface RegistryEntry {
   name: string;
   path: string | null; // null = 档案没有路径行
+  trunk?: string | null;
 }
 
 export function registryDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
@@ -40,7 +41,9 @@ export function loadRegistry(dir = registryDir()): RegistryEntry[] {
         path = resolve(expandHome(m[1])); // 路径不存在也保留，交给 status 报告
       }
     }
-    return { name: basename(n, ".md"), path };
+    const trunkLine = text.match(/^- 主干：[ \t]*(?:`([^`]+)`|([^\r\n]+))/m);
+    const trunk = (trunkLine?.[1] ?? trunkLine?.[2])?.trim() || null;
+    return { name: basename(n, ".md"), path, trunk };
   });
 }
 

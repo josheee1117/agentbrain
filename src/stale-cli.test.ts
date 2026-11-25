@@ -75,6 +75,88 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     store.queueReverify([p.id], new Date());
   };
   try {
+    await t.test("ab-2 真实 CLI：扫描、预演、JSON、租约、3 条消费和主干确认", async () => {
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n- 主干：\`target\`\n`);
+      const ids: string[] = [];
+      try {
+        for (let i = 0; i < 5; i++) {
+          const id = await remember("decision", `ab2 缓存限制决定 ${i}`);
+          await ok("verify", id, "--ref", "target"); ids.push(prop(id).id);
+        }
+        git("update-ref", "refs/heads/target", current);
+        const before = requests.length;
+        const dry = JSON.parse(await ok("verify", "--changed", "testrepo", "--dry-run", "--json"));
+        assert.equal(dry.head, current); assert.equal(dry.trunkRef, "target");
+        assert.equal(dry.hits, 5); assert.equal(dry.enqueued, 5);
+        assert.equal(intake.queuedReverify(store.workDb).size, 0);
+        assert.equal(requests.length, before);
+        const holder = intake.acquireLease(store.workDb, new Date()); assert.ok(holder);
+        try {
+          const busy = await run("verify", "--changed", "testrepo", "--run");
+          assert.notEqual(busy.status, 0); assert.match(busy.err, /忙|运行|租约/);
+          assert.equal(intake.queuedReverify(store.workDb).size, 0);
+        } finally { intake.releaseLease(store.workDb, holder); }
+        const queued = JSON.parse(await ok("verify", "--changed", "testrepo", "--json"));
+        assert.equal(queued.enqueued, 5); assert.equal(intake.queuedReverify(store.workDb).size, 5);
+        assert.equal(requests.length, before);
+        const otherPid = store.ensureProject("other");
+        const other = store.remember(otherPid, null, false, { kind: "decision", text: "其他项目决定", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "fixture" } });
+        store.queueReverify([other], new Date());
+        quote = "CACHE_LIMIT = 99";
+        const first = JSON.parse(await ok("verify", "--changed", "testrepo", "--run", "--json"));
+        assert.equal(first.run.verified, 3);
+        assert.equal(ids.filter(id => intake.lastVerify(store.workDb, id)?.head === current).length, 3);
+        assert.equal(ids.filter(id => intake.queuedReverify(store.workDb).has(id)).length, 2);
+        assert.equal(intake.queuedReverify(store.workDb).has(other), true);
+        assert.ok(requests.slice(before).filter(r => r.messages.some(m => m.role === "tool")).every(r => r.messages.filter(m => m.role === "tool").some(m => /99/.test(m.content ?? "") && !/999/.test(m.content ?? ""))));
+        httpStatus = 500;
+        const failed = JSON.parse(await ok("verify", "--changed", "testrepo", "--run", "--json"));
+        assert.equal(failed.run.errors, 2);
+        assert.equal(ids.filter(id => intake.queuedReverify(store.workDb).has(id)).length, 2);
+        assert.equal(store.workDb.prepare("SELECT count(*) AS n FROM work_lease").get()!.n, 0);
+        httpStatus = 200;
+        const second = JSON.parse(await ok("verify", "--changed", "testrepo", "--run", "--json")); assert.equal(second.run.verified, 2);
+        assert.ok(ids.every(id => prop(id).confirmed === false));
+        assert.equal(store.workDb.prepare("SELECT count(*) AS n FROM work_lease").get()!.n, 0);
+        intake.dequeueReverify(store.workDb, other);
+        git("update-ref", "refs/heads/target", target);
+        const explicit = await remember("decision", "ab2 显式 ref 无证据决定");
+        ids.push(prop(explicit).id); store.queueReverify([prop(explicit).id], new Date());
+        const explicitRun = JSON.parse(await ok("verify", "--changed", "testrepo", "--ref", "other", "--run", "--json"));
+        assert.equal(explicitRun.head, current); assert.equal(explicitRun.run.verified, 1);
+        assert.equal(prop(explicit).code_evidence?.head, current); assert.equal(prop(explicit).confirmed, false);
+        const confirmation = await remember("decision", "ab2 主干确认"); stale(confirmation);
+        await ok("confirm", confirmation);
+        assert.equal(intake.lastVerify(store.workDb, prop(confirmation).id)?.head, target);
+        assert.equal(intake.queuedReverify(store.workDb).has(prop(confirmation).id), false);
+        const output = await ok("verify", "--changed", "testrepo", "--dry-run");
+        for (const label of ["trunk-ref", "命中", "跳过", "平移", "预筛", "入队", "截"]) assert.ok(output.includes(label), label);
+        const snapshot = JSON.stringify(store.workDb.prepare("SELECT * FROM verify_attempts ORDER BY prop_id").all());
+        await ok("verify", "--changed", "testrepo", "--ref", "target", "--dry-run", "--json");
+        assert.equal(JSON.stringify(store.workDb.prepare("SELECT * FROM verify_attempts ORDER BY prop_id").all()), snapshot);
+      } finally {
+        git("update-ref", "refs/heads/target", target); quote = "CACHE_LIMIT = 42"; httpStatus = 200;
+        writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`);
+        for (const id of ids) { intake.dequeueReverify(store.workDb, id); store.lifecycle("archive", id, null); }
+      }
+    });
+    await t.test("ab-2 真实 CLI：错误参数、缺项目、缺路径、无效 ref 单行拒绝", async () => {
+      for (const args of [["--run"], ["--dry-run"], ["--json"], ["--changed"], ["--changed", "testrepo", "--run", "--dry-run"], ["--changed", "missing"], ["--changed", "testrepo", "--ref=missing"], ["--changed", "testrepo", "--ref=-invalid"], ["--changed", "testrepo", "--ref=bad ref"]]) {
+        const before = requests.length;
+        const r = await run("verify", ...args);
+        assert.notEqual(r.status, 0, args.join(" "));
+        assert.equal(r.err.trim().split("\n").length, 1, r.err);
+        assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/); assert.equal(requests.length, before);
+      }
+      const id = await remember("decision", "ab2 无目录确认"); stale(id);
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${join(dir, "missing-repo")}\`\n`);
+      try {
+        const r = await run("verify", "--changed", "testrepo", "--ref", "target");
+        assert.notEqual(r.status, 0); assert.match(r.err, /仓库.*不可用/); assert.equal(r.err.trim().split("\n").length, 1);
+        await ok("confirm", id);
+        assert.equal(intake.queuedReverify(store.workDb).has(prop(id).id), false);
+      } finally { writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`); }
+    });
     for (const mode of ["rule", "archived"]) {
       await t.test(`ab verify 拒绝 ${mode}`, async () => {
         const id = await remember(mode === "rule" ? "rule" : "pitfall", `不可核验${mode}`);
@@ -234,7 +316,7 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
     }
     const g = await remember("rule", "全局不可核验", true, true);
     assert.match((await run("verify", g)).err, /全局记忆/);
-    assert.match((await run("verify", "--changed", "testrepo")).err, /--changed.*尚未/);
+    assert.equal(JSON.parse(await ok("verify", "--changed", "testrepo", "--dry-run", "--json")).project, "testrepo");
     assert.notEqual((await run("verify", id, "--ref", "missing")).status, 0);
     rmSync(join(ab, "extract.json"));
     assert.match((await run("verify", id)).err, /模型.*不可用|模型.*配置/);

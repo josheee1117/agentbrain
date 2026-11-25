@@ -21,7 +21,8 @@ import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./reg
 import { chatChain, chatClient, loadChatConfig, type Chat } from "./llm.ts";
 import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } from "./codeverify.ts";
 import { allowedTranscript } from "./transcript-file.ts";
-import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, nextVerifyOutcome, piSessionId, runWork, type WorkDeps } from "./work.ts";
+import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, nextVerifyOutcome, piSessionId, runWork, verifyQueuedForProject, type WorkDeps } from "./work.ts";
+import { resolveTrunkRef, scanChangedProject } from "./changeverify.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
@@ -875,17 +876,16 @@ function cmdConfirm(argv: string[]): void {
     const found = detectHost();
     const det = found.ok ? found.detection : null;
     if (p.stale) {
-      const root = projectRepo(store, p);
-      let head: string | null = null;
-      if (root) {
-        try { head = new RepoTools(root).head(); } catch { /* 本地仓库不可用时仍允许用户确认 */ }
+      const name = store.listProjects().find(project => project.id === p.project_id)?.name;
+      const entry = loadRegistry().find(entry => entry.name === name);
+      let head: string | null = p.stale.head;
+      if (entry?.path) {
+        try { head = resolveTrunkRef(entry.path, entry.trunk)?.sha ?? p.stale.head ?? new RepoTools(entry.path).head(); } catch { /* 本地仓库不可用时仍允许用户确认 */ }
       }
       const now = new Date();
       store.commit([{ kind: "confirm", project_id: p.project_id, session_id: det?.session_id ?? null, target_id: p.id, body: { by: "user", override_stale: true } }], tx => {
-        if (head) {
-          intake.recordVerify(tx, p.id, head, "verified", now);
-          intake.dequeueReverify(tx, p.id);
-        }
+        if (head) intake.recordVerify(tx, p.id, head, "verified", now);
+        intake.dequeueReverify(tx, p.id);
       });
     } else store.lifecycle("confirm", p.id, det?.session_id ?? null);
     console.log(`已确认${p.stale ? "并清除与代码不符标记" : ""} [${short(p.id)}] ${p.text}`);
@@ -897,11 +897,40 @@ function cmdConfirm(argv: string[]): void {
 }
 
 async function cmdVerify(argv: string[]): Promise<void> {
-  const { values, positionals } = parseArgs({ args: argv, options: { ref: { type: "string" }, changed: { type: "boolean" } }, strict: true, allowPositionals: true });
-  if (values.changed) die("--changed 扫描尚未实现，本单只支持 ab verify <id> [--ref <git-ref>]");
-  if (positionals.length !== 1) die("用法: ab verify <id 前缀> [--ref <git-ref>]");
+  const { values, positionals } = parseArgs({ args: argv, options: { ref: { type: "string" }, changed: { type: "boolean" }, run: { type: "boolean" }, "dry-run": { type: "boolean" }, json: { type: "boolean" } }, strict: true, allowPositionals: true });
+  if (!values.changed && (values.run || values["dry-run"] || values.json)) die("--run、--dry-run、--json 只能配合 --changed 使用");
+  if (values.run && values["dry-run"]) die("--run 与 --dry-run 不能同时使用");
+  if (positionals.length !== 1) die(values.changed ? "用法: ab verify --changed <项目> [--ref <git-ref>] [--run | --dry-run] [--json]" : "用法: ab verify <id 前缀> [--ref <git-ref>]");
   const store = open();
   try {
+    if (values.changed) {
+      const entry = loadRegistry().find(entry => entry.name === positionals[0]);
+      if (!entry) die(`未登记项目：${positionals[0]}`);
+      if (!entry.path) die(`项目 ${entry.name} 没有本地仓库路径`);
+      try { realpathSync(entry.path); } catch { die(`本地项目仓库不可用：${entry.path}`); }
+      let result;
+      try {
+        const deps = values.run ? workDeps(store) : null;
+        if (deps && "error" in deps.chat) throw new Error(`核验模型不可用：${deps.chat.message}`);
+        const holder = values.run ? intake.acquireLease(store.workDb, new Date()) : null;
+        if (values.run && !holder) throw new Error("后台 work 正在运行，租约忙，请稍后重试");
+        try {
+          result = scanChangedProject(store, entry, { ref: values.ref, dryRun: !!values["dry-run"], now: new Date() });
+          if (deps && holder) {
+            if (!result.head) throw new Error("项目主干提交不可用");
+            result.run = await verifyQueuedForProject(deps, entry, result.head, holder);
+          }
+        } finally { if (holder) intake.releaseLease(store.workDb, holder); }
+      } catch (e) { die((e instanceof Error ? e.message : String(e)).split("\n")[0]); }
+      if (values.json) console.log(JSON.stringify(result));
+      else {
+        console.log(`${values["dry-run"] ? "预演，未写入。" : ""}项目 ${result.project}，trunk-ref ${result.trunkRef ?? "无"} @${result.head?.slice(0, 7) ?? "无提交"}`);
+        console.log(`检查 ${result.checked}，命中 ${result.hits}，基线平移 ${result.shifted}，预筛跳过 ${result.prescreened}，${values["dry-run"] ? "预计" : ""}入队 ${result.enqueued}，截掉 ${result.truncated}`);
+        console.log(`跳过：${Object.entries(result.skipped).map(([reason, count]) => `${reason} ${count}`).join("，")}`);
+        if (result.run) console.log(`核验：${Object.entries(result.run).filter(([key]) => key !== "problems").map(([verdict, count]) => `${verdict} ${count}`).join("，")}${result.run.problems.length ? `\n${result.run.problems.join("\n")}` : ""}`);
+      }
+      return;
+    }
     const p = findByPrefix(store, positionals[0]);
     if (p.project_id === null) die("全局记忆不能按项目代码核验");
     if (p.state !== "active") die(`只能核验仍有效的记忆，这条是 ${p.state}: ${short(p.id)}`);
@@ -1648,6 +1677,8 @@ const USAGE = `用法:
                                     再列双向关联（补充/合并/纠正/冲突，含已归档的）、待确认的纠正、向量近邻；
                                     --expand 展开记下这条时的原始讨论；原对话不在时先列库里存的原话
                                     （Pensieve 导入条打开原 md 文件）
+  ab verify --changed <项目> [--ref <git-ref>] [--run] [--dry-run] [--json]
+                                    只读主干扫描变更，默认最多入队 20 条；--run 持租约同步核 3 条，--dry-run 不写入
   ab verify <id 前缀> [--ref <git-ref>]
                                     强制单条代码重核；--ref 只读目标提交，不切分支或改工作区；决定不自动转正
   ab confirm <id 前缀>

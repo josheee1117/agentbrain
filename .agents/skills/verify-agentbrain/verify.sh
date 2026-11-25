@@ -17,6 +17,13 @@ case "${1:-}" in
     node -e 'require("node:sqlite")' 2>/dev/null && emit sqlite pass "node:sqlite available" || emit sqlite fail "node:sqlite missing"
     ;;
   run)
+    ISOLATED=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-env-XXXXXX")")
+    mkdir -p "$ISOLATED/home" "$ISOLATED/ab" "$ISOLATED/repos" "$ISOLATED/bin"
+    printf '#!/bin/sh\ncase "$*" in *agentbrain-extract*|*agentbrain-embedding*) printf fixture-key;; *) exit 1;; esac\n' > "$ISOLATED/bin/security"
+    chmod +x "$ISOLATED/bin/security"
+    export HOME="$ISOLATED/home" AB_HOME="$ISOLATED/ab" AGENTBRAIN_HOME="$ISOLATED/ab" AB_REGISTRY="$ISOLATED/repos" PATH="$ISOLATED/bin:$PATH"
+    unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE PI_SESSION_ID PI_SESSION_FILE PI_INTERCOM_SESSION_ID CLAUDE_SESSION_ID CODEX_SESSION_ID GEMINI_HOME ANTIGRAVITY_APP_DATA_DIR ANTIGRAVITY_CONVERSATION_ID
+    trap 'rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
@@ -29,15 +36,17 @@ case "${1:-}" in
     step cli-agy-denoise node --test --test-name-pattern='agy 去噪|agy 定位点|agy 三处去噪|assistant_citations' src/agy.test.ts src/extract.test.ts
     step cli-conflicts node --test src/conflicts.test.ts
     step cli-stale-guard env AB1_EVIDENCE="$EV" node --test src/stale-guard.test.ts src/stale-cli.test.ts src/codeverify.test.ts
+    step cli-change-verify env AB1_EVIDENCE="$EV/change-verify" node --test src/changeverify.test.ts src/registry.test.ts src/stale-cli.test.ts
+    step cli-change-sweep node --test --test-name-pattern='ab-2|用前核对排队|§12.6.12' src/work.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
     S=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-XXXXXX")")
-    echo "$S" > "${TMPDIR:-/tmp}/verify-agentbrain.scratch"
 
     AB_HOME="$S/ab_home"
     AGENTBRAIN_HOME="$AB_HOME"
     AB_REGISTRY="$S/repos"
     FAKE_HOME="$S/fake_home"
+    export AB_HOME AGENTBRAIN_HOME AB_REGISTRY
     REPO="$S/test-repo"
 
     mkdir -p "$AB_HOME" "$AB_REGISTRY" "$FAKE_HOME/.local/share/opencode" "$REPO"

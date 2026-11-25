@@ -21,7 +21,8 @@ import { opencodeId, opencodeRef, opencodeSession, recentOpencodeSessions } from
 import { agyDiscover, agyRoots } from "./agy.ts";
 import { allowedTranscript, readTranscript, resolveTranscript } from "./transcript-file.ts";
 import { EXTRACT_PROMPT_VERSION, buildMessages, hasExtractableSignal, KIND_FOR_BASIS, MAX_EVIDENCE, sha256, validate, type Candidate, type ExtractWindow, type ProjectContext } from "./extract.ts";
-import { RepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
+import { GitRefRepoTools, VERIFY_PROMPT_VERSION, verifyProposition } from "./codeverify.ts";
+import { resolveTrunkRef, scanChangedProject } from "./changeverify.ts";
 import * as intake from "./intake.ts";
 import type { RegistryEntry } from "./registry.ts";
 import { buildOnePassMessages, parseOnePass } from "./onepass.ts";
@@ -47,6 +48,7 @@ const PROJECT_DOCS_MAX_CHARS = 6000;
 const REGISTRY_MAX_CHARS = 3000;
 const CONFIRMED_MAX_CHARS = 3000;
 export const MAX_VERIFY_PER_RUN = 3;
+export const AUTO_CHANGE_SCAN_ENABLED = false;
 const VERIFY_RECHECK_MS = 24 * 3_600_000;
 /** 证据不足后再核的间隔：第 1 次 1 天，然后 2、4 天，之后保持 8 天（§12.6.12）。 */
 export const VERIFY_BACKOFF_DAYS = [1, 2, 4, 8];
@@ -89,6 +91,7 @@ export interface WorkOptions {
   session?: { host: Host; session_id: string };
   sweep: boolean;
   dryRun: boolean;
+  changeScan?: boolean;
   /** 只配合 session：清掉该会话的处理进度从头重跑。 */
   redo?: boolean;
 }
@@ -290,7 +293,7 @@ function progressPassed(host: Host, turns: Turn[], processed: string, to: string
 /** 出错明细每类最多记几行。 */
 const PROBLEMS_PER_KIND = 10;
 
-function problem(report: WorkReport, kind: string, text: string): void {
+function problem(report: Pick<WorkReport, "problems">, kind: string, text: string): void {
   if (report.problems.filter((p) => p.startsWith(`${kind} `)).length < PROBLEMS_PER_KIND) report.problems.push(`${kind} ${text}`);
 }
 
@@ -1302,10 +1305,16 @@ function verifyWaitMs(outcome: string): number {
 /** 没出错的核验还要不要再花一次（§12.6.12）。出错的不跳过。 */
 export function skipVerify(last: { head: string; outcome: string; at: string } | undefined, head: string, now: Date): boolean {
   if (!last || last.outcome.startsWith("error:")) return false;
-  if (last.outcome === "not_verifiable" || last.outcome.startsWith("not_verifiable:")) return true;
-  if (last.head === head) return true;
-  if (last.outcome === "inconclusive" || last.outcome.startsWith("inconclusive:")) return now.getTime() - Date.parse(last.at) < verifyWaitMs(last.outcome);
+  if (skipQueuedVerify(last, head, now)) return true;
+  if (last.outcome === "inconclusive" || last.outcome.startsWith("inconclusive:")) return false;
   return now.getTime() - Date.parse(last.at) < VERIFY_RECHECK_MS;
+}
+
+/** 入队只受无法核验、同 head 和证据不足退避限制，新提交上的确定结论立即重核。 */
+export function skipQueuedVerify(last: { head: string; outcome: string; at: string } | undefined, head: string, now: Date): boolean {
+  if (!last || last.outcome.startsWith("error:")) return false;
+  if (last.outcome === "not_verifiable" || last.outcome.startsWith("not_verifiable:") || last.head === head) return true;
+  return (last.outcome === "inconclusive" || last.outcome.startsWith("inconclusive:")) && now.getTime() - Date.parse(last.at) < verifyWaitMs(last.outcome);
 }
 
 /** 记下这次没结论的结果，次数加一。无法核验不记次数。 */
@@ -1320,43 +1329,29 @@ function seenVerify(db: DatabaseSync, id: string): boolean {
   return !!last && !last.outcome.startsWith("error:");
 }
 
-/** 按代码核验：只核验项目范围、未确认、可由代码证明的种类（坑、事实），且不是待确认的纠正。 */
-async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
+export type VerifyDeps = Pick<WorkDeps, "store" | "chat" | "now">;
+export type VerifyRunResult = WorkReport["verify"] & { problems: string[] };
+const queueEligible = (p: Proposition) => p.state === "active" && p.project_id !== null && p.kind !== "rule" && !p.stale && !p.superseded_draft;
+
+/** CLI 和 sweep 共用核验、退避、记账及出队逻辑。 */
+async function verifyCandidates(deps: VerifyDeps, report: Pick<WorkReport, "verify" | "problems">, holder: string, todo: Proposition[], toolsFor: (p: Proposition) => GitRefRepoTools | null): Promise<void> {
   if ("error" in deps.chat) return;
   const baseChat = deps.chat;
   const db = deps.store.workDb;
-  const names = new Map(deps.store.listProjects().map((p) => [p.id, p.name]));
   const queued = intake.queuedReverify(db);
-  const all = [...deps.store.project().props.values()];
-  // 召回时引文核对失败的条目（已按代码确认过）排在最前，重新核验
-  const requeued = all.filter((p) => queued.has(p.id) && p.state === "active" && p.project_id !== null && !!p.code_evidence && !p.stale && !p.superseded_draft);
-  for (const id of queued) if (!requeued.some((p) => p.id === id)) intake.dequeueReverify(db, id);
-  const todo = [
-    ...requeued.sort((a, b) => a.seq - b.seq),
-    ...all
-      .filter((p) => p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale && !p.superseded_draft)
-      // 从没核过（或上次只是出错）的排前面，别让反复重核的旧条目占住每次 3 条的名额
-      .sort((a, b) => Number(seenVerify(db, a.id)) - Number(seenVerify(db, b.id)) || a.seq - b.seq),
-  ];
   let done = 0;
   for (const p of todo) {
     if (done >= MAX_VERIFY_PER_RUN) break;
-    const entry = deps.registry.find((e) => e.name === names.get(p.project_id!));
-    if (!entry?.path || !existsSync(entry.path)) continue;
-    const tools = new RepoTools(entry.path);
+    let tools: GitRefRepoTools | null;
+    try { tools = toolsFor(p); } catch (e) { problem(report, "代码核验", `[${p.id.slice(0, 8)}] ${failureDetail(e)}`); continue; }
+    if (!tools) continue;
     const head = tools.head();
-    if (!head) continue;
     const last = intake.lastVerify(db, p.id);
     if (queued.has(p.id)) {
-      // 这个 HEAD 上已经有过确定结论，不重复花钱；上次是出错（限流/网络）的照样重试
-      if (last && last.head === head && !last.outcome.startsWith("error:")) {
-        intake.dequeueReverify(db, p.id);
-        continue;
-      }
+      if (skipQueuedVerify(last, head, deps.now())) { intake.dequeueReverify(db, p.id); continue; }
     } else if (skipVerify(last, head, deps.now())) continue;
     done++;
     let result;
-    // 核验可能落到备用渠道：记下最后一次真正回话的模型名
     let usedModel = baseChat.model;
     const chatOf: Chat = async (messages, opts) => {
       const r = await baseChat.chat(messages, opts);
@@ -1369,25 +1364,61 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
       intake.recordVerify(db, p.id, head, `error:${e instanceof WorkFailure ? e.code : "network"}`, deps.now());
       report.verify.errors++;
       problem(report, "代码核验", `[${p.id.slice(0, 8)}] ${e instanceof WorkFailure ? e.code : "network"}: ${failureDetail(e)}`);
-      // 额度用完：后面的条目也会撞上，本轮停下，下次 ab work 从这条接着核验
       if (e instanceof WorkFailure && e.code === "http_429") break;
       continue;
     } finally {
       intake.renewLease(db, holder, deps.now());
     }
-    // 核验有了结果才出队；出错时留在队里，下次 ab work 再试
-    intake.dequeueReverify(db, p.id);
     intake.spend(db, deps.now(), result.rounds, result.tokens);
     report.verify[result.verdict]++;
-    if (result.verdict === "verified" || result.verdict === "contradicted") {
-      const body: VerifyBody = { outcome: result.verdict, head, refs: result.refs, model: usedModel, prompt_version: VERIFY_PROMPT_VERSION };
-      deps.store.commit([{ kind: "verify", project_id: p.project_id, session_id: null, target_id: p.id, body }], (tx) =>
-        intake.recordVerify(tx, p.id, head, result.verdict, deps.now()),
-      );
-    } else {
-      intake.recordVerify(db, p.id, head, nextVerifyOutcome(last?.outcome, result.verdict), deps.now());
-    }
+    const appends = result.verdict === "verified" || result.verdict === "contradicted"
+      ? [{ kind: "verify" as const, project_id: p.project_id, session_id: null, target_id: p.id, body: { outcome: result.verdict, head, refs: result.refs, model: usedModel, prompt_version: VERIFY_PROMPT_VERSION } satisfies VerifyBody }]
+      : [];
+    deps.store.commit(appends, tx => {
+      intake.recordVerify(tx, p.id, head, nextVerifyOutcome(last?.outcome, result.verdict), deps.now());
+      intake.dequeueReverify(tx, p.id);
+    });
   }
+}
+
+export async function verifyQueuedForProject(deps: VerifyDeps, entry: RegistryEntry, head: string, holder: string): Promise<VerifyRunResult> {
+  if (!entry.path) throw new Error(`项目 ${entry.name} 没有本地仓库路径`);
+  const pid = deps.store.listProjects().find(p => p.name === entry.name)?.id;
+  const queued = intake.queuedReverify(deps.store.workDb);
+  const todo = [...deps.store.project().props.values()].filter(p => p.project_id === pid && queued.has(p.id));
+  for (const p of todo) if (!queueEligible(p)) intake.dequeueReverify(deps.store.workDb, p.id);
+  const report = { verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 }, problems: [] as string[] };
+  const tools = new GitRefRepoTools(entry.path, head);
+  await verifyCandidates(deps, report, holder, todo.filter(queueEligible).sort((a, b) => a.seq - b.seq), () => tools);
+  return { ...report.verify, problems: report.problems };
+}
+
+/** 入队项优先；首次未确认核验仍只处理坑和事实。 */
+async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
+  if ("error" in deps.chat) return;
+  const db = deps.store.workDb;
+  const names = new Map(deps.store.listProjects().map(p => [p.id, p.name]));
+  const queued = intake.queuedReverify(db);
+  const all = [...deps.store.project().props.values()];
+  const requeued = all.filter(p => queued.has(p.id) && queueEligible(p));
+  const valid = new Set(requeued.map(p => p.id));
+  for (const id of queued) if (!valid.has(id)) intake.dequeueReverify(db, id);
+  const todo = [
+    ...requeued.sort((a, b) => a.seq - b.seq),
+    ...all.filter(p => !queued.has(p.id) && p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale && !p.superseded_draft)
+      .sort((a, b) => Number(seenVerify(db, a.id)) - Number(seenVerify(db, b.id)) || a.seq - b.seq),
+  ];
+  const repos = new Map<string, GitRefRepoTools | null>();
+  await verifyCandidates(deps, report, holder, todo, p => {
+    const name = names.get(p.project_id!);
+    if (!name) return null;
+    if (!repos.has(name)) {
+      const entry = deps.registry.find(e => e.name === name);
+      const trunk = entry?.path && existsSync(entry.path) ? resolveTrunkRef(entry.path, entry.trunk) : null;
+      repos.set(name, trunk && entry?.path ? new GitRefRepoTools(entry.path, trunk.sha) : null);
+    }
+    return repos.get(name) ?? null;
+  });
 }
 
 export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkReport> {
@@ -1441,6 +1472,16 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     }
     if (!opts.dryRun) await relatePass(deps, report, holder);
     if (opts.sweep && !opts.dryRun) {
+      if (opts.changeScan ?? AUTO_CHANGE_SCAN_ENABLED) {
+        for (const entry of deps.registry) {
+          const day = intake.localDay(deps.now()), key = `verify_scan_day:${entry.name}`;
+          if (intake.meta(db, key) === day) continue;
+          try {
+            scanChangedProject(deps.store, entry, { dryRun: false, now: deps.now() });
+            intake.setMeta(db, key, day);
+          } catch (e) { problem(report, "变更扫描", `${entry.name}: ${failureDetail(e)}`); }
+        }
+      }
       await verifyPass(deps, report, holder);
       intake.prune(db, deps.now());
       pruneTopicMarks(db, deps.now());

@@ -8,7 +8,7 @@ description: "Verify agentbrain, the local agent-memory CLI (`ab` = node src/cli
 Every agent must use this to verify changes before calling them done. 改动必须先用本技能验证、附证据，才算完成。
 
 ## Launch
-CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch AB_HOME / AGENTBRAIN_HOME (mktemp) — never point at ~/.agentbrain (user's real memory).
+CLI, no server. Requires node >=22.18 (runs .ts natively). Isolate with scratch HOME, AB_HOME, AGENTBRAIN_HOME and AB_REGISTRY. Never point at ~/.agentbrain or real host session directories. `verify.sh run` sets all four before running tests and provides a fixture security command for local HTTP mocks.
 
 A fully isolated HOME hides the keychain. The local embedding server in `verify.sh run` still reads `agentbrain-embedding` through `security`. Put a scratch `security` on PATH that returns `fixture-key` only for that service, following `src/llm.test.ts`. No real key is needed. Do not use this stub for real-model verification.
 
@@ -21,6 +21,7 @@ A fully isolated HOME hides the keychain. The local embedding server in `verify.
 - `cli-memory`: `remember` (confirmed and unconfirmed), `confirm`, `search`, `get`, and `get` after seeding an `evidence` event that carries `model` / `prompt_version` (asserts the 模型产出记录 block, and that a hand-written entry has none)
 - `cli-conflicts`: `src/conflicts.test.ts` drives real `get`, `search`, `brief`, `status`, `archive`, and `archive --reactivate` against an isolated file-backed store. It asserts multi-pair visibility, reverse reassessment, and lifecycle counts. See [features/conflicts.md](features/conflicts.md).
 - `cli-stale-guard`: `src/stale-guard.test.ts` 检查四类确认来源的注入资格、警告预算和草稿退场。`src/stale-cli.test.ts` 用隔离库、临时中文 Git 仓库与本地 `/chat/completions` 服务驱动真实 `remember`、`confirm`、`brief`、`recall`、`search`、`get`、`status`、`verify [--ref]`。回读 `verify_attempts`、`verify_queue`、`inject_log` 和 L2，断言决定不自动转正及脏工作区不变。证据为 `cli-stale-guard.log`、`cli-e2e.log`、`mock-requests.json`。`src/codeverify.test.ts` 覆盖 ref 工具、中文路径、文件大小及提交祖先边界。
+- `cli-change-verify` / `cli-change-sweep`: `verify --changed <项目>` 扫描、预演、JSON 和持租约同步核验。使用临时 Git 仓库、本地 HTTP mock 和隔离库，回读队列、核验记录及工作区，覆盖主干选择、机械预筛、非祖先三分支、20 条上限和默认关闭的每日扫描。证据为 `cli-change-verify.log`、`cli-change-sweep.log`、`change-verify/cli-e2e.log`、`change-verify/mock-requests.json`。见 [features/change-verify.md](features/change-verify.md)。
 - `cli-lifecycle`: `correct` (old entry shows 已被替代), `archive` + `--reactivate`, `guidance` on/off with `recall --hook` showing and hiding the `<agentbrain-prefs>` block
 - `cli-brief`: `brief` before and after confirm, plus `brief --worker` (asserts unconfirmed text stays out until confirm)
 - `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)
@@ -58,7 +59,7 @@ Logs per step + JSON status lines land in `/Users/hejiayuan/.cache/verify-eviden
 - Host integrations beyond the `hosts` driver (installed launchd job, the user's real interactive sessions) — not run.
 
 ## Cleanup
-`.agents/skills/verify-agentbrain/verify.sh cleanup` — removes only scratch this script created; never kills by process name; evidence is kept.
+`verify.sh run` removes its scratch directories on exit and keeps evidence. `.agents/skills/verify-agentbrain/verify.sh cleanup` removes scratch recorded by older runs; it never kills by process name.
 
 ## Feature map
 See [features/README.md](features/README.md). Keep it in sync via `/maintain-verification-skill` (weekday daily pass).

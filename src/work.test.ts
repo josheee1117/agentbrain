@@ -1210,6 +1210,84 @@ test("到期不再自动归档：sweep 后未确认提议仍 active，只进到�
   assert.deepEqual(reviewList(e.store.project().props.values(), e.store.usage(), later).map((d) => d.prop.id), [id]);
 });
 
+test("ab-2 sweep 的核验读取主干提交，不读测试分支或脏工作区", async () => {
+  const e = env();
+  const git = (...args: string[]) => execFileSync("git", ["-C", e.repo, ...args], { encoding: "utf8" }).trim();
+  git("branch", "trunk");
+  const target = git("rev-parse", "trunk");
+  git("checkout", "-qb", "test-branch");
+  writeFileSync(join(e.repo, "store.ts"), "const VEC_MIN_SIM = 99;\n");
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "test branch");
+  writeFileSync(join(e.repo, "store.ts"), "const VEC_MIN_SIM = 999;\n");
+  const dirty = git("status", "--porcelain=v1");
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
+  const chat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const r = await runWork(e.deps(chat, { registry: [{ name: "alpha", path: e.repo, trunk: "trunk" }] }), { sweep: true, dryRun: false });
+  assert.equal(r.verify.verified, 1);
+  assert.equal(e.store.project().props.get(id)!.code_evidence?.head, target);
+  assert.equal(git("status", "--porcelain=v1"), dirty);
+  assert.match(chat.calls.flatMap(ms => ms.filter(m => m.role === "tool").map(m => m.content)).join("\n"), /0\.45/);
+  assert.doesNotMatch(chat.calls.flatMap(ms => ms.filter(m => m.role === "tool").map(m => m.content)).join("\n"), /999/);
+});
+
+test("ab-2 sweep 本地扫描默认关，显式开启每天一次，跨天再扫，坏项目不挡其他项目", async () => {
+  const e = env();
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45", { confirmed: true });
+  const head = execFileSync("git", ["-C", e.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  e.store.commit([{ kind: "verify", project_id: e.pid, session_id: null, target_id: id, body: { outcome: "verified", head, refs: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] } }], () => {});
+  writeFileSync(join(e.repo, "store.ts"), "const VEC_MIN_SIM = 0.5;\n");
+  execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump"]);
+  let now = new Date("2026-11-25T12:00:00Z");
+  const deps = e.deps(null, { now: () => now, registry: [{ name: "bad", path: join(e.dir, "missing") }, { name: "alpha", path: e.repo }] });
+  await runWork(deps, { sweep: true, dryRun: false });
+  assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), null);
+  assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
+  await runWork(deps, { sweep: true, dryRun: true, changeScan: true });
+  assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), null);
+  const r = await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), intake.localDay(now));
+  assert.equal(intake.queuedReverify(e.store.workDb).has(id), true);
+  assert.ok(r.problems.some(p => p.includes("bad")));
+  intake.dequeueReverify(e.store.workDb, id);
+  await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
+  now = new Date("2026-11-26T12:00:00Z");
+  await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), intake.localDay(now));
+  assert.equal(intake.queuedReverify(e.store.workDb).has(id), true);
+});
+
+test("ab-2 入队的无证据 decision 必须消费但不自动转正", async () => {
+  const e = env();
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45", { kind: "decision" });
+  e.store.queueReverify([id], new Date());
+  const chat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  assert.equal(r.verify.verified, 1);
+  assert.equal(e.store.project().props.get(id)!.code_evidence?.refs.length, 1);
+  assert.equal(e.store.project().props.get(id)!.confirmed, false);
+  assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
+});
+
+test("ab-2 入队无证据 note 出错仍留队；not_verifiable 和 inconclusive 不绕过退避", async () => {
+  const e = env();
+  const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45", { kind: "note", confirmed: true });
+  e.store.queueReverify([id], new Date());
+  const r = await runWork(e.deps(fakeChat(() => { throw new Error("fixture"); })), { sweep: true, dryRun: false });
+  assert.equal(r.verify.errors, 1);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(id), true);
+  const now = new Date();
+  for (const outcome of ["not_verifiable", "inconclusive:1", "inconclusive:2", "inconclusive:3", "inconclusive:4"]) {
+    intake.recordVerify(e.store.workDb, id, "old-head", outcome, now);
+    e.store.queueReverify([id], now);
+    const chat = verifierChat({ verdict: "not_verifiable" });
+    const again = await runWork(e.deps(chat, { now: () => now }), { sweep: true, dryRun: false });
+    assert.equal(again.verify.not_verifiable, 0, outcome);
+    assert.equal(chat.calls.length, 0, outcome);
+    assert.equal(intake.queuedReverify(e.store.workDb).has(id), false, outcome);
+  }
+});
+
 test("用前核对排队：已转正的条目代码变了 → 下次 ab work 优先重新核验；出错留在队里重试，有结论后出队", async () => {
   const e = env();
   const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
