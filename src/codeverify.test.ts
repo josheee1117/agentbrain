@@ -98,6 +98,23 @@ test("只读 ref 工具读取中文目标树，不碰别分支的脏工作区", 
   assert.equal(runGit("status", "--porcelain=v1"), before);
 });
 
+test("只读 ref 工具列举空提交树与单条路径", () => {
+  const refRoot = join(base, "list-repo");
+  mkdirSync(refRoot);
+  const runGit = (...args: string[]) => execFileSync("git", ["-C", refRoot, ...args], { encoding: "utf8" });
+  runGit("init", "-q");
+  runGit("-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "空树");
+  const empty = new codeverify.GitRefRepoTools(refRoot, "HEAD");
+  assert.equal(empty.run("list_dir", { path: "." }), "");
+
+  writeFileSync(join(refRoot, "only.txt"), "one\n");
+  runGit("add", ".");
+  runGit("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "单条路径");
+  const single = new codeverify.GitRefRepoTools(refRoot, "HEAD");
+  assert.equal(single.run("list_dir", { path: "." }), "only.txt");
+  assert.equal(empty.run("list_dir", { path: "." }), "");
+});
+
 /** 按脚本回放的模型：先调工具，再给结论。记下每次请求，供断言。 */
 function scripted(steps: ((msgs: ChatMessage[]) => ChatMessage)[]): Chat & { seen: ChatMessage[][] } {
   const seen: ChatMessage[][] = [];

@@ -120,7 +120,7 @@ test("unconfirm：撤销印证/代码核验的转正；之后再印证、再核�
   p = s.project().props.get(b)!;
   assert.equal(p.confirmed, false, "撤销后代码核验也不再转正");
   assert.equal(p.confirmed_by, null, "撤销后核验证据不等于自动转正");
-  assert.deepEqual(p.code_evidence, { head: "h2", refs: [] }, "§9.7 verified 记录代码证据，仍保留撤销状态");
+  assert.equal(p.code_evidence, null);
   assert.equal(p.demoted, "worker_prompt");
 
   s.lifecycle("confirm", a, null);

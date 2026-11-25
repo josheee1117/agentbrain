@@ -206,7 +206,7 @@ export class GitRefRepoTools extends RepoTools {
   protected override list(rel: unknown): string {
     const path = relative(this.root, this.resolve(rel));
     const tree = path ? `${this.commitSha}:${path}` : this.commitSha;
-    return this.git(["ls-tree", "--format=%(objecttype) %(path)", tree]).trimEnd().split("\n")
+    return this.git(["ls-tree", "--format=%(objecttype) %(path)", tree]).trimEnd().split("\n").filter(Boolean)
       .slice(0, MAX_LIST_ENTRIES).map(line => line.startsWith("tree ") ? line.slice(5) + "/" : line.slice(line.indexOf(" ") + 1)).join("\n");
   }
 }

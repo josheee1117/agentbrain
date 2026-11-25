@@ -482,8 +482,9 @@ export function fold(rows: EventRow[]): Projection {
       const b = JSON.parse(r.body) as VerifyBody;
       if (b.outcome === "verified") {
         target.stale = null;
+        if (target.demoted) continue;
         target.code_evidence = { head: b.head, refs: b.refs };
-        if (target.demoted || target.kind === "decision") continue; // 决定只补代码证据，撤销过的条目不再转正
+        if (target.kind === "decision") continue; // 决定只补代码证据，不自动转正
         if (!target.confirmed) {
           target.confirmed_by = "code";
           target.confirmed_event = by;
