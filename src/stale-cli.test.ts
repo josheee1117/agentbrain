@@ -88,6 +88,24 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
         assert.equal(intake.lastVerify(store.workDb, prop(id).id), undefined);
       });
     }
+    await t.test("ab verify 拒绝被未确认纠正替代的旧草稿", async () => {
+      const pid = store.ensureProject("testrepo");
+      const old = store.remember(pid, null, false, { kind: "pitfall", text: "不可复活的旧草稿", origin: "extract", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "回归" } });
+      const newer = /已纠正 \[([0-9a-f]{8})\]/.exec(await ok("correct", old.slice(0, 8), "--text", "未确认的替代草稿", "--summary", "回归"))?.[1];
+      assert.ok(newer);
+      assert.equal(prop(newer).project_id, pid);
+      assert.equal(prop(newer).confirmed, false);
+      assert.equal(prop(old).superseded_draft, prop(newer).id);
+      const before = requests.length;
+      const r = await run("verify", old.slice(0, 8));
+      assert.notEqual(r.status, 0);
+      assert.ok(r.err.includes(`已被草稿 ${newer} 替代的旧草稿不走代码核验；先归档替代草稿或核验新草稿`));
+      assert.equal(requests.length, before);
+      assert.equal(prop(old).confirmed, false);
+      assert.equal(prop(old).superseded_draft, prop(newer).id);
+      assert.equal(intake.lastVerify(store.workDb, old), undefined);
+      assert.doesNotMatch(await ok("brief"), /不可复活的旧草稿/);
+    });
     for (const mode of ["supersedes", "unreconciled", "demoted"]) {
       await t.test(`ab verify 对 ${mode} 只核验不自动转正`, async () => {
         const pid = store.ensureProject("testrepo");
@@ -124,6 +142,17 @@ test("真实 CLI：stale 确认、强制重核、中文只读 ref、草稿搜索
         assert.match(r.err, /仓库.*不可用/);
         assert.equal(r.err.trim().split("\n").length, 1);
         assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/);
+      } finally { writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`); }
+    });
+    await t.test("ab verify --ref HEAD 优先报告仓库目录缺失", async () => {
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${join(dir, "missing-repo")}\`\n`);
+      try {
+        const before = requests.length;
+        const r = await run("verify", errorsId, "--ref", "HEAD");
+        assert.notEqual(r.status, 0);
+        assert.match(r.err, /本地项目仓库不可用/);
+        assert.doesNotMatch(r.err, /无法解析 --ref/);
+        assert.equal(requests.length, before);
       } finally { writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`); }
     });
     await t.test("ab verify 模型 HTTP 500 不输出堆栈", async () => {

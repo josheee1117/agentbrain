@@ -906,8 +906,10 @@ async function cmdVerify(argv: string[]): Promise<void> {
     if (p.project_id === null) die("全局记忆不能按项目代码核验");
     if (p.state !== "active") die(`只能核验仍有效的记忆，这条是 ${p.state}: ${short(p.id)}`);
     if (p.kind === "rule") die("规则不走代码核验");
+    if (p.superseded_draft) die(`已被草稿 ${short(p.superseded_draft)} 替代的旧草稿不走代码核验；先归档替代草稿或核验新草稿`);
     const root = projectRepo(store, p);
     if (!root) die("找不到该记忆的本地项目仓库");
+    try { realpathSync(root); } catch { die(`本地项目仓库不可用：${root}`); }
     let tools: RepoTools;
     try {
       tools = values.ref !== undefined ? new GitRefRepoTools(root, values.ref) : new RepoTools(root);
