@@ -1424,10 +1424,22 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
     }
     return repos.get(name) ?? null;
   };
+  const ownHasCommit = (tools: GitRefRepoTools, sha: string): boolean => {
+    try {
+      return /^[0-9a-f]{7,40}$/.test(sha) && tools.git(["cat-file", "-t", sha]).trim() === "commit";
+    } catch {
+      return false;
+    }
+  };
   await verifyCandidates(deps, report, holder, todo, p => {
-    if (p.project_id !== null) {
-      const name = names.get(p.project_id);
-      return name ? repoTools(name) : null;
+    const ownName = p.project_id !== null ? names.get(p.project_id) : undefined;
+    const onlyExternalAnchors = p.anchors.length > 0 && !p.anchors.some(a => {
+      const r = parseAnchor(a).repo;
+      return r === null || (ownName !== undefined && r === ownName);
+    });
+    if (ownName && (!onlyExternalAnchors || !!p.code_evidence)) {
+      const ownTools = repoTools(ownName);
+      if (!onlyExternalAnchors || (ownTools && ownHasCommit(ownTools, p.code_evidence!.head))) return ownTools;
     }
     for (const a of p.anchors) {
       const repo = parseAnchor(a).repo;

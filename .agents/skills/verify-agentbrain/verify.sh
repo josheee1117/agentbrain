@@ -454,6 +454,8 @@ MOCK
     step cli-backfill-preview-check bash -c "grep -qF 'src/锚点模块.ts' '$EV/backfill-plan.json' && grep -qF '| ancrepo |' '$EV/backfill-plan.md'"
     step cli-backfill-apply env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/scripts/backfill-decision-anchors.ts" apply --plan "$EV/backfill-plan.json" --ids "$ANC_BF"
     step cli-backfill-apply-check bash -c "(cd '$ANC_REPO' && env HOME='$FAKE_HOME' AB_HOME='$ANC_AB' AGENTBRAIN_HOME='$ANC_AB' AB_REGISTRY='$ANC_REG' node '$ROOT/src/cli.ts' get '$ANC_BF') > '$EV/cli-backfill-get.log' 2>&1 && grep -qF 'src/锚点模块.ts' '$EV/cli-backfill-get.log' && grep -qF '未确认' '$EV/cli-backfill-get.log'"
+    step cli-backfill-apply-idempotent env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/scripts/backfill-decision-anchors.ts" apply --plan "$EV/backfill-plan.json" --ids "$ANC_BF"
+    step cli-backfill-apply-idempotent-check bash -c "grep -qF 'applied=0，skipped=1' '$EV/cli-backfill-apply-idempotent.log'"
     kill $ANC_PID 2>/dev/null || true
 
     # 9. 生命周期：correct / archive / guidance（memory.md）

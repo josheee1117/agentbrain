@@ -127,11 +127,11 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
     if (isCommit(a) !== isCommit(b)) return isCommit(a) ? a : b;
     return a;
   };
-  const chooseBase = (p: Proposition, isCrossRepo: boolean, last: ReturnType<typeof intake.lastVerify>): string | null => {
+  const chooseBase = (p: Proposition, isCrossRepo: boolean, includeEvidenceHead: boolean, last: ReturnType<typeof intake.lastVerify>): string | null => {
     const lastHead = last && (last.outcome === "verified" || last.outcome === "shifted") ? last.head : null;
     const raw = isCrossRepo
       ? [p.anchor_head, lastHead].filter((sha): sha is string => !!sha && isCommit(sha))
-      : [p.code_evidence?.head, p.anchor_head, lastHead].filter((sha): sha is string => !!sha);
+      : [includeEvidenceHead ? p.code_evidence?.head : undefined, p.anchor_head, lastHead].filter((sha): sha is string => !!sha);
     const unique = [...new Set(raw)];
     return unique.length ? unique.reduce(pickNewer) : null;
   };
@@ -171,11 +171,17 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
   for (const p of store.project().props.values()) {
     if (p.state !== "active" || p.kind === "rule" || p.stale || p.superseded_draft || p.demoted) continue;
     const isOwn = pid !== undefined && p.project_id === pid;
-    const refs = isOwn ? (p.code_evidence?.refs.filter((ref): ref is FileRef => "path" in ref) ?? []) : [];
     const anchorPaths = [...new Set(
       p.anchors.map(parseAnchor).filter(a => isOwn ? (a.repo === null || a.repo === entry.name) : a.repo === entry.name).map(a => a.path),
     )];
     if (!isOwn && !anchorPaths.length) continue;
+    if (isOwn && p.anchors.length > 0 && !anchorPaths.length) continue;
+    const hasMixedAnchors = isOwn && anchorPaths.length > 0 && p.anchors.some(a => {
+      const r = parseAnchor(a).repo;
+      return r !== null && r !== entry.name;
+    });
+    const useOwnEvidence = isOwn && (!hasMixedAnchors || (!!p.code_evidence && isCommit(p.code_evidence.head)));
+    const refs = useOwnEvidence ? (p.code_evidence?.refs.filter((ref): ref is FileRef => "path" in ref) ?? []) : [];
     result.checked++;
     if (!refs.length && !anchorPaths.length) { result.skipped.no_file_refs++; continue; }
     if (queued.has(p.id)) { result.skipped.already_queued++; continue; }
@@ -186,7 +192,7 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
       else result.skipped.backoff++;
       continue;
     }
-    const base = chooseBase(p, !isOwn, last);
+    const base = chooseBase(p, !isOwn, useOwnEvidence, last);
     if (base === target.sha) { result.skipped.same_head++; continue; }
     // normalize through the same scoped-path boundary as read-only code verification
     const normalizedRefs: FileRef[] = [];

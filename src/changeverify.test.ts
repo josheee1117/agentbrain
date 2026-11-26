@@ -351,3 +351,38 @@ test("ab-3 跨仓 <repo>:<relpath>、全局条、Case 2 非祖先锚点与 choos
   assert.equal(intake.lastVerify(e.store.workDb, divergedOk)?.head, h2);
   assert.deepEqual(r2.items.map(i => [i.id, i.priority]), [[divergedTouched, "anchor"]]);
 });
+
+test("ab-3 本仓条目仅挂外部锚点或混合锚点带外部 code_evidence 时，不误判为 deleted", t => {
+  const e = fixture(t);
+  e.file("own.ts", "export const OWN = 1;\n");
+  const ownHead = e.commit("own file");
+  const foreignHead = "c".repeat(40); // 外部仓库的 commit，不在本仓，且本仓没有 external-only.ts
+
+  // 1. 本仓条目仅有外部锚点：本仓扫描直接跳过（不进 checked，不进 no_file_refs，不误报 deleted）
+  const onlyExternal = e.memory([{ path: "external-only.ts", line_start: 1, line_end: 1, quote: "EXT = 1" }], foreignHead, {
+    kind: "decision",
+    anchors: ["other:external-only.ts"],
+    anchor_head: foreignHead,
+  });
+
+  // 2. 本仓条目有混合锚点（本仓 own.ts + 外部 other:external-only.ts），且 code_evidence 是外部仓写入的
+  const mixed = e.memory([{ path: "external-only.ts", line_start: 1, line_end: 1, quote: "EXT = 1" }], foreignHead, {
+    kind: "decision",
+    anchors: ["own.ts", "other:external-only.ts"],
+    anchor_head: ownHead,
+  });
+
+  const r1 = e.scan(true);
+  assert.equal(r1.checked, 1, "只计入含本仓锚点的 mixed");
+  assert.equal(r1.hits, 0, "外部 code_evidence 不得在 sample 仓走 Case 0 误判 deleted");
+  assert.equal(r1.skipped.same_head, 1);
+
+  // 本仓 unrelated 提交后仍是 unchanged（不因 external-only.ts 误判 deleted）
+  e.file("unrelated.ts", "const X = 1;\n");
+  e.commit("unrelated");
+  const r2 = e.scan(true);
+  assert.equal(r2.hits, 0);
+  assert.equal(r2.skipped.unchanged, 1);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(onlyExternal), false);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(mixed), false);
+});

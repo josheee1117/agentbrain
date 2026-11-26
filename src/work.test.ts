@@ -1340,6 +1340,41 @@ test("ab-3 跨仓锚点：全局条与外部项目条可入队并按锚点所在
   assert.equal(rSweep.verify.verified, 1);
   assert.equal(intake.queuedReverify(e.store.workDb).has(globalUnconf), false);
   assert.equal(e.store.project().props.get(globalUnconf)!.confirmed, true);
+
+  // beta 项目仅挂 alpha 外部锚点的未确认 decision：首次核验和后续入队重核都必须走 alpha 仓，不走 beta 仓
+  const betaRepo = join(e.dir, "beta-repo");
+  mkdirSync(betaRepo, { recursive: true });
+  writeFileSync(join(betaRepo, "beta.ts"), "export const BETA = 1;\n");
+  execFileSync("git", ["-C", betaRepo, "init", "-qb", "main"]);
+  execFileSync("git", ["-C", betaRepo, "add", "."]);
+  execFileSync("git", ["-C", betaRepo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "beta init"]);
+  const betaDec = e.store.remember(otherPid, null, false, {
+    kind: "decision",
+    text: "beta 仅挂 alpha 锚点的决定",
+    confirmed: false,
+    anchors: ["alpha:store.ts"],
+    anchor_head: head,
+    source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" },
+  });
+  const bothReg = [
+    { name: "alpha", path: e.repo },
+    { name: "beta", path: betaRepo, trunk: "main" },
+  ];
+  const rBetaFirst = await runWork(e.deps(chat, { registry: bothReg }), { sweep: true, dryRun: false, changeScan: false });
+  assert.equal(rBetaFirst.verify.verified, 1);
+  assert.equal(e.store.project().props.get(betaDec)!.code_evidence?.head, head);
+  assert.equal(e.store.project().props.get(betaDec)!.confirmed, false);
+
+  // 即使已有来自 alpha 的 code_evidence，再次在 alpha 变更并入队后，verifyPass 仍必须选 alpha 仓而非 beta 仓
+  writeFileSync(join(e.repo, "store.ts"), "export const VEC_MIN_SIM = 0.45;\n// updated\n");
+  execFileSync("git", ["-C", e.repo, "add", "store.ts"]);
+  execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "alpha update"]);
+  const alphaNew = execFileSync("git", ["-C", e.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  e.store.queueReverify([betaDec], new Date());
+  const rBetaSecond = await runWork(e.deps(chat, { registry: bothReg }), { sweep: true, dryRun: false, changeScan: false });
+  assert.equal(rBetaSecond.verify.verified, 1);
+  assert.equal(e.store.project().props.get(betaDec)!.code_evidence?.head, alphaNew);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(betaDec), false);
 });
 
 test("ab-2 入队无证据 note 出错仍留队；not_verifiable 和 inconclusive 不绕过退避", async () => {
