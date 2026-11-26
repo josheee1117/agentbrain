@@ -23,7 +23,7 @@ import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } 
 import { allowedTranscript } from "./transcript-file.ts";
 import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, nextVerifyOutcome, piSessionId, runWork, verifyQueuedForProject, type WorkDeps } from "./work.ts";
 import { resolveTrunkRef, scanChangedProject } from "./changeverify.ts";
-import { synthesizeProject } from "./synthesize.ts";
+import { loadSpecs, synthesizeProject } from "./synthesize.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
@@ -803,7 +803,8 @@ function cmdGet(argv: string[]): void {
       `来源: ${p.source.summary}（${p.source.host ?? "命令行"}）${p.source.transcript ? "" : "（没有可展开的对话记录）"}${p.source.relayed_by ? `（经 ${p.source.relayed_by.host} 主会话转记）` : ""}  记录于 ${p.ts.slice(0, 10)}`,
     ].filter(Boolean);
     if (p.model_outputs.length) {
-      const labels = { remember: "抽取", evidence: "追加证据", relate: "关系判定", verify: "代码核验" };
+      const rememberLabel = p.origin === "auto" ? "收口提炼" : "抽取";
+      const labels = { remember: rememberLabel, evidence: "追加证据", relate: "关系判定", verify: "代码核验" };
       linesOut.push("模型产出记录:", ...p.model_outputs.map((o) =>
         `  [${short(o.event_id)}] ${labels[o.kind]}: ${o.model ?? "未记录"}，提示词版本 ${o.prompt_version ?? "未记录"}`));
     }
@@ -1046,7 +1047,15 @@ function openReadOnlySnapshot(root: string): { store: Store; cleanup: () => void
   const storeFile = join(root, "store.db");
   if (!existsSync(storeFile)) {
     const store = new Store(":memory:", ":memory:");
-    return { store, cleanup: () => store.close() };
+    let closed = false;
+    return {
+      store,
+      cleanup: () => {
+        if (closed) return;
+        closed = true;
+        store.close();
+      },
+    };
   }
   const tmpDir = mkdtempSync(join(tmpdir(), "ab-synth-ro-"));
   for (const suffix of ["", "-wal", "-shm"]) {
@@ -1054,11 +1063,17 @@ function openReadOnlySnapshot(root: string): { store: Store; cleanup: () => void
     if (existsSync(src)) copyFileSync(src, join(tmpDir, `store.db${suffix}`));
   }
   const store = new Store(join(tmpDir, "store.db"), ":memory:");
+  let cleaned = false;
   return {
     store,
     cleanup: () => {
-      store.close();
-      rmSync(tmpDir, { recursive: true, force: true });
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        store.close();
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -1089,6 +1104,11 @@ async function cmdSynthesize(argv: string[]): Promise<void> {
   } catch {
     die(`本地项目仓库不可用：${entry.path}`);
   }
+  try {
+    loadSpecs(specs);
+  } catch (e) {
+    die((e instanceof Error ? e.message : String(e)).split("\n")[0]);
+  }
 
   const cfg = loadChatConfig(home());
   if ("error" in cfg) die(`沉淀模型配置不可用：${cfg.error}`);
@@ -1107,6 +1127,7 @@ async function cmdSynthesize(argv: string[]): Promise<void> {
     return { store: s, cleanup: () => s.close() };
   })();
 
+  let fatalError: string | null = null;
   try {
     const found = detectHost();
     const det = found.ok ? found.detection : null;
@@ -1133,45 +1154,47 @@ async function cmdSynthesize(argv: string[]): Promise<void> {
         updateVectors: dryRun ? undefined : updateVectors,
       });
     } catch (e) {
-      die((e instanceof Error ? e.message : String(e)).split("\n")[0]);
+      fatalError = (e instanceof Error ? e.message : String(e)).split("\n")[0];
     }
 
-    if (values.json) {
-      console.log(JSON.stringify(result));
-      return;
-    }
-
-    const lines: string[] = [
-      `${result.dryRun ? "预演，未写入。" : ""}项目 ${result.project}（HEAD @${result.head.slice(0, 7)}，模型 ${result.model}，提示词 ${result.promptVersion}${result.truncated ? "，spec 已截断" : ""}）`,
-    ];
-    if (!result.created.length) {
-      lines.push(`没有提炼出新的项目决定（跳过 ${result.skipped.length} 条）。`);
-    } else {
-      lines.push(`产出 ${result.created.length} 条未确认决定（绝不自动转正/归档）：`);
-      for (const item of result.created) {
-        lines.push(`  ${item.id ? `[${short(item.id)}]` : "[预演]"} 决定[未确认·收口提炼]: ${item.text}`);
-        lines.push(`    锚点（基准 ${item.anchorHead.slice(0, 7)}）: ${item.anchors.join("；")}`);
-        if (item.why) lines.push(`    为什么: ${item.why}`);
-        if (item.supersedes) lines.push(`    拟替代: [${short(item.supersedes)}]（未确认前不盖掉旧条目）`);
-        if (!result.dryRun && item.id) lines.push(`    确认用: ab confirm ${short(item.id)}`);
+    if (!fatalError && result) {
+      if (values.json) {
+        console.log(JSON.stringify(result));
+      } else {
+        const lines: string[] = [
+          `${result.dryRun ? "预演，未写入。" : ""}项目 ${result.project}（HEAD @${result.head.slice(0, 7)}，模型 ${result.model}，提示词 ${result.promptVersion}${result.truncated ? "，spec 已截断" : ""}）`,
+        ];
+        if (!result.created.length) {
+          lines.push(`没有提炼出新的项目决定（跳过 ${result.skipped.length} 条）。`);
+        } else {
+          lines.push(`产出 ${result.created.length} 条未确认决定（绝不自动转正/归档）：`);
+          for (const item of result.created) {
+            lines.push(`  ${item.id ? `[${short(item.id)}]` : "[预演]"} 决定[未确认·收口提炼]: ${item.text}`);
+            lines.push(`    锚点（基准 ${item.anchorHead.slice(0, 7)}）: ${item.anchors.join("；")}`);
+            if (item.why) lines.push(`    为什么: ${item.why}`);
+            if (item.supersedes) lines.push(`    拟替代: [${short(item.supersedes)}]（未确认前不盖掉旧条目）`);
+            if (!result.dryRun && item.id) lines.push(`    确认用: ab confirm ${short(item.id)}`);
+          }
+        }
+        if (result.skipped.length) {
+          lines.push(`跳过 ${result.skipped.length} 条:`);
+          for (const s of result.skipped) lines.push(`  - ${s.text}（${s.reason}）`);
+        }
+        if (result.draftHints.length) {
+          lines.push(`同项目未确认草稿/待处理条目 ${result.draftHints.length} 条（未自动修改或归档）：`);
+          for (const h of result.draftHints) {
+            lines.push(`  [${h.shortId}] ${KIND_LABEL[h.kind]}（${h.reasons.join("、")}）: ${h.text}`);
+          }
+          lines.push("清理提示：认可保留用 ab confirm <id>；废案归档用 ab archive <id>");
+        }
+        if (result.vectorWarning) lines.push(`向量未更新：${result.vectorWarning}`);
+        console.log(lines.join("\n"));
       }
     }
-    if (result.skipped.length) {
-      lines.push(`跳过 ${result.skipped.length} 条:`);
-      for (const s of result.skipped) lines.push(`  - ${s.text}（${s.reason}）`);
-    }
-    if (result.draftHints.length) {
-      lines.push(`同项目未确认草稿/待处理条目 ${result.draftHints.length} 条（未自动修改或归档）：`);
-      for (const h of result.draftHints) {
-        lines.push(`  [${h.shortId}] ${KIND_LABEL[h.kind]}（${h.reasons.join("、")}）: ${h.text}`);
-      }
-      lines.push("清理提示：认可保留用 ab confirm <id>；废案归档用 ab archive <id>");
-    }
-    if (result.vectorWarning) lines.push(`向量未更新：${result.vectorWarning}`);
-    console.log(lines.join("\n"));
   } finally {
     handle.cleanup();
   }
+  if (fatalError !== null) die(fatalError);
 }
 
 function cmdArchive(argv: string[]): void {

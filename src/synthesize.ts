@@ -110,7 +110,7 @@ function optionalGit(tools: RepoTools, args: string[]): string | null {
   }
 }
 
-function loadSpecs(paths: string[]): { text: string; truncated: boolean } {
+export function loadSpecs(paths: string[]): { text: string; truncated: boolean } {
   if (!paths.length) throw new Error("缺少 --spec <文件>");
   const sections: string[] = [];
   let hasContent = false;
@@ -164,8 +164,23 @@ function collectGitContext(entry: RegistryEntry, diffBase?: string): {
   } else {
     const trunk = resolveTrunkRef(entry.path, entry.trunk);
     if (trunk && trunk.sha !== head) {
-      diffBaseLabel = trunk.ref;
-      baseSha = trunk.sha;
+      const mb = optionalGit(tools, ["merge-base", trunk.sha, head]);
+      if (mb && mb !== head) {
+        diffBaseLabel = mb === trunk.sha ? trunk.ref : `merge-base(${trunk.ref})`;
+        baseSha = mb;
+      } else if (mb === head) {
+        const parent = optionalGit(tools, ["rev-parse", "--verify", "HEAD~1^{commit}"]);
+        if (parent) {
+          diffBaseLabel = "HEAD~1";
+          baseSha = parent;
+        } else {
+          diffBaseLabel = trunk.ref;
+          baseSha = EMPTY_TREE_SHA;
+        }
+      } else {
+        diffBaseLabel = trunk.ref;
+        baseSha = trunk.sha;
+      }
     } else {
       const parent = optionalGit(tools, ["rev-parse", "--verify", "HEAD~1^{commit}"]);
       if (parent) {
@@ -191,12 +206,21 @@ function collectGitContext(entry: RegistryEntry, diffBase?: string): {
       .split("\0")
       .filter(Boolean);
     diffStat = tools.git(["diff", "--stat", baseSha, head]).trim() || "（无提交差异）";
-    const rawPatch = tools.git(["diff", "--unified=2", "--no-textconv", baseSha, head]);
-    const patchChars = [...rawPatch];
-    diffPatch =
-      patchChars.length > MAX_DIFF_PATCH_CHARS
-        ? patchChars.slice(0, MAX_DIFF_PATCH_CHARS).join("") + "\n…（diff 已截断）"
-        : rawPatch;
+    try {
+      const rawPatch = tools.git(["diff", "--unified=2", "--no-textconv", baseSha, head]);
+      const patchChars = [...rawPatch];
+      diffPatch =
+        patchChars.length > MAX_DIFF_PATCH_CHARS
+          ? patchChars.slice(0, MAX_DIFF_PATCH_CHARS).join("") + "\n…（diff 已截断）"
+          : rawPatch;
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      if (err.code === "ENOBUFS" || /ENOBUFS|maxBuffer/i.test(err.message ?? "")) {
+        diffPatch = "（diff 过大已略去正文，仅保留变更文件清单与 --stat）";
+      } else {
+        throw e;
+      }
+    }
   }
 
   return { head, diffBase: diffBaseLabel, changedFiles, diffStat, diffPatch, headFiles, sortedHeadFiles };
@@ -343,13 +367,13 @@ function filterValidAnchors(
       dropped.push(normalized);
       continue;
     }
-    kept.push(normalized);
+    if (!kept.includes(normalized)) kept.push(normalized);
   }
 
   const deduped = checkAnchors(kept.slice(0, ANCHORS_MAX)) ?? [];
   if (kept.length > ANCHORS_MAX) {
     for (const extra of kept.slice(ANCHORS_MAX)) {
-      if (!deduped.includes(extra)) dropped.push(extra);
+      dropped.push(extra);
     }
   }
   return { valid: deduped, dropped };

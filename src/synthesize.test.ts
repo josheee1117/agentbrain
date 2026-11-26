@@ -2,10 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
+import { brief } from "./brief.ts";
+import { buildViewData, renderHtml } from "./view.ts";
 import type { Chat, ChatMessage } from "./llm.ts";
 import type { RegistryEntry } from "./registry.ts";
 import {
@@ -482,4 +484,188 @@ test("真实 CLI：--dry-run 零写库（events/WAL/mtime 不变）、--json 结
   assert.equal(prop.origin, "auto");
   assert.equal(prop.anchor_head, e.head);
   assert.deepEqual(prop.anchors, ["src/synth.ts"]);
+});
+
+test("回归 1：--dry-run 报错路径必须清理临时快照目录 ab-synth-ro-*", async (t) => {
+  const e = setupSandbox(t);
+  const specFile = join(e.dir, "design.md");
+  writeFileSync(specFile, "# 收口定谱\n验证失败清理。\n");
+  const customTmp = join(e.dir, "custom-tmp");
+  mkdirSync(customTmp, { recursive: true });
+  writeFileSync(join(e.ab, "extract.json"), JSON.stringify({ baseUrl: "http://127.0.0.1:1/v1", model: "ab4-mock" }));
+  const s = new Store(join(e.ab, "store.db"), join(e.ab, "index.db"));
+  s.ensureProject("alpha");
+  s.close();
+
+  const r = await new Promise<{ status: number | null; err: string }>((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [CLI, "synthesize", "alpha", "--spec", specFile, "--diff-base", "nonexistent-ref", "--dry-run"],
+      { cwd: e.repo, env: { ...e.env, TMPDIR: customTmp }, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let err = "";
+    child.stderr.on("data", (d) => (err += d));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, err }));
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.err, /无法解析 --diff-base/);
+  assert.deepEqual(
+    readdirSync(customTmp).filter((n) => n.startsWith("ab-synth-ro-")),
+    [],
+    "--dry-run 报错路径不得残留 ab-synth-ro-* 临时目录",
+  );
+});
+
+test("回归 2：分叉分支不传 --diff-base 时按 merge-base 计算 diff，不混入主干新提交", async (t) => {
+  const e = setupSandbox(t);
+  // 让 main 在分叉后新增一个只在 main 上的文件
+  e.git(e.repo, "checkout", "-q", "main");
+  writeFileSync(join(e.repo, "src/trunk-only.ts"), "export const TRUNK_ONLY = 1;\n");
+  e.git(e.repo, "add", ".");
+  e.git(e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "trunk advance");
+  e.git(e.repo, "checkout", "-q", "feature");
+
+  const store = new Store(join(e.ab, "store.db"), join(e.ab, "index.db"));
+  t.after(() => store.close());
+  const spec = join(e.dir, "spec.md");
+  writeFileSync(spec, "# 特性定谱\n只改 synth.ts。\n");
+
+  let promptUser = "";
+  const chat: Chat = async (messages) => {
+    promptUser = messages.find((m) => m.role === "user")?.content ?? "";
+    return {
+      message: {
+        role: "assistant",
+        content: JSON.stringify({
+          candidates: [{ kind: "decision", text: "分叉分支只取本分支变更", anchors: ["src/synth.ts"] }],
+        }),
+      },
+      tokens: 20,
+    };
+  };
+
+  const res = await synthesizeProject({
+    store,
+    project: "alpha",
+    registry: e.registry,
+    specs: [spec],
+    dryRun: true,
+    chat,
+    model: "m1",
+  });
+
+  assert.equal(res.diffBase, "merge-base(main)");
+  const changedSection = promptUser.split("仓内可验证文件清单")[0];
+  assert.ok(changedSection.includes("src/synth.ts"), "应包含特性分支改动");
+  assert.ok(!changedSection.includes("trunk-only.ts"), "不得混入分叉后主干新增文件");
+});
+
+test("回归 3 & 4：filterValidAnchors 先去重再截断至 ANCHORS_MAX，大 diff 触发 ENOBUFS 降级兜底", async (t) => {
+  const e = setupSandbox(t);
+  // 写入 5 个独立文件并制造 >4.5MB 的大 diff 触发 RepoTools.git 的 ENOBUFS (maxBuffer 4MB)
+  for (const f of ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts"]) {
+    writeFileSync(join(e.repo, `src/${f}`), `export const ${f[0]} = 1;\n`);
+  }
+  writeFileSync(join(e.repo, "src/huge.txt"), "X".repeat(4_800_000) + "\n");
+  e.git(e.repo, "add", ".");
+  e.git(e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "many files and huge diff");
+
+  const store = new Store(join(e.ab, "store.db"), join(e.ab, "index.db"));
+  t.after(() => store.close());
+  const spec = join(e.dir, "spec.md");
+  writeFileSync(spec, "# 多锚点与大 diff\n验证去重后截断与 ENOBUFS 降级。\n");
+
+  let promptUser = "";
+  const chat: Chat = async (messages) => {
+    promptUser = messages.find((m) => m.role === "user")?.content ?? "";
+    return {
+      message: {
+        role: "assistant",
+        content: JSON.stringify({
+          candidates: [
+            {
+              kind: "decision",
+              text: "先去重再按 5 锚点上限截断",
+              anchors: ["./src/a.ts", "src/a.ts", "src//a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"],
+            },
+          ],
+        }),
+      },
+      tokens: 20,
+    };
+  };
+
+  const res = await synthesizeProject({
+    store,
+    project: "alpha",
+    registry: e.registry,
+    specs: [spec],
+    dryRun: true,
+    chat,
+    model: "m1",
+  });
+
+  assert.equal(res.created.length, 1);
+  assert.deepEqual(res.created[0].anchors, ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"]);
+  assert.ok(promptUser.includes("src/huge.txt"));
+  assert.ok(promptUser.includes("diff 过大已略去正文"));
+});
+
+test("回归 5：下游展示口径对齐 origin=auto（brief、view、ab get 模型产出记录）", async (t) => {
+  const e = setupSandbox(t);
+  const store = new Store(join(e.ab, "store.db"), join(e.ab, "index.db"));
+  t.after(() => store.close());
+  const pid = store.ensureProject("alpha");
+  const spec = join(e.dir, "spec.md");
+  writeFileSync(spec, "# 展示口径\n对齐 auto 来源文案。\n");
+
+  const chat: Chat = async () => ({
+    message: {
+      role: "assistant",
+      content: JSON.stringify({
+        candidates: [{ kind: "decision", text: "展示口径对齐决定", anchors: ["src/synth.ts"] }],
+      }),
+    },
+    tokens: 20,
+  });
+
+  const res = await synthesizeProject({
+    store,
+    project: "alpha",
+    registry: e.registry,
+    specs: [spec],
+    chat,
+    model: "mock-auto",
+  });
+  const createdId = res.created[0].id!;
+  assert.equal(store.project().props.get(createdId)?.project_id, pid);
+
+  const prevRegistry = process.env.AB_REGISTRY;
+  process.env.AB_REGISTRY = e.repos;
+  t.after(() => {
+    if (prevRegistry === undefined) delete process.env.AB_REGISTRY;
+    else process.env.AB_REGISTRY = prevRegistry;
+  });
+
+  const briefOut = brief(store, e.repo, "alpha", false, []);
+  assert.match(briefOut, /其中自动沉淀 1 条/);
+  assert.doesNotMatch(briefOut, /agent 自记未确认/);
+
+  const html = renderHtml(buildViewData(store, new Date(), { home: e.ab, code: null }));
+  assert.match(html, /收口提炼/);
+
+  const getOut = await new Promise<{ status: number | null; out: string }>((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, "get", createdId.slice(0, 8)], {
+      cwd: e.repo,
+      env: e.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, out }));
+  });
+  assert.equal(getOut.status, 0);
+  assert.match(getOut.out, new RegExp(`\\[${createdId.slice(0, 8)}\\] 收口提炼: mock-auto`));
 });

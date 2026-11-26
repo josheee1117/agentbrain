@@ -517,7 +517,7 @@ if (b.confirmed !== false || b.origin !== 'auto' || !Array.isArray(b.anchors) ||
 "
     SYNTH_CREATED_ID=$(node -e "const j=JSON.parse(require('fs').readFileSync('$EV/cli-synthesize-write.log','utf8'));console.log(j.created[0].id.slice(0,8))")
     step cli-synthesize-get synth_ab get "$SYNTH_CREATED_ID"
-    step cli-synthesize-get-check bash -c "grep -qF '未确认（收口提炼）' '$EV/cli-synthesize-get.log' && grep -qF 'src/模块.ts' '$EV/cli-synthesize-get.log'"
+    step cli-synthesize-get-check bash -c "grep -qF '未确认（收口提炼）' '$EV/cli-synthesize-get.log' && grep -qF 'src/模块.ts' '$EV/cli-synthesize-get.log' && grep -qF '收口提炼: synth-mock' '$EV/cli-synthesize-get.log'"
     kill $SYNTH_PID 2>/dev/null || true
 
     # 9. 生命周期：correct / archive / guidance（memory.md）
