@@ -248,10 +248,11 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   const titles = sections.map((s) => s.title);
   const baseFixed = [head, ...before, ...after, ...(noteReserve ? [noteReserve] : []), ...tails];
   if (!worker) {
-    const inbox = briefInboxBlock(store, project?.name, inPm && !projectName);
+    const pmScope = inPm && !projectName;
+    const inbox = briefInboxBlock(store, pmScope ? undefined : project?.name, pmScope);
     if (inbox) {
       const baseAvail = contentBudgets(baseFixed, titles, BRIEF_MAX_CHARS - sceneReserve).reduce((a, b) => a + b, 0);
-      const minRules = sections.length ? Math.min(MIN_RULES_BUDGET, Math.floor(baseAvail / 2)) : 0;
+      const minRules = sections.some((s) => s.rows.length > 0) ? Math.min(MIN_RULES_BUDGET, Math.floor(baseAvail / 2)) : 0;
       const inboxCap = Math.max(0, baseAvail - minRules - 1);
       const fitted = fitInboxBlock(inbox, inboxCap);
       if (fitted) tails.push(fitted);

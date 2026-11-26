@@ -104,21 +104,26 @@ function gatherInboxItems(
   const props = proj.props;
   const names = new Map(store.listProjects().map((p) => [p.id, p.name]));
 
+  const seenSingle = new Set<string>();
+
   // 1. stale: 已确认但与代码不符（排除被草稿替代和代码核验转正的）
   const staleItems: InboxItem[] = [...props.values()]
     .filter((p) => p.state === "active" && !p.superseded_draft && staleWarning(p) && inScope(p.project_id))
     .sort((a, b) => b.seq - a.seq)
-    .map((p) => ({
-      kind: "stale",
-      id: p.id,
-      shortId: short(p.id),
-      scope: scopeName(p.project_id, names),
-      propKind: p.kind,
-      text: oneLine(p.text),
-      action: `ab verify ${short(p.id)} | ab confirm ${short(p.id)}`,
-      staleHead: p.stale?.head,
-      ts: p.ts,
-    }));
+    .map((p) => {
+      seenSingle.add(p.id);
+      return {
+        kind: "stale",
+        id: p.id,
+        shortId: short(p.id),
+        scope: scopeName(p.project_id, names),
+        propKind: p.kind,
+        text: oneLine(p.text),
+        action: `ab verify ${short(p.id)} | ab confirm ${short(p.id)}`,
+        staleHead: p.stale?.head,
+        ts: p.ts,
+      };
+    });
 
   // 2. correction: 有效条目的 pending_corrections 指向的未确认 active 且 !superseded_draft 纠正条
   const correctionRows: { item: InboxItem; seq: number }[] = [];
@@ -126,8 +131,9 @@ function gatherInboxItems(
     if (t.state !== "active") continue;
     for (const cid of t.pending_corrections) {
       const c = props.get(cid);
-      if (!c || c.state !== "active" || c.confirmed || c.superseded_draft) continue;
+      if (!c || c.state !== "active" || c.confirmed || c.superseded_draft || seenSingle.has(c.id)) continue;
       if (!inScope(c.project_id) && !inScope(t.project_id)) continue;
+      seenSingle.add(c.id);
       correctionRows.push({
         seq: c.seq,
         item: {
@@ -150,34 +156,40 @@ function gatherInboxItems(
 
   // 3. synth: 需求收口提炼新决定（未确认、active、!superseded_draft、origin === "auto"）
   const synthItems: InboxItem[] = [...props.values()]
-    .filter((p) => p.state === "active" && !p.confirmed && !p.superseded_draft && p.origin === "auto" && inScope(p.project_id))
+    .filter((p) => p.state === "active" && !p.confirmed && !p.superseded_draft && p.origin === "auto" && !seenSingle.has(p.id) && inScope(p.project_id))
     .sort((a, b) => b.seq - a.seq)
-    .map((p) => ({
-      kind: "synth",
-      id: p.id,
-      shortId: short(p.id),
-      scope: scopeName(p.project_id, names),
-      propKind: p.kind,
-      text: oneLine(p.text),
-      action: `ab confirm ${short(p.id)} | ab archive ${short(p.id)}`,
-      ts: p.ts,
-    }));
+    .map((p) => {
+      seenSingle.add(p.id);
+      return {
+        kind: "synth",
+        id: p.id,
+        shortId: short(p.id),
+        scope: scopeName(p.project_id, names),
+        propKind: p.kind,
+        text: oneLine(p.text),
+        action: `ab confirm ${short(p.id)} | ab archive ${short(p.id)}`,
+        ts: p.ts,
+      };
+    });
 
   // 4. review: 到期待复审（reviewList 已按 overdueDays 降序排好）
   const reviewItems: InboxItem[] = reviewList(props.values(), store.usage(), now, clock)
-    .filter((d) => inScope(d.prop.project_id))
-    .map((d) => ({
-      kind: "review",
-      id: d.prop.id,
-      shortId: short(d.prop.id),
-      scope: scopeName(d.prop.project_id, names),
-      propKind: d.prop.kind,
-      text: oneLine(d.prop.text),
-      action: `ab confirm ${short(d.prop.id)} | ab review --archive ${short(d.prop.id)}`,
-      overdueDays: d.overdueDays,
-      validDays: d.validDays,
-      ts: d.prop.ts,
-    }));
+    .filter((d) => !seenSingle.has(d.prop.id) && inScope(d.prop.project_id))
+    .map((d) => {
+      seenSingle.add(d.prop.id);
+      return {
+        kind: "review",
+        id: d.prop.id,
+        shortId: short(d.prop.id),
+        scope: scopeName(d.prop.project_id, names),
+        propKind: d.prop.kind,
+        text: oneLine(d.prop.text),
+        action: `ab confirm ${short(d.prop.id)} | ab review --archive ${short(d.prop.id)}`,
+        overdueDays: d.overdueDays,
+        validDays: d.validDays,
+        ts: d.prop.ts,
+      };
+    });
 
   // 5. conflict: 未解决冲突对（含至少一条 confirmed 的优先，其次最老在前）
   const conflictItems: InboxItem[] = [];
@@ -226,7 +238,10 @@ function gatherInboxItems(
 
 /** 只读收集待用户拍板的高信号条目，按 5 类优先级排序并过滤作用域。 */
 export function collectInbox(store: Store, opts: InboxOpts = {}): InboxResult {
-  if (opts.projectName && opts.all) throw new InboxError("项目名与 --all 不能同时使用");
+  if (opts.projectName !== undefined) {
+    if (!opts.projectName.trim()) throw new InboxError("项目名不能为空");
+    if (opts.all) throw new InboxError("项目名与 --all 不能同时使用");
+  }
   const registry = loadRegistry();
   let scope: "all" | "project" | "global";
   let project: string | null = null;
@@ -234,7 +249,7 @@ export function collectInbox(store: Store, opts: InboxOpts = {}): InboxResult {
 
   if (opts.all) {
     scope = "all";
-  } else if (opts.projectName) {
+  } else if (opts.projectName !== undefined) {
     const named = registry.find((e) => e.name === opts.projectName);
     if (!named) throw new InboxError(`清单里没有项目: ${opts.projectName}`);
     scope = "project";
@@ -341,8 +356,8 @@ export function briefInboxBlock(
   inPm = false,
   now: Date = new Date(),
 ): string | null {
-  const scope: "all" | "project" | "global" = projectName ? "project" : inPm ? "all" : "global";
-  const pid = projectName ? store.listProjects().find((p) => p.name === projectName)?.id : undefined;
+  const scope: "all" | "project" | "global" = inPm ? "all" : projectName ? "project" : "global";
+  const pid = scope === "project" && projectName ? store.listProjects().find((p) => p.name === projectName)?.id : undefined;
   const { items } = gatherInboxItems(store, makeInScope(scope, pid), now, ownClock);
 
   const high: InboxItem[] = [];

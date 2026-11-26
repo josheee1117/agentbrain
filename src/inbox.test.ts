@@ -252,6 +252,9 @@ test("CLI ab inbox：--kind、--limit、--json 纯 JSON、错误退出码，以�
   // 先测参数校验报错
   for (const badArgs of [
     ["inbox", "unknown-proj"],
+    ["inbox", ""],
+    ["inbox", "  "],
+    ["inbox", "", "--all"],
     ["inbox", "alpha", "--all"],
     ["inbox", "--kind", "bogus"],
     ["inbox", "--limit", "0"],
@@ -323,6 +326,98 @@ test("statusReport 的待办行包含 ab inbox 引导并保留 stale 前缀", ()
     const out = statusReport(s, ctx);
     assert.match(out, /冲突 1 对未解决：ab get 看双方，ab archive 错的一条；ab inbox --kind conflict 看清单/);
     assert.match(out, /与代码不符 1 条（待用户核实）：ab verify <id> 重核，ab confirm <id> 保留（ab inbox --kind stale 看清单）/);
+  } finally {
+    s.close();
+  }
+});
+
+test("repos/pm.md 存在时，cwd=pm 调 brief() 与 briefInboxBlock() 仍看全库含其他项目", () => {
+  const pmMd = join(repos, "pm.md");
+  writeFileSync(pmMd, `- 路径：\`${pmRoot}\`\n`);
+  const s = new Store(":memory:", ":memory:");
+  try {
+    s.ensureProject("pm");
+    const pidA = s.ensureProject("alpha");
+    s.remember(pidA, "s", false, { kind: "decision", text: "projA收口决定不应被pm遮蔽", confirmed: false, origin: "auto", source: src });
+    const out = brief(s, pmRoot, undefined, false);
+    assert.match(out, /^<agentbrain scope="pm">/);
+    assert.match(out, /projA收口决定不应被pm遮蔽/);
+    // 即便直接传 projectName="pm", inPm=true，briefInboxBlock 也应按全库口吻展开
+    const direct = briefInboxBlock(s, "pm", true, new Date());
+    assert.ok(direct !== null && direct.includes("projA收口决定不应被pm遮蔽"));
+  } finally {
+    s.close();
+    rmSync(pmMd, { force: true });
+  }
+});
+
+test("同一条目同时命中 correction + synth + review 时仅归入最高优先级 correction，不重复出现和计数", () => {
+  const s = new Store(":memory:", ":memory:");
+  try {
+    const pid = s.ensureProject("alpha");
+    const target = s.remember(pid, "s", false, { kind: "decision", text: "旧决定", confirmed: true, source: src });
+    const multi = s.remember(pid, "s", false, {
+      kind: "decision",
+      text: "收口提炼且纠正且超期条目",
+      confirmed: false,
+      origin: "auto",
+      supersedes: target,
+      source: src,
+    });
+    // 调早 ts 让其超过 180 天有效期，同时命中 review
+    s.workDb.prepare("UPDATE events SET ts=? WHERE id=?").run("2025-01-01T00:00:00Z", multi);
+    const now = new Date("2026-11-26T00:00:00Z");
+
+    const allRes = collectInbox(s, { cwd: alpha, all: true, now, clock: ownClock });
+    assert.deepEqual(allRes.counts, { stale: 0, correction: 1, synth: 0, review: 0, conflict: 0, total: 1 });
+    assert.equal(allRes.items.length, 1);
+    assert.equal(allRes.items[0].kind, "correction");
+    assert.equal(allRes.items[0].id, multi);
+
+    const synthOnly = collectInbox(s, { cwd: alpha, all: true, kind: "synth", now, clock: ownClock });
+    assert.equal(synthOnly.totalFiltered, 0);
+    assert.equal(synthOnly.items.length, 0);
+
+    const reviewOnly = collectInbox(s, { cwd: alpha, all: true, kind: "review", now, clock: ownClock });
+    assert.equal(reviewOnly.totalFiltered, 0);
+    assert.equal(reviewOnly.items.length, 0);
+
+    assert.throws(() => collectInbox(s, { cwd: alpha, projectName: "", now, clock: ownClock }), BriefError);
+    assert.throws(() => collectInbox(s, { cwd: alpha, projectName: "   ", now, clock: ownClock }), BriefError);
+  } finally {
+    s.close();
+  }
+});
+
+test("空规则/坑段不白扣 MIN_RULES_BUDGET：可用预算紧张时优先展示高信号展开", () => {
+  const s = new Store(":memory:", ":memory:");
+  try {
+    // 造 45 个项目各 1 条已确认决定，让 pmRoot 下的 overview（after）占去约 1260 字，但全局规则 rows 为 0
+    const extraRepos: string[] = [];
+    for (let i = 0; i < 45; i++) {
+      const name = `proj-budget-${String(i).padStart(2, "0")}`;
+      const pdir = join(dir, name);
+      mkdirSync(pdir, { recursive: true });
+      const md = join(repos, `${name}.md`);
+      writeFileSync(md, `- 路径：\`${pdir}\`\n`);
+      extraRepos.push(md, pdir);
+      const pid = s.ensureProject(name);
+      s.remember(pid, "s", false, { kind: "decision", text: `决定-${i}`, confirmed: true, source: src });
+    }
+    try {
+      const pidA = s.ensureProject("alpha");
+      for (let i = 0; i < 4; i++) {
+        s.remember(pidA, "s", false, { kind: "decision", text: `高信号收口-${i}`, confirmed: false, origin: "auto", source: src });
+      }
+      const out = brief(s, pmRoot, undefined, false);
+      assert.ok(out.length <= BRIEF_MAX_CHARS);
+      // 4 条收口项完整展开，不因空规则段白扣 400 字而被砍掉
+      for (let i = 0; i < 4; i++) {
+        assert.match(out, new RegExp(`高信号收口-${i}`));
+      }
+    } finally {
+      for (const p of extraRepos) rmSync(p, { recursive: true, force: true });
+    }
   } finally {
     s.close();
   }

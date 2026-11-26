@@ -517,7 +517,8 @@ function cmdInbox(argv: string[]): void {
     allowPositionals: true,
   });
   if (positionals.length > 1) die(`用法: ab inbox [项目名] [--all] [--kind ${INBOX_KINDS.join("|")}] [--limit <n>] [--json]\n${usageFor("inbox")}`);
-  if (positionals[0] && values.all) die("项目名与 --all 不能同时用");
+  if (positionals.length === 1 && !positionals[0].trim()) die("项目名不能为空");
+  if (positionals.length === 1 && values.all) die("项目名与 --all 不能同时用");
   let kind: InboxKind | undefined;
   if (values.kind !== undefined) {
     if (!(INBOX_KINDS as readonly string[]).includes(values.kind)) {
