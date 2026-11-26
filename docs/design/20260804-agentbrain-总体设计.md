@@ -414,7 +414,7 @@ Grant 记录 opaque grant ID、父子 execution、Work Unit、允许的 Project/
 
 ### 7.1 统一入口、接线与会话身份（LOCKED，v2.5）
 
-**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`remember`、`correct`、`confirm`、`recall`、`search`、`get`、`archive`、`status`（`correct`、`recall` 为切片 2 新增）。不再有 `bind`，项目身份见 §6.1。理由：
+**唯一入口是 `ab` 命令行。** 记忆核心（L1/L2/L3、投影、检索、来源展开、Purge）是不依赖任何宿主的模块；它的全部能力都经 `ab` 调用：`brief`、`inbox`、`remember`、`correct`、`confirm`、`recall`、`search`、`get`、`archive`、`status`（`correct`、`recall` 为切片 2 新增，`inbox` 为 2026-11-26 新增）。不再有 `bind`，项目身份见 §6.1。理由：
 
 - 三个宿主都能执行 shell，CLI 不需要任何协议依赖；
 - Pi 的 MCP 要经过适配器，以 MCP 为唯一入口会让 Pi 多一层；
@@ -1383,6 +1383,21 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 2. 没有到期条目时不加这行。
 3. 范围外的到期条目（其他项目）不计入。
 4. 条目超预算时先截条目，摘要行完整保留（跟冲突提醒同级）。
+
+### 8.15 待用户确认清单 `ab inbox` 与 `ab brief` 高信号展开（2026-11-26 方案 B 授权）
+
+**背景与问题**：§8.13 与 §8.14 的 `brief` 提醒行原指向 `ab status 看全部`/`ab status 看清单`，但 `ab status` 只报总数与自检诊断，不列出具体待处理条目；同时普通后台抽取（`extract`）与手记未确认条目可能积累很多，直接全量展开会淹没上下文。
+
+**方案 B**：
+1. **`ab inbox` 只读清单**（`src/inbox.ts`、`src/cli.ts`）：支持 `ab inbox [项目名] [--all] [--kind stale|correction|synth|review|conflict] [--limit <n>] [--json]`。严格只收集 5 类高信号「真正待用户拍板」项（排除普通未确认 `extract`/`manual` 条目）：
+   - `stale`（已确认但与代码不符、`staleWarning`）；
+   - `correction`（有效条目 `pending_corrections` 指向的未确认有效非退场纠正）；
+   - `synth`（`ab synthesize` 产出的 `origin === "auto"` 未确认有效非退场决定）；
+   - `review`（复用 `reviewList` 的到期待复审条目，`ab inbox` 用 `sourceClock()`，`ab brief` 用 `ownClock` 免读外部 transcript）；
+   - `conflict`（未解决冲突对，含至少一条已确认的优先，其次最老在前；作用域过滤按任一端在范围内计入）。
+   只读快照打开或按名查找已有项目，绝不调 `ensureProject`、绝不写 `events`/`inject_log`/`prop_usage`。
+2. **`ab brief` 高信号展开**：主会话（`!worker`）在 `tails` 中附加 `briefInboxBlock`（最多 `BRIEF_INBOX_MAX_ITEMS = 5` 条、总长 `<= BRIEF_INBOX_MAX_CHARS = 450`），仅展开 `stale`、`correction`、`synth`、`review` 与至少一方 `confirmed` 的 `conflict`（双未确认冲突对留在 `conflictReminder` 汇总行）；总输出仍严格遵守 `BRIEF_MAX_CHARS` 并为主规则段保留基础预算，且绝不把 inbox 条目记入 `used`/`inject_log`。
+3. **修复断链提示**：`brief.ts`（`conflictReminder`、`staleReminder`）与 `status.ts`（待办行）引导指向 `ab inbox --kind conflict` / `ab inbox --kind stale`（保留 `status.ts` 的 `与代码不符 N 条（待用户核实）：ab verify` 既有前缀）。
 
 ## 9. 生命周期、冲突与纠错
 
@@ -3329,6 +3344,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-26 按 **方案 B** 实现 `ab-inbox`（§8.15）。新增 `src/inbox.ts`（常量 `INBOX_DEFAULT_LIMIT=10`、`BRIEF_INBOX_MAX_ITEMS=5`、`BRIEF_INBOX_MAX_CHARS=450`、`collectInbox`、`formatInboxText`、`briefInboxBlock`），严格只收集 `stale`/`correction`/`synth`/`review`/`conflict` 5 类高信号待拍板项（排除普通未确认 `extract`/`manual` 条目）；`src/cli.ts` 新增 `ab inbox [项目名] [--all] [--kind ...] [--limit <n>] [--json]` 并复用只读快照打开库、绝不写 `events`/`inject_log`/`projects`；`src/brief.ts` 仅主会话（`!worker`）附加 `briefInboxBlock`（仅含已确认方的冲突对进展开，双未确认冲突留汇总行）、为主规则段保留保底预算且严守 `BRIEF_MAX_CHARS`、不把 inbox 条目记入 `used`，并将 `conflictReminder`/`staleReminder` 与 `src/status.ts` 待办行断链提示改指 `ab inbox --kind ...`。零新表、列、事件种类或配置键，`SCHEMA_VERSION` 保持 1。
 
 - 2026-11-26 实现 §9.7 单 4（`ab synthesize` 需求收口综合沉淀）。`src/l2.ts` 的 `Origin` 联合类型补入 `"auto"` 并纳入 `model_outputs` 识别（`fold()` 逻辑与 `SCHEMA_VERSION = 1` 保持不变）；新增 `src/synthesize.ts`（常量 `SYNTH_MAX_CANDIDATES=3`、`SYNTH_SPEC_MAX_CHARS=24_000`、`SYNTH_EXISTING_MAX=40`、`SYNTH_DRAFT_HINTS_MAX=20` 与 `SYNTH_PROMPT_VERSION`），合并多份 `--spec` 文档按序截断、结合 `--diff-base`（缺省回退 `resolveTrunkRef` / `HEAD`）与项目现有有效记忆单次调模型提炼最多 3 条 `decision`，逐项经 `checkAnchors` 与仓库实际文件存在性过滤、同项目重复检查、同项目 `active`（含 `stale`）`supersedes` 校验和 `checkRememberBody` 门禁，硬写死 `confirmed: false`、`origin: "auto"`、`anchor_head: HEAD` 及零自动转正/归档，并收集最多 20 条只读 `draftHints`；`src/cli.ts` 注册 `ab synthesize <project> --spec <file>... [--diff-base <ref>] [--dry-run] [--json]`，其中 `--dry-run` 通过临时只读副本或内存快照读库保证正式库零写入（WAL/mtime 零变化）。零新表、列、事件种类或配置键，`SCHEMA_VERSION` 保持 1。
 

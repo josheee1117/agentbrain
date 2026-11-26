@@ -323,7 +323,10 @@ test("correct 未确认时旧条目仍在 brief，确认后旧条目消失且 se
   const neuId = neu.out.match(/\[([0-9a-f]{8})\]/)![1];
   const before = run(["brief"]);
   assert.match(before.out, new RegExp(`锁用全局一把（有待确认的纠正 \\[${neuId}\\]）`));
-  assert.doesNotMatch(before.out, /锁按账户分/);
+  // 未确认纠正不进规则正文，只进主会话「待用户拍板」高信号展开块
+  const bodyPart = before.out.split("待用户拍板")[0];
+  assert.doesNotMatch(bodyPart, /锁按账户分/);
+  assert.match(before.out, new RegExp(`待用户拍板[\\s\\S]*\\[${neuId}\\] 纠正→${oldId}·alpha: 锁按账户分`));
   assert.match(run(["get", oldId]).out, new RegExp(`\n待确认的纠正 \\[${neuId}\\]: 锁按账户分（认可用 ab confirm ${neuId}，否决用 ab archive ${neuId}）`));
   assert.match(run(["search", "全局一把"]).out, new RegExp(`坑\\[用户确认\\]\\[字面\\]（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));
   assert.match(run(["recall", "锁用全局一把"]).out, new RegExp(`坑（有待确认的纠正 \\[${neuId}\\]）: 锁用全局一把`));

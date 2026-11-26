@@ -76,7 +76,7 @@ test("§8.13.7：brief 末尾报范围内冲突对数与最老天数；无冲突
   const g1 = s.remember(null, "s", false, { kind: "rule", text: "全局 G 甲", confirmed: true, source: src });
   s.remember(null, "s", false, { kind: "rule", text: "全局 G 乙", confirmed: false, source: src, relation: { type: "conflicts", target: g1 } });
   assert.match(conflictReminder(s, "alpha")!, /冲突 1 对未解决（最老 \d+ 天）/);
-  assert.match(brief(s, alpha, undefined, false), /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。/);
+  assert.match(brief(s, alpha, undefined, false), /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab inbox --kind conflict 看清单。/);
   assert.match(brief(s, elsewhere, undefined, false), /冲突 1 对未解决/);
   assert.match(brief(s, alpha, undefined, true), /冲突 1 对未解决/);
   // alpha 项目内再添一对：alpha 看到 2 对，未登记目录仍只看全局的 1 对
@@ -123,7 +123,7 @@ test("§8.13.7：条目超预算时先截条目，冲突提醒行仍在且完整
   const out = brief(s, alpha, undefined, false);
   assert.ok(out.length <= BRIEF_MAX_CHARS);
   assert.match(out, /还有 \d+ 条放不下/);
-  assert.match(out, /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。/);
+  assert.match(out, /冲突 1 对未解决（最老 \d+ 天）：ab get 看双方，ab archive 错的一条；ab inbox --kind conflict 看清单。/);
 });
 
 test("§11.5 (i)：主会话和子代理的 brief 都点出该先 ab search 的几类情况；条目超预算时先截条目，这行不截", () => {

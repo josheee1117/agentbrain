@@ -151,7 +151,7 @@ test("§12.6.7 T5：失败窗口列出时间、宿主、错误码和原因；孤
   const out = statusReport(s, ctx({ storeHome: home, now }));
   assert.match(out, /库里有 1 条这份代码不认识的事件，它们没有生效：更新 ab 的代码/);
   assert.match(out, /近 7 天有 1 个窗口抽取失败，这些对话没有抽取：原因看下面"失败窗口"/);
-  assert.match(out, /冲突 1 对未解决：ab get 看双方，ab archive 错的一条/);
+  assert.match(out, /冲突 1 对未解决：ab get 看双方，ab archive 错的一条；ab inbox --kind conflict 看清单/);
   assert.match(out, /^库: 版本 1（代码支持 1）；事件 4 条；不认识的事件 1 条$/m);
   assert.match(out, /^失败窗口: 失败 1，延后 1；最近 2 个:$/m);
   assert.match(out, /^  \d{4}-\d\d-\d\dT\d\d:\d\d claude:abcdef12 失败 http_error 47999 字: 模型接口 HTTP 413: input too long$/m);

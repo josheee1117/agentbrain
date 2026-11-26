@@ -520,6 +520,54 @@ if (b.confirmed !== false || b.origin !== 'auto' || !Array.isArray(b.anchors) ||
     step cli-synthesize-get-check bash -c "grep -qF '未确认（收口提炼）' '$EV/cli-synthesize-get.log' && grep -qF 'src/模块.ts' '$EV/cli-synthesize-get.log' && grep -qF '收口提炼: synth-mock' '$EV/cli-synthesize-get.log'"
     kill $SYNTH_PID 2>/dev/null || true
 
+    # 8d. ab-inbox: 5 类高信号只读清单、优先级排序、brief 高信号展开与零写库验证
+    INBOX_AB="$S/inbox_ab"; INBOX_REPO="$S/inbox_repo"; INBOX_REG="$S/inbox_repos"
+    mkdir -p "$INBOX_AB" "$INBOX_REPO" "$INBOX_REG"
+    git -C "$INBOX_REPO" init -qb main
+    printf -- "- 路径：\`%s\`\n" "$INBOX_REPO" > "$INBOX_REG/inboxrepo.md"
+    printf -- "- 路径：\`%s\`\n" "$S/inbox_uninit_repo" > "$INBOX_REG/uninitrepo.md"
+    mkdir -p "$S/inbox_uninit_repo"
+    step cli-inbox-seed node -e "
+import('$ROOT/src/store.ts').then(({ Store }) => {
+  const s = new Store('$INBOX_AB/store.db', '$INBOX_AB/index.db');
+  const pid = s.ensureProject('inboxrepo');
+  const src = { host: 'pi', session_id: 'inbox-verify', transcript: null, anchor: null, summary: 'verify' };
+  s.remember(pid, 's', false, { kind: 'pitfall', text: '普通未确认条目不应入inbox', confirmed: false, origin: 'extract', source: src });
+  s.remember(pid, 's', false, { kind: 'decision', text: '收口提炼待拍板决定', confirmed: false, origin: 'auto', source: src });
+  const c1 = s.remember(pid, 's', false, { kind: 'rule', text: '含已确认冲突甲', confirmed: true, source: src });
+  s.remember(pid, 's', false, { kind: 'rule', text: '含已确认冲突乙', confirmed: false, relation: { type: 'conflicts', target: c1 }, source: src });
+  const u1 = s.remember(pid, 's', false, { kind: 'pitfall', text: '双未确认冲突甲', confirmed: false, source: src });
+  s.remember(pid, 's', false, { kind: 'pitfall', text: '双未确认冲突乙', confirmed: false, relation: { type: 'conflicts', target: u1 }, source: src });
+  console.log(s.eventCount());
+  s.close();
+});
+"
+    INBOX_EV_BEFORE=$(tail -1 "$EV/cli-inbox-seed.log")
+    inbox_ab(){ (cd "$INBOX_REPO" && env HOME="$FAKE_HOME" AB_HOME="$INBOX_AB" AGENTBRAIN_HOME="$INBOX_AB" AB_REGISTRY="$INBOX_REG" node "$ROOT/src/cli.ts" "$@"); }
+    step cli-inbox-json inbox_ab inbox --json
+    step cli-inbox-json-check node -e "
+const j = JSON.parse(require('fs').readFileSync('$EV/cli-inbox-json.log', 'utf8'));
+if (j.counts.total !== 3 || j.counts.synth !== 1 || j.counts.conflict !== 2) process.exit(1);
+if (j.items[0].kind !== 'synth' || j.items[1].kind !== 'conflict' || !j.items[1].confirmedAny || j.items[2].confirmedAny) process.exit(1);
+if (j.items.some((x) => x.text.includes('普通未确认条目不应入inbox'))) process.exit(1);
+"
+    step cli-inbox-kind inbox_ab inbox --kind conflict --limit 1
+    step cli-inbox-kind-check bash -c "grep -qF '含已确认冲突甲' '$EV/cli-inbox-kind.log' && ! grep -qF '收口提炼待拍板决定' '$EV/cli-inbox-kind.log'"
+    step cli-inbox-uninit inbox_ab inbox uninitrepo --json
+    step cli-inbox-brief inbox_ab brief
+    step cli-inbox-brief-check bash -c "grep -qF '待用户拍板' '$EV/cli-inbox-brief.log' && grep -qF '收口提炼待拍板决定' '$EV/cli-inbox-brief.log' && grep -qF '含已确认冲突甲' '$EV/cli-inbox-brief.log' && ! grep -qF '双未确认冲突甲' '$EV/cli-inbox-brief.log' && grep -qF 'ab inbox --kind conflict 看清单' '$EV/cli-inbox-brief.log'"
+    step cli-inbox-brief-worker inbox_ab brief --worker
+    step cli-inbox-brief-worker-check bash -c "! grep -qF '待用户拍板' '$EV/cli-inbox-brief-worker.log' && ! grep -qF '收口提炼待拍板决定' '$EV/cli-inbox-brief-worker.log'"
+    step cli-inbox-readonly-check node -e "
+const { DatabaseSync } = require('node:sqlite');
+const db = new DatabaseSync('$INBOX_AB/store.db', { readOnly: true });
+const ev = db.prepare('SELECT COUNT(*) AS n FROM events').get().n;
+const inj = db.prepare('SELECT COUNT(*) AS n FROM inject_log WHERE prop_id NOT IN (SELECT id FROM events WHERE body LIKE ?)').get('%含已确认冲突甲%').n;
+const uninit = db.prepare('SELECT COUNT(*) AS n FROM projects WHERE name=?').get('uninitrepo').n;
+db.close();
+if (ev !== $INBOX_EV_BEFORE || inj !== 0 || uninit !== 0) { console.error({ ev, expected: $INBOX_EV_BEFORE, inj, uninit }); process.exit(1); }
+"
+
     # 9. 生命周期：correct / archive / guidance（memory.md）
     step cli-correct env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" correct "$ID" --text "测试全局规范：验证先于声明完成（改后）" --summary "验证规范" --confirmed
     step cli-correct-old-mark bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$ID' | grep -qF '（已被替代）'"

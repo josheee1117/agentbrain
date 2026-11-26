@@ -5,6 +5,9 @@ import { isRegistryHome, loadRegistry, resolveProject } from "./registry.ts";
 import { active, disputed, short, stalePrefix, TRUST_LABEL } from "./present.ts";
 import { staleBlocked, staleWarning } from "./visibility.ts";
 import { reviewList } from "./expiry.ts";
+import { BriefError, briefInboxBlock } from "./inbox.ts";
+
+export { BriefError };
 
 export const BRIEF_MAX_CHARS = 2000;
 /** 场景段的单独预算（§11.10，写死的常量；整个 brief 的上限是两段之和）。 */
@@ -13,9 +16,8 @@ export const BRIEF_SCENE_MAX_CHARS = 2000;
 const SCENE_LABEL: Record<Scene, string> = { design: "设计", code: "开发", review: "review" };
 /** 场景段标题与“放不下”提示的预留字符（只在有场景规则时从通用段预算里扣）。 */
 const SCENE_OVERHEAD_RESERVE = 80;
-
-/** 用法错误（项目名不在清单、--worker 不在项目里）：CLI 打到 stderr 并以 1 退出。 */
-export class BriefError extends Error {}
+/** 规则段落较多时至少保留的基础字符预算，避免高信号待拍板展开把规则段挤死。 */
+const MIN_RULES_BUDGET = 400;
 
 // ---------- brief ----------
 
@@ -71,7 +73,7 @@ export function conflictReminder(store: Store, projectName: string | undefined, 
     oldest = Math.max(oldest, Math.floor((now.getTime() - Date.parse(pair.ts)) / 86_400_000));
   }
   if (!n) return null;
-  return `冲突 ${n} 对未解决（最老 ${oldest} 天）：ab get 看双方，ab archive 错的一条；ab status 看全部。`;
+  return `冲突 ${n} 对未解决（最老 ${oldest} 天）：ab get 看双方，ab archive 错的一条；ab inbox --kind conflict 看清单。`;
 }
 
 /** 到期复审汇总（§8.14）：只数与本次 brief 范围有关的到期未确认条目。
@@ -96,7 +98,21 @@ export function staleReminder(store: Store, projectName: string | undefined, wor
   const n = active(store).filter(p => staleWarning(p) && (p.project_id === null
     ? !worker || (p.for_workers && p.kind === "rule")
     : p.project_id === pid && (!worker || p.kind === "rule" || p.kind === "pitfall"))).length;
-  return n ? `与代码不符 ${n} 条（待用户核实）：ab status 看清单，ab verify <id> 重核，ab confirm <id> 保留。` : null;
+  return n ? `与代码不符 ${n} 条（待用户核实）：ab inbox --kind stale 看清单，ab verify <id> 重核，ab confirm <id> 保留。` : null;
+}
+
+function fitInboxBlock(inbox: string, cap: number): string | null {
+  if (inbox.length <= cap) return inbox;
+  const rows = inbox.split("\n");
+  if (rows.length < 2) return null;
+  const kept = [rows[0]];
+  let len = rows[0].length;
+  for (let i = 1; i < rows.length; i++) {
+    if (len + 1 + rows[i].length > cap) break;
+    kept.push(rows[i]);
+    len += 1 + rows[i].length;
+  }
+  return kept.length > 1 ? kept.join("\n") : null;
 }
 
 /** 什么时候该先搜（§11.5 (i)，2026-10-16 用户批准）。算在固定部分里：超预算时先截条目，不截这行。主会话和子代理都给。 */
@@ -229,9 +245,21 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   if (stale) tails.push(stale);
   // 场景段有单独预算；标题和提示的字符从通用段预算里扣，两段加起来不超总上限。
   const sceneReserve = sceneRows.length ? sceneTitle.length + 1 + SCENE_OVERHEAD_RESERVE : 0;
+  const titles = sections.map((s) => s.title);
+  const baseFixed = [head, ...before, ...after, ...(noteReserve ? [noteReserve] : []), ...tails];
+  if (!worker) {
+    const inbox = briefInboxBlock(store, project?.name, inPm && !projectName);
+    if (inbox) {
+      const baseAvail = contentBudgets(baseFixed, titles, BRIEF_MAX_CHARS - sceneReserve).reduce((a, b) => a + b, 0);
+      const minRules = sections.length ? Math.min(MIN_RULES_BUDGET, Math.floor(baseAvail / 2)) : 0;
+      const inboxCap = Math.max(0, baseAvail - minRules - 1);
+      const fitted = fitInboxBlock(inbox, inboxCap);
+      if (fitted) tails.push(fitted);
+    }
+  }
   const budgets = contentBudgets(
     [head, ...before, ...after, ...(noteReserve ? [noteReserve] : []), ...tails],
-    sections.map((s) => s.title),
+    titles,
     BRIEF_MAX_CHARS - sceneReserve,
   );
   let hidden = 0;

@@ -26,6 +26,7 @@ A fully isolated HOME hides the keychain. The local embedding server in `verify.
 - `synthesize-unit` / `cli-synthesize-e2e` / `cli-synthesize-*`: `ab synthesize <project> --spec <file>... [--diff-base <ref>] [--dry-run] [--json]` 隔离单测与 CLI 实测（`--dry-run` 零写库与正式写入 `confirmed === false`、`origin === "auto"`、零自动转正/归档）。见 [features/synthesize.md](features/synthesize.md)。
 - `cli-lifecycle`: `correct` (old entry shows 已被替代), `archive` + `--reactivate`, `guidance` on/off with `recall --hook` showing and hiding the `<agentbrain-prefs>` block
 - `cli-brief`: `brief` before and after confirm, plus `brief --worker` (asserts unconfirmed text stays out until confirm)
+- `cli-inbox-*`: `inbox` / `--json` / `--kind` / `--limit` 5 类高信号清单与主会话 `brief` 前 5 条高信号展开、只读零写库（`events`/`inject_log`/`prop_usage` 零增量）。见 [features/inbox.md](features/inbox.md)。
 - `cli-scene`: `remember --scene`, `brief` index line vs `--scene` section, `tag --scene`, `brief --worker --scene`, `search --scene` (including unconfirmed and the rejected flag combinations)
 - `cli-recall-hook`: `recall --hook` via stdin JSON。`cli-agy-worker` 跑 Pi、agy 的共用首轮矩阵和真实 CLI，断言截断路径先规范、身份待定不注主会话偏好；全局规则仍由 `brief --worker` 提供。常驻偏好开关用隔离 agy 完整首轮验证。`cli-agy-session-state` 用真实 CLI 比较 `want_session_state` 的输出差异，覆盖 worker 三态、SYSTEM_MESSAGE 中的 brief、262KB 读头、截断路径规范化，以及三处环境坐标与 `brief` / `recall` 日志对齐。
 - `cli-opencode`: opencode SQLite session capture (`capture --hook --host opencode`) and `work --dry-run`

@@ -29,6 +29,7 @@ import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
 import { citeEnabled, setCite, logInjections, logQuery, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
+import { collectInbox, formatInboxText, INBOX_DEFAULT_LIMIT, INBOX_KINDS, type InboxKind } from "./inbox.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
@@ -500,6 +501,56 @@ function cmdBrief(argv: string[]): void {
     }
   } finally {
     store.close();
+  }
+}
+
+function cmdInbox(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      all: { type: "boolean", default: false },
+      kind: { type: "string" },
+      limit: { type: "string" },
+      json: { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (positionals.length > 1) die(`用法: ab inbox [项目名] [--all] [--kind ${INBOX_KINDS.join("|")}] [--limit <n>] [--json]\n${usageFor("inbox")}`);
+  if (positionals[0] && values.all) die("项目名与 --all 不能同时用");
+  let kind: InboxKind | undefined;
+  if (values.kind !== undefined) {
+    if (!(INBOX_KINDS as readonly string[]).includes(values.kind)) {
+      die(`--kind 必须是 ${INBOX_KINDS.join("|")}，收到: ${values.kind}`);
+    }
+    kind = values.kind as InboxKind;
+  }
+  let limit = INBOX_DEFAULT_LIMIT;
+  if (values.limit !== undefined) {
+    if (!/^[1-9]\d*$/.test(values.limit)) die(`--limit 必须是正整数，收到: ${values.limit}`);
+    limit = Number.parseInt(values.limit, 10);
+  }
+  const handle = openReadOnlySnapshot(home(), "ab-inbox-ro-");
+  try {
+    let res;
+    try {
+      res = collectInbox(handle.store, {
+        cwd: process.cwd(),
+        projectName: positionals[0],
+        all: values.all === true,
+        kind,
+        limit,
+        now: new Date(),
+        clock: sourceClock(),
+      });
+    } catch (e) {
+      if (e instanceof BriefError) die(e.message);
+      throw e;
+    }
+    if (values.json) process.stdout.write(JSON.stringify(res) + "\n");
+    else console.log(formatInboxText(res, { kind }));
+  } finally {
+    handle.cleanup();
   }
 }
 
@@ -1043,7 +1094,7 @@ async function cmdVerify(argv: string[]): Promise<void> {
   } finally { store.close(); }
 }
 
-function openReadOnlySnapshot(root: string): { store: Store; cleanup: () => void } {
+function openReadOnlySnapshot(root: string, prefix = "ab-synth-ro-"): { store: Store; cleanup: () => void } {
   const storeFile = join(root, "store.db");
   if (!existsSync(storeFile)) {
     const store = new Store(":memory:", ":memory:");
@@ -1057,7 +1108,7 @@ function openReadOnlySnapshot(root: string): { store: Store; cleanup: () => void
       },
     };
   }
-  const tmpDir = mkdtempSync(join(tmpdir(), "ab-synth-ro-"));
+  const tmpDir = mkdtempSync(join(tmpdir(), prefix));
   for (const suffix of ["", "-wal", "-shm"]) {
     const src = `${storeFile}${suffix}`;
     if (existsSync(src)) copyFileSync(src, join(tmpDir, `store.db${suffix}`));
@@ -1889,6 +1940,8 @@ const USAGE = `用法:
   ab brief [项目名] [--worker] [--scene design,code,review]
                                     开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
                                     --scene 另加载该场景的规则（设计/开发/review，可逗号多选）；不给只多一行索引
+  ab inbox [项目名] [--all] [--kind stale|correction|synth|review|conflict] [--limit <n>] [--json]
+                                    只读列出高信号待用户拍板清单（不符/纠正/收口提炼/复审/冲突）；不写事件与注入日志
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--body-file <文件>] [--alternative "<方案>::<否掉的原因>"]…
@@ -2112,6 +2165,7 @@ async function main(): Promise<void> {
   }
   try {
     if (cmd === "brief") return cmdBrief(rest);
+    if (cmd === "inbox") return cmdInbox(rest);
     if (cmd === "recall") {
       try {
         await cmdRecall(rest);

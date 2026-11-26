@@ -4,6 +4,7 @@
 |---|---|---|
 | status / doctor | [status.md](status.md) | 数据库状态摘要、宿主与接线诊断、状态栏单行指标 |
 | brief | [brief.md](brief.md) | 开工背景速览、全局规则与当前项目坑注入（含子代理 --worker 模式） |
+| inbox | [inbox.md](inbox.md) | 待用户确认高信号清单 `ab inbox`（5 类优先级、只读零写入）与主会话 `ab brief` 前 5 条展开 |
 | scene | [scene.md](scene.md) | 规则场景标签（设计/开发/review）、brief 按场景加载与 search --scene 列举 |
 | remember / search / get / correct | [memory.md](memory.md) | 显式记忆记录、纠正替代、混合检索与详情关联查看、模型产出记录（模型与提示词版本） |
 | stale 护栏与草稿退场 | [stale-guard.md](stale-guard.md) | 按确认来源停注或警告，confirm 清 stale，单条 verify 只读 ref，未确认 extract 草稿可逆退场 |
