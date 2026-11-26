@@ -1139,18 +1139,39 @@ test("代码核验 contradicted → 标与代码不符，仍未确认；同一 H
   assert.equal(chat.calls.length, before);
 });
 
-test("代码核验：编造的证据、只给置信度 → 不转正、不写 L1；决定与规则不进代码核验", async () => {
+test("代码核验：编造的证据、只给置信度 → 不转正、不写 L1；决定进首次核验但不自动转正且不重复核；规则不进", async () => {
   const e = env();
   const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45");
-  const dec = unconfirmed(e, "选 RRF 是因为不用调权重", { kind: "decision" });
+  const rule = unconfirmed(e, "始终只用主干核验", { kind: "rule" });
   const events = () => e.store.workDb.prepare("SELECT count(*) AS n FROM events WHERE kind='verify'").get()!.n;
-  const chat = verifierChat({ verdict: "verified", confidence: 0.99, evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45 已验证" }] });
-  const r = await runWork(e.deps(chat), { sweep: true, dryRun: false });
+  const badChat = verifierChat({ verdict: "verified", confidence: 0.99, evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45 已验证" }] });
+  const r = await runWork(e.deps(badChat), { sweep: true, dryRun: false });
   assert.equal(r.verify.inconclusive, 1);
   assert.equal(events(), 0);
   assert.equal(e.store.project().props.get(id)!.confirmed, false);
-  assert.equal(e.store.project().props.get(dec)!.confirmed, false);
-  assert.equal(chat.calls.filter((m) => /选 RRF/.test(JSON.stringify(m))).length, 0);
+  assert.equal(e.store.project().props.get(rule)!.confirmed, false);
+  assert.equal(badChat.calls.filter((m) => /始终只用主干核验/.test(JSON.stringify(m))).length, 0);
+
+  // 未确认 decision 进入首次核验，拿到 verified 写入 code_evidence 后保持 confirmed === false，且后续不重复首次核验
+  e.store.lifecycle("archive", id, null);
+  const dec = unconfirmed(e, "选 RRF 是因为 VEC_MIN_SIM 固定 0.45", { kind: "decision", anchors: ["store.ts"] });
+  const okChat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const rDec = await runWork(e.deps(okChat), { sweep: true, dryRun: false });
+  assert.equal(rDec.verify.verified, 1);
+  const decProp = e.store.project().props.get(dec)!;
+  assert.equal(decProp.confirmed, false);
+  assert.equal(decProp.confirmed_by, null);
+  assert.equal(decProp.code_evidence?.refs.length, 1);
+  assert.match(JSON.stringify(okChat.calls[0]), /代码锚点：store\.ts/);
+  // 提交无关改动后再次 sweep（即使 2 天后），已有 code_evidence 的 decision 不再进入首次核验
+  writeFileSync(join(e.repo, "other.ts"), "export const OTHER = 1;\n");
+  execFileSync("git", ["-C", e.repo, "add", "other.ts"]);
+  execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "unrelated"]);
+  const later = new Date(Date.now() + 2 * 86_400_000);
+  const beforeCalls = okChat.calls.length;
+  const rAgain = await runWork(e.deps(okChat, { now: () => later }), { sweep: true, dryRun: false, changeScan: false });
+  assert.equal(rAgain.verify.verified + rAgain.verify.inconclusive, 0);
+  assert.equal(okChat.calls.length, beforeCalls);
 });
 
 test("代码核验 not_verifiable 记在 work store，不写 L1；待确认的纠正与关系未判定的条目不核验", async () => {
@@ -1267,6 +1288,58 @@ test("ab-2 入队的无证据 decision 必须消费但不自动转正", async ()
   assert.equal(e.store.project().props.get(id)!.code_evidence?.refs.length, 1);
   assert.equal(e.store.project().props.get(id)!.confirmed, false);
   assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
+});
+
+test("ab-3 跨仓锚点：全局条与外部项目条可入队并按锚点所在仓库消费，决定不自动转正", async () => {
+  const e = env();
+  const head = execFileSync("git", ["-C", e.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  const otherPid = e.store.ensureProject("beta");
+  const crossProj = e.store.remember(otherPid, null, false, {
+    kind: "decision",
+    text: "beta 依赖 alpha 的阈值 0.45",
+    confirmed: false,
+    anchors: ["alpha:store.ts"],
+    anchor_head: head,
+    source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" },
+  });
+  const globalCross = e.store.remember(null, null, false, {
+    kind: "pitfall",
+    text: "全局提醒 alpha 的 VEC_MIN_SIM 是 0.45",
+    confirmed: true,
+    anchors: ["alpha:store.ts"],
+    anchor_head: head,
+    source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" },
+  });
+  e.store.queueReverify([crossProj, globalCross], new Date());
+
+  // verifyQueuedForProject 消费 alpha 跨仓入队（即使条目不属于 alpha）
+  const chat = verifierChat({ verdict: "verified", evidence: [{ path: "store.ts", line_start: 1, line_end: 1, quote: "VEC_MIN_SIM = 0.45" }] });
+  const { verifyQueuedForProject } = await import("./work.ts");
+  const res = await verifyQueuedForProject(
+    { store: e.store, chat: { chat, model: "fake-verify" }, now: () => new Date() },
+    { name: "alpha", path: e.repo, trunk: "HEAD" },
+    head,
+    "holder-1",
+  );
+  assert.equal(res.verified, 2);
+  assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
+  assert.equal(e.store.project().props.get(crossProj)!.confirmed, false, "决定不自动转正");
+  assert.equal(e.store.project().props.get(crossProj)!.code_evidence?.head, head);
+
+  // 全局跨仓锚点在 sweep verifyPass 中也能通过 anchors 解析对应仓库工具完成消费
+  const globalUnconf = e.store.remember(null, null, false, {
+    kind: "pitfall",
+    text: "全局未确认坑：VEC_MIN_SIM 是 0.45",
+    confirmed: false,
+    anchors: ["alpha:store.ts"],
+    anchor_head: head,
+    source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" },
+  });
+  e.store.queueReverify([globalUnconf], new Date());
+  const rSweep = await runWork(e.deps(chat), { sweep: true, dryRun: false, changeScan: false });
+  assert.equal(rSweep.verify.verified, 1);
+  assert.equal(intake.queuedReverify(e.store.workDb).has(globalUnconf), false);
+  assert.equal(e.store.project().props.get(globalUnconf)!.confirmed, true);
 });
 
 test("ab-2 入队无证据 note 出错仍留队；not_verifiable 和 inconclusive 不绕过退避", async () => {

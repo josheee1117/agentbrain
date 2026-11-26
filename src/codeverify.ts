@@ -249,7 +249,7 @@ export interface VerifyResult {
 
 /** 一条记忆的一次核验。模型调用失败抛 WorkFailure；证据对不上降为 inconclusive。 */
 export async function verifyProposition(chat: Chat, tools: RepoTools, prop: Proposition): Promise<VerifyResult> {
-  const subject = sanitize([`种类：${KIND_LABEL[prop.kind]}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : "", prop.body ? `详情正文：${prop.body}` : ""].filter(Boolean).join("\n")).text;
+  const subject = sanitize([`种类：${KIND_LABEL[prop.kind]}`, `内容：${prop.text}`, prop.trigger ? `触发：${prop.trigger}` : "", prop.why ? `原因：${prop.why}` : "", prop.body ? `详情正文：${prop.body}` : "", prop.anchors?.length ? `代码锚点：${prop.anchors.join("、")}` : ""].filter(Boolean).join("\n")).text;
   const messages: ChatMessage[] = [
     { role: "system", content: SYSTEM },
     { role: "user", content: `<memory>\n${subject}\n</memory>` },

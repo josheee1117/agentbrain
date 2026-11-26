@@ -238,3 +238,116 @@ test("基线取最新祖先记录；无关路径 unchanged；只读 main 不读�
   intake.recordVerify(e.store.workDb, id, "f".repeat(40), "error:network", e.now);
   assert.equal(e.scan().skipped.unchanged, 1);
 });
+
+test("ab-3 锚点匹配：绝不预筛、优先级 deleted > broken > anchor > overlap_or_ident、无基线兜底", t => {
+  const e = fixture(t);
+  e.file("anchor-a.ts", "const A = 1;\n");
+  e.file("anchor-b.ts", "const B = 1;\n");
+  e.file("anchor-del.ts", "const DEL = 1;\n");
+  const h1 = e.commit("anchors base");
+
+  // 1. 无 anchor_head 且无 code_evidence 的兜底：存在进 anchor，缺失进 deleted
+  const noBaseOk = e.memory(null, h1, { kind: "decision", anchors: ["anchor-a.ts"] });
+  const noBaseMissing = e.memory(null, h1, { kind: "decision", anchors: ["missing.ts"] });
+  const rNoBase = e.scan(true);
+  assert.deepEqual(rNoBase.items.map(i => [i.id, i.priority]), [[noBaseMissing, "deleted"], [noBaseOk, "anchor"]]);
+  e.store.lifecycle("archive", noBaseOk, null);
+  e.store.lifecycle("archive", noBaseMissing, null);
+
+  // 2. Case 0（!isCommit(base)）：有锚点不平移，在树里进 anchor，缺失进 deleted
+  const missingHeadOk = e.memory(null, h1, { kind: "decision", anchors: ["anchor-a.ts"], anchor_head: "e".repeat(40) });
+  const missingHeadDel = e.memory(null, h1, { kind: "decision", anchors: ["missing.ts"], anchor_head: "e".repeat(40) });
+  const rCase0 = e.scan(true);
+  assert.equal(rCase0.shifted, 0);
+  assert.deepEqual(rCase0.items.map(i => [i.id, i.priority]), [[missingHeadDel, "deleted"], [missingHeadOk, "anchor"]]);
+  e.store.lifecycle("archive", missingHeadOk, null);
+  e.store.lifecycle("archive", missingHeadDel, null);
+
+  // 3. Case 1：优先级顺序 deleted > broken > anchor > overlap_or_ident，且锚点不预筛
+  e.file("untouched.ts", "const U = 1;\n");
+  e.file("broken.ts", "const BRK = 1;\n");
+  e.file("overlap.ts", Array.from({ length: 40 }, (_, i) => i === 5 ? "const OV = 1;" : `// row ${i + 1}`).join("\n") + "\n");
+  e.file("prescreen.ts", Array.from({ length: 40 }, (_, i) => i === 5 ? "const PS = 1;" : `// row ${i + 1}`).join("\n") + "\n");
+  e.file("anchor-c.ts", "const C = 1;\n");
+  const h2 = e.commit("setup priority");
+
+  const untouched = e.memory(null, h2, { kind: "decision", anchors: ["untouched.ts"], anchor_head: h2 });
+  const ovOnly = e.memory([{ path: "overlap.ts", line_start: 6, line_end: 6, quote: "OV = 1" }], h2);
+  const ovAndAnchor = e.memory([{ path: "overlap.ts", line_start: 6, line_end: 6, quote: "OV = 1" }], h2, { kind: "decision", anchors: ["anchor-c.ts"], anchor_head: h2 });
+  const psAndAnchor = e.memory([{ path: "prescreen.ts", line_start: 6, line_end: 6, quote: "PS = 1" }], h2, { kind: "decision", anchors: ["anchor-c.ts"], anchor_head: h2 });
+  const anchorOnly = e.memory(null, h2, { kind: "decision", anchors: ["anchor-a.ts"], anchor_head: h2 });
+  const brokenAndAnchor = e.memory([{ path: "broken.ts", line_start: 1, line_end: 1, quote: "BRK = 1" }], h2, { kind: "decision", anchors: ["anchor-a.ts"], anchor_head: h2 });
+  const anchorDeleted = e.memory(null, h2, { kind: "decision", anchors: ["anchor-del.ts"], anchor_head: h2 });
+
+  e.file("anchor-a.ts", "const A = 2;\n");
+  e.git("rm", "anchor-del.ts");
+  e.file("broken.ts", "const BRK = 2;\n");
+  e.file("overlap.ts", Array.from({ length: 40 }, (_, i) => i === 5 ? "const OV = 1;" : i === 7 ? "const NEAR = 2;" : `// row ${i + 1}`).join("\n") + "\n");
+  e.file("prescreen.ts", Array.from({ length: 40 }, (_, i) => i === 5 ? "const PS = 1;" : i === 35 ? "// far unrelated" : `// row ${i + 1}`).join("\n") + "\n");
+  e.file("anchor-c.ts", "const C = 2;\n");
+  e.commit("trigger priority");
+
+  const r = e.scan();
+  assert.equal(r.skipped.unchanged, 1, untouched);
+  assert.equal(r.prescreened, 0);
+  // deleted > broken > anchor(seq升序) > overlap_or_ident
+  assert.deepEqual(
+    r.items.map(i => [i.id, i.priority]),
+    [
+      [anchorDeleted, "deleted"],
+      [brokenAndAnchor, "broken"],
+      [ovAndAnchor, "anchor"],
+      [psAndAnchor, "anchor"],
+      [anchorOnly, "anchor"],
+      [ovOnly, "overlap_or_ident"],
+    ],
+  );
+});
+
+test("ab-3 跨仓 <repo>:<relpath>、全局条、Case 2 非祖先锚点与 chooseBase", t => {
+  const e = fixture(t);
+  e.file("shared.ts", "export const X = 1;\n");
+  const h1 = e.commit("shared base");
+
+  // 无关其他项目的条目不计入 checked/no_file_refs
+  const otherPid = e.store.ensureProject("other");
+  e.store.remember(otherPid, null, false, { kind: "decision", text: "其他项目无锚点", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" } });
+  e.store.remember(otherPid, null, false, { kind: "decision", text: "指向别仓的锚点", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" }, anchors: ["third:a.ts"], anchor_head: "a".repeat(40) });
+  e.store.remember(null, null, false, { kind: "decision", text: "全局指向别仓", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" }, anchors: ["third:b.ts"], anchor_head: "a".repeat(40) });
+
+  // 指向 sample 的跨仓条目（另一个项目 + 全局）与本仓带 sample: 前缀
+  const foreignHead = "b".repeat(40); // 非 sample 仓库的提交
+  const crossOther = e.store.remember(otherPid, null, false, { kind: "decision", text: "跨仓依赖 shared", confirmed: true, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" }, anchors: ["sample:shared.ts", "third:c.ts"], anchor_head: foreignHead });
+  const crossGlobal = e.store.remember(null, null, false, { kind: "decision", text: "全局依赖 shared", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "f" }, anchors: ["sample:shared.ts"], anchor_head: h1 });
+  const ownPrefixed = e.memory(null, h1, { kind: "decision", anchors: ["sample:shared.ts"], anchor_head: h1 });
+
+  // 在 shared.ts 未改前：crossGlobal/ownPrefixed 同 head 跳过；crossOther 的 foreignHead 不是本仓 commit，无本仓基线 → 直接命中 anchor
+  let r = e.scan(true);
+  assert.equal(r.checked, 3);
+  assert.equal(r.skipped.no_file_refs, 0);
+  assert.equal(r.skipped.same_head, 2);
+  assert.deepEqual(r.items.map(i => [i.id, i.priority]), [[crossOther, "anchor"]]);
+
+  // 记录 crossOther 在 h1 的核验后，再改 shared.ts → 三个一起命中 anchor
+  intake.recordVerify(e.store.workDb, crossOther, h1, "verified", e.now);
+  e.file("shared.ts", "export const X = 2;\n");
+  const h2 = e.commit("update shared");
+  r = e.scan(true);
+  assert.deepEqual(r.items.map(i => [i.id, i.priority]), [[crossOther, "anchor"], [crossGlobal, "anchor"], [ownPrefixed, "anchor"]]);
+
+  // Case 2 非祖先分支：分支加新提交改无关文件并设为 anchor_head
+  e.git("checkout", "-qb", "feat", h1);
+  e.file("feat-only.ts", "const F = 1;\n");
+  const featHead = e.commit("feat only");
+  e.git("checkout", "main");
+  const divergedOk = e.memory(null, h1, { kind: "decision", anchors: ["中文.ts"], anchor_head: featHead });
+  const divergedTouched = e.memory(null, h1, { kind: "decision", anchors: ["shared.ts"], anchor_head: featHead });
+  // divergedOk 的 中文.ts 在 h1..h2 没动过 → 平移；divergedTouched 的 shared.ts 在 mb(h1)..h2 改过 → 命中 anchor
+  e.store.lifecycle("archive", crossOther, null);
+  e.store.lifecycle("archive", crossGlobal, null);
+  e.store.lifecycle("archive", ownPrefixed, null);
+  const r2 = e.scan();
+  assert.equal(r2.shifted, 1);
+  assert.equal(intake.lastVerify(e.store.workDb, divergedOk)?.head, h2);
+  assert.deepEqual(r2.items.map(i => [i.id, i.priority]), [[divergedTouched, "anchor"]]);
+});

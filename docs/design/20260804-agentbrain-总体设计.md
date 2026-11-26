@@ -1586,7 +1586,7 @@ ab view 卡片:
 | 5 | 入队项不走 §12.6.12 的退避，只比 `last.head === head`；无法核验和证据不足的条目会随每次无关提交重新入队 | `verifyStep`（`src/work.ts`） |
 | 6 | 仅靠单会话自动抽取会产生大量相互矛盾的未确认过程草稿且漏抽需求最终决定；同一需求内新草稿写 `supersedes` 后，旧未确认草稿仅挂 `pending_corrections` 仍占召回与待确认视图 | `fold`（`src/l2.ts`）、`recallable`（`src/visibility.ts`） |
 
-单 2 已实现断点 2、4、5 的修补。队列接受无代码证据的条目和决定，核验读取只读主干提交，入队项遵守无法核验与证据不足退避。首次未确认的决定核验仍留给单 3。2026-11-26 用户在审查 `/tmp` 回放报告后批准开启 `AUTO_CHANGE_SCAN_ENABLED = true`，并授权开始实现单 3。
+单 2 已实现断点 2、4、5 的修补。队列接受无代码证据的条目和决定，核验读取只读主干提交，入队项遵守无法核验与证据不足退避。2026-11-26 用户在审查 `/tmp` 回放报告后批准开启 `AUTO_CHANGE_SCAN_ENABLED = true`，并授权开始实现单 3；单 3 已完成 `anchors`/`anchor_head`、`--anchor`、跨仓匹配、决定首次核验不转正与离线补锚点预览/确认脚本（存量正式库回填仍需用户确认预览单后写入）。
 
 #### 9.7.2 和原方案相比
 
@@ -3324,6 +3324,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-26 实现 §9.7 单 3（锚点、决定核验与存量补锚点）。`l2.ts` 新增 `ANCHORS_MAX=5`、`parseAnchor`/`normalizeAnchor`/`checkAnchors`/`checkAnchorHead`/`checkTagBody` 及 `Proposition.anchors`/`anchor_head` 投影，`store.ts` 在 `lifecycle`/`lifecycleIf`/`commit` 对 `tag` 走统一门禁；`cli.ts` 支持 `remember`/`correct`/`tag` 的 `--anchor`（含 `--anchor none` 清空、全局条禁裸路径、registry 存在性校验与 `ab get` 展示）；`changeverify.ts` 新增 `"anchor"` 优先级（`deleted > broken > anchor > overlap_or_ident`），锚点绝不预筛，支持 `<repo>:<relpath>` 跨仓扫描与无基线兜底；`work.ts`/`codeverify.ts` 纳入 `decision` 首次核验且写入 `code_evidence` 后不自动转正也不重复首次核验，支持跨仓锚点队列消费而不改 `VERIFY_PROMPT_VERSION`；新增 `backfill-anchors.ts` 与离线 `scripts/backfill-decision-anchors.ts` 提供存量项目级无 `code_evidence` 决定的只读预览单与幂等确认写入。零新表、列、事件种类或配置键，`SCHEMA_VERSION` 保持 1。
 
 - 2026-11-26 用户审查 `ab-2` `/tmp` 回放报告（`0/10` 漏报）后批准开启 `AUTO_CHANGE_SCAN_ENABLED = true` 并授权启动单 3（`ab-3`）；启用每日本地变更扫描常驻开关并更新对应单测与文档状态，随后快进合入常驻入口 `docs/agentbrain-v2-design`。
 

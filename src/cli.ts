@@ -11,13 +11,13 @@ import { join } from "node:path";
 import { Store, tighten, type Embedder } from "./store.ts";
 import { backup, backupDue, inspectDb, listBackups, purge, purgePlan, renderPurge, restore } from "./admin.ts";
 import { createInterface } from "node:readline/promises";
-import { type Alternative, type Host, type PropKind, type Proposition, type Scene, type SourcePointer, SCENES } from "./l2.ts";
+import { checkAnchors, parseAnchor, type Alternative, type Host, type PropKind, type Proposition, type Scene, type SourcePointer, type TagBody, SCENES } from "./l2.ts";
 import { embed, loadEmbedConfig, readKey } from "./embed.ts";
 import { expandImport, expandSource, latestAnchor } from "./source.ts";
 import { firstLine, LINK_LABEL, linkIndex, linkSummary, stateMark as linkState } from "./links.ts";
 import { detectHost, locateTranscript } from "./host.ts";
 import type { Detection } from "./host.ts";
-import { isRegistryHome, loadRegistry, registryDir, resolveProject } from "./registry.ts";
+import { isRegistryHome, loadRegistry, registryDir, resolveProject, type RegistryEntry } from "./registry.ts";
 import { chatChain, chatClient, loadChatConfig, type Chat } from "./llm.ts";
 import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } from "./codeverify.ts";
 import { allowedTranscript } from "./transcript-file.ts";
@@ -205,6 +205,50 @@ function parseScenes(raw: string, allowNone: boolean): Scene[] {
   if (!parts.length || bad.length)
     die(`--scene 必须是 ${SCENES.join("|")} 的逗号组合${allowNone ? "，清空用 none" : ""}，收到: ${raw}`);
   return [...new Set(parts)] as Scene[];
+}
+
+function headForEntry(entry?: RegistryEntry): string | undefined {
+  if (!entry?.path) return undefined;
+  try {
+    return resolveTrunkRef(entry.path, entry.trunk)?.sha ?? new RepoTools(entry.path).head() ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveAnchorHead(anchors: string[], projectName: string | null, registry: RegistryEntry[]): string | undefined {
+  if (!anchors.length) return undefined;
+  if (projectName !== null && anchors.some((a) => { const r = parseAnchor(a).repo; return r === null || r === projectName; })) {
+    return headForEntry(registry.find((e) => e.name === projectName));
+  }
+  const repos = [...new Set(anchors.map((a) => parseAnchor(a).repo).filter((r): r is string => r !== null))];
+  return repos.length === 1 ? headForEntry(registry.find((e) => e.name === repos[0])) : undefined;
+}
+
+function resolveAnchorsForCli(
+  raw: string[],
+  projectName: string | null,
+  registry: RegistryEntry[],
+  allowNone: boolean,
+): { anchors?: string[]; anchorHead?: string; isNone: boolean } {
+  if (!raw.length) return { isNone: false };
+  if (raw.some((a) => a.trim() === "none")) {
+    if (!allowNone) die("remember 不能传 --anchor none");
+    if (raw.length > 1) die("--anchor none 不能与其他 --anchor 混用");
+    return { anchors: [], isNone: true };
+  }
+  let anchors: string[];
+  try {
+    anchors = checkAnchors(raw) ?? [];
+  } catch (e) {
+    die((e as Error).message);
+  }
+  for (const a of anchors) {
+    const { repo } = parseAnchor(a);
+    if (projectName === null && repo === null) die("全局记忆的锚点必须带 <项目>:<相对路径> 前缀");
+    if (repo !== null && !registry.some((e) => e.name === repo)) die(`清单里没有项目: ${repo}`);
+  }
+  return { anchors, anchorHead: resolveAnchorHead(anchors, projectName, registry), isNone: false };
 }
 
 // ---------- 子命令 ----------
@@ -502,6 +546,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
       scene: { type: "string" },
       "body-file": { type: "string" },
       alternative: { type: "string", multiple: true, default: [] },
+      anchor: { type: "string", multiple: true, default: [] },
     },
     strict: true,
   });
@@ -514,20 +559,23 @@ async function cmdRemember(argv: string[]): Promise<void> {
   if (values["for-workers"] && !values.global) die("--for-workers 只能和 --global 一起用");
   if (values.global && values.project) die("--global 与 --project 不能同时用");
   const detail = readDetailArgs(values["body-file"], values.alternative as string[]);
+  const registry = loadRegistry();
+  let projectName: string | null = null;
+  if (!values.global) {
+    if (values.project) {
+      if (!registry.some((e) => e.name === values.project)) die(`清单里没有项目: ${values.project}`);
+      projectName = values.project;
+    } else {
+      const here = resolveProject(process.cwd());
+      if (!here) die("当前目录不是已登记项目。记全局记忆加 --global，或用 --project <名> 指定项目。");
+      projectName = here.name;
+    }
+  }
+  const resolvedAnchors = resolveAnchorsForCli(values.anchor as string[], projectName, registry, false);
 
   const store = open();
   try {
-    let projectId: string | null = null;
-    if (!values.global) {
-      if (values.project) {
-        if (!loadRegistry().some((e) => e.name === values.project)) die(`清单里没有项目: ${values.project}`);
-        projectId = store.ensureProject(values.project);
-      } else {
-        const here = resolveProject(process.cwd());
-        if (!here) die("当前目录不是已登记项目。记全局记忆加 --global，或用 --project <名> 指定项目。");
-        projectId = store.ensureProject(here.name);
-      }
-    }
+    const projectId = projectName ? store.ensureProject(projectName) : null;
     const found = detectHost();
     const det: Detection | null = found.ok ? found.detection : null;
     let transcript = det?.transcript ?? null;
@@ -557,6 +605,7 @@ async function cmdRemember(argv: string[]): Promise<void> {
         for_workers: values["for-workers"] || undefined,
         confirmed,
         scenes,
+        ...(resolvedAnchors.anchors?.length ? { anchors: resolvedAnchors.anchors, ...(resolvedAnchors.anchorHead ? { anchor_head: resolvedAnchors.anchorHead } : {}) } : {}),
         source,
       });
     } catch (e) {
@@ -736,6 +785,7 @@ function cmdGet(argv: string[]): void {
       ownershipLine(p, names),
       p.basis ? `依据: ${BASIS_LABEL[p.basis] ?? p.basis}，引文 ${p.evidence.length} 处（${p.evidence.map((e) => `${e.role}@${e.anchor.slice(0, 12)}`).join("、")}）` : "",
       p.extra_sources.length ? `另有 ${p.extra_sources.length} 处来源（${p.extra_sources.map((x) => `${x.host ?? "?"}:${(x.session_id ?? "?").slice(0, 8)} ${BASIS_LABEL[x.basis] ?? x.basis}`).join("、")}）` : "",
+      p.anchors.length ? `代码锚点（基准 ${p.anchor_head ? p.anchor_head.slice(0, 10) : "未记"}）: ${p.anchors.join("；")}` : "",
       p.code_evidence ? `代码证据（HEAD ${p.code_evidence.head.slice(0, 10)}）: ${p.code_evidence.refs.map(codeRef).join("；")}` : "",
       p.stale ? `与代码不符（HEAD ${p.stale.head.slice(0, 10)}）: ${p.stale.refs.map(codeRef).join("；")}` : "",
       p.superseded_draft ? `[已被草稿 ${short(p.superseded_draft)} 替代] 不再召回或计入待确认。归档新草稿用 ab archive ${short(p.superseded_draft)}，保留其中一条用 ab confirm <id>。` : "",
@@ -804,6 +854,7 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       "from-worker": { type: "string" },
       "body-file": { type: "string" },
       alternative: { type: "string", multiple: true, default: [] },
+      anchor: { type: "string", multiple: true, default: [] },
     },
     strict: true,
     allowPositionals: true,
@@ -817,6 +868,23 @@ async function cmdCorrect(argv: string[]): Promise<void> {
   try {
     const old = findByPrefix(store, positionals[0]);
     if (old.state !== "active") die(`只能纠正仍有效的记忆，这条是 ${old.state}: ${short(old.id)}`);
+    const projectName = old.project_id === null ? null : (namesOf(store).get(old.project_id) ?? null);
+    const registry = loadRegistry();
+    const rawAnchors = values.anchor as string[];
+    let anchors: string[] | undefined;
+    let anchorHead: string | undefined;
+    if (rawAnchors.length === 0) {
+      if (old.anchors.length) {
+        anchors = old.anchors;
+        anchorHead = resolveAnchorHead(old.anchors, projectName, registry);
+      }
+    } else {
+      const resolved = resolveAnchorsForCli(rawAnchors, projectName, registry, true);
+      if (!resolved.isNone && resolved.anchors?.length) {
+        anchors = resolved.anchors;
+        anchorHead = resolved.anchorHead;
+      }
+    }
     let source: SourcePointer;
     let missingWorker = false;
     if (values["from-worker"]) {
@@ -844,6 +912,7 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       confirmed: values.confirmed === true,
       supersedes: old.id,
       scenes: old.scenes.length ? old.scenes : undefined,
+      ...(anchors?.length ? { anchors, ...(anchorHead ? { anchor_head: anchorHead } : {}) } : {}),
       source,
     });
     let out = `已纠正 [${short(id)}] 替代 [${short(old.id)}]: ${values.text}`;
@@ -991,26 +1060,44 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
-/** ab tag：改元数据标记，不改正文。目前只有场景标签（§11.10）。 */
+/** ab tag：改元数据标记，不改正文。支持场景标签（§11.10）和代码锚点（§9.7.7）。 */
 function cmdTag(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
-    options: { scene: { type: "string" } },
+    options: {
+      scene: { type: "string" },
+      anchor: { type: "string", multiple: true, default: [] },
+    },
     strict: true,
     allowPositionals: true,
   });
-  if (!positionals[0] || values.scene === undefined) die("用法: ab tag <id 前缀> --scene <design,code,review|none>");
-  const scenes = parseScenes(values.scene, true);
+  const hasScene = values.scene !== undefined;
+  const rawAnchors = values.anchor as string[];
+  const hasAnchor = rawAnchors.length > 0;
+  if (!positionals[0] || (!hasScene && !hasAnchor)) die("用法: ab tag <id 前缀> [--scene <design,code,review|none>] [--anchor <路径>… | --anchor none]");
+  const scenes = hasScene ? parseScenes(values.scene!, true) : undefined;
   const store = open();
   try {
     const p = findByPrefix(store, positionals[0]);
-    if (p.kind !== "rule") die(`--scene 只能用于规则，这条是 ${KIND_LABEL[p.kind]}: ${short(p.id)}`);
-    if (scenes.length && p.guidance)
-      die(`[${short(p.id)}] 是干活偏好（guidance），不能带场景；先 ab guidance ${short(p.id)} --off`);
-    store.lifecycle("tag", p.id, null, { scenes });
-    console.log(
-      scenes.length ? `已设场景 [${short(p.id)}] ${scenes.join(",")}: ${p.text}` : `已清空场景 [${short(p.id)}]: ${p.text}`,
-    );
+    const body: TagBody = {};
+    if (hasScene) {
+      if (p.kind !== "rule") die(`--scene 只能用于规则，这条是 ${KIND_LABEL[p.kind]}: ${short(p.id)}`);
+      if (scenes!.length && p.guidance)
+        die(`[${short(p.id)}] 是干活偏好（guidance），不能带场景；先 ab guidance ${short(p.id)} --off`);
+      body.scenes = scenes;
+    }
+    let anchorInfo: { anchors?: string[]; anchorHead?: string; isNone: boolean } | null = null;
+    if (hasAnchor) {
+      const projectName = p.project_id === null ? null : (namesOf(store).get(p.project_id) ?? null);
+      anchorInfo = resolveAnchorsForCli(rawAnchors, projectName, loadRegistry(), true);
+      body.anchors = anchorInfo.isNone ? [] : anchorInfo.anchors;
+      if (!anchorInfo.isNone && anchorInfo.anchorHead) body.anchor_head = anchorInfo.anchorHead;
+    }
+    store.lifecycle("tag", p.id, null, body);
+    const out: string[] = [];
+    if (hasScene) out.push(scenes!.length ? `已设场景 [${short(p.id)}] ${scenes!.join(",")}: ${p.text}` : `已清空场景 [${short(p.id)}]: ${p.text}`);
+    if (anchorInfo) out.push(anchorInfo.isNone ? `已清空锚点 [${short(p.id)}]: ${p.text}` : `已设锚点 [${short(p.id)}] ${anchorInfo.anchors!.join("，")}: ${p.text}`);
+    console.log(out.join("\n"));
   } finally {
     store.close();
   }
@@ -1650,6 +1737,7 @@ const USAGE = `用法:
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--body-file <文件>] [--alternative "<方案>::<否掉的原因>"]…
               [--from-worker <claude|codex|pi|opencode|agy>:<session_id>] [--scene design,code,review]
+              [--anchor <相对路径|项目:相对路径>]…
                                     干活时不用记：后台会从会话里自动抽取。只有用户明确要你记时才用，并加 --confirmed
                                     --kind note 即事实
                                     不加 --confirmed 的照常生效、标未确认（能搜到，没争议的坑/规则/决定也进每轮召回）
@@ -1658,11 +1746,13 @@ const USAGE = `用法:
                                     --alternative 记讨论时否掉的方案，只用于决定，最多 5 项
                                     --from-worker 把来源指回子代理会话，当前主会话记在转记人上
                                     --scene 只用于规则：按场景打标签，brief 按场景加载
+                                    --anchor 挂代码路径锚点（最多 5 个；全局记忆必须带 <项目>:<路径>）
   ab correct <id 前缀> --text <新内容> --summary <当时在讨论什么>
               [--why <理由>] [--confirmed] [--body-file <文件>] [--alternative "<方案>::<原因>"]…
               [--from-worker <claude|codex|pi|opencode|agy>:<session_id>]
+              [--anchor <相对路径|项目:相对路径>… | --anchor none]
                                     追加一条替代旧记忆的纠正；未确认前不盖掉旧条目
-                                    不继承旧条目的正文和否掉的方案，要沿用就显式重给
+                                    不继承旧条目的正文和否掉的方案，要沿用就显式重给；不传 --anchor 默认继承，--anchor none 清空
   ab recall [--hook] [文本…]            每轮钩子（--hook 时注入常驻偏好与提醒，不再自动检索）或按文本检索相关记忆
                                     --hook 从 stdin 读 {prompt,cwd}，命中时打一行 hook JSON
   ab search <关键词…> [--kind <种类>] [--project <项目名> | --all] [--archived]
@@ -1679,8 +1769,8 @@ const USAGE = `用法:
                                     强制单条代码重核；--ref 只读目标提交，不切分支或改工作区；决定不自动转正
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab tag <id 前缀> --scene <design,code,review|none>
-                                    改规则的场景标签（整组替换；none 清空）
+  ab tag <id 前缀> [--scene <design,code,review|none>] [--anchor <路径>… | --anchor none]
+                                    改元数据标记（至少传一项）：--scene 仅限规则；--anchor 任何种类都可挂/清代码锚点
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入；带场景标签的不能标）
   ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]

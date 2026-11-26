@@ -9,7 +9,7 @@ import { closeSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileS
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { checkAlternatives, checkBodyField, checkRememberBody, sameAlternatives, sameBody } from "./l2.ts";
+import { checkAlternatives, checkBodyField, checkRememberBody, parseAnchor, sameAlternatives, sameBody } from "./l2.ts";
 import { VEC_MIN_SIM, vectorTextOf, type Store, type Embedder, type PendingAppend } from "./store.ts";
 import type { Basis, ConfirmBody, EvidenceBody, Host, Proposition, RememberBody, SourcePointer, TopicProvenance, VerifyBody } from "./l2.ts";
 import { applyVerdict, buildRelateMessages, parseRelate, type RelateItem, type RelateOutcome } from "./relate.ts";
@@ -54,7 +54,7 @@ const VERIFY_RECHECK_MS = 24 * 3_600_000;
 export const VERIFY_BACKOFF_DAYS = [1, 2, 4, 8];
 const SCAN_DAYS = 7;
 const SCAN_HEAD_BYTES = 64 * 1024;
-const CODE_VERIFIABLE = new Set(["pitfall", "note"]);
+const CODE_VERIFIABLE = new Set(["pitfall", "note", "decision"]);
 /** 关系判定第 2 层（§21 2026-10-13）：近邻余弦下限、每条最多给几个近邻、一次调用判几条、每次运行最多几次调用。 */
 export const RELATE_SIM = 0.7;
 export const RELATE_TOP = 3;
@@ -1331,7 +1331,12 @@ function seenVerify(db: DatabaseSync, id: string): boolean {
 
 export type VerifyDeps = Pick<WorkDeps, "store" | "chat" | "now">;
 export type VerifyRunResult = WorkReport["verify"] & { problems: string[] };
-const queueEligible = (p: Proposition) => p.state === "active" && p.project_id !== null && p.kind !== "rule" && !p.stale && !p.superseded_draft;
+const queueEligible = (p: Proposition) =>
+  p.state === "active" &&
+  p.kind !== "rule" &&
+  !p.stale &&
+  !p.superseded_draft &&
+  (p.project_id !== null || p.anchors.some(a => parseAnchor(a).repo !== null));
 
 /** CLI 和 sweep 共用核验、退避、记账及出队逻辑。 */
 async function verifyCandidates(deps: VerifyDeps, report: Pick<WorkReport, "verify" | "problems">, holder: string, todo: Proposition[], toolsFor: (p: Proposition) => GitRefRepoTools | null): Promise<void> {
@@ -1385,7 +1390,9 @@ export async function verifyQueuedForProject(deps: VerifyDeps, entry: RegistryEn
   if (!entry.path) throw new Error(`项目 ${entry.name} 没有本地仓库路径`);
   const pid = deps.store.listProjects().find(p => p.name === entry.name)?.id;
   const queued = intake.queuedReverify(deps.store.workDb);
-  const todo = [...deps.store.project().props.values()].filter(p => p.project_id === pid && queued.has(p.id));
+  const todo = [...deps.store.project().props.values()].filter(
+    p => (p.project_id === pid || p.anchors.some(a => parseAnchor(a).repo === entry.name)) && queued.has(p.id),
+  );
   for (const p of todo) if (!queueEligible(p)) intake.dequeueReverify(deps.store.workDb, p.id);
   const report = { verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 }, problems: [] as string[] };
   const tools = new GitRefRepoTools(entry.path, head);
@@ -1393,7 +1400,7 @@ export async function verifyQueuedForProject(deps: VerifyDeps, entry: RegistryEn
   return { ...report.verify, problems: report.problems };
 }
 
-/** 入队项优先；首次未确认核验仍只处理坑和事实。 */
+/** 入队项优先；首次未确认核验含未核出代码证据的坑、事实和决定（决定不自动转正）。 */
 async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): Promise<void> {
   if ("error" in deps.chat) return;
   const db = deps.store.workDb;
@@ -1405,19 +1412,30 @@ async function verifyPass(deps: WorkDeps, report: WorkReport, holder: string): P
   for (const id of queued) if (!valid.has(id)) intake.dequeueReverify(db, id);
   const todo = [
     ...requeued.sort((a, b) => a.seq - b.seq),
-    ...all.filter(p => !queued.has(p.id) && p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.unreconciled && !p.supersedes && !p.stale && !p.superseded_draft)
+    ...all.filter(p => !queued.has(p.id) && p.state === "active" && !p.confirmed && !p.demoted && p.project_id !== null && CODE_VERIFIABLE.has(p.kind) && !p.code_evidence && !p.unreconciled && !p.supersedes && !p.stale && !p.superseded_draft)
       .sort((a, b) => Number(seenVerify(db, a.id)) - Number(seenVerify(db, b.id)) || a.seq - b.seq),
   ];
   const repos = new Map<string, GitRefRepoTools | null>();
-  await verifyCandidates(deps, report, holder, todo, p => {
-    const name = names.get(p.project_id!);
-    if (!name) return null;
+  const repoTools = (name: string): GitRefRepoTools | null => {
     if (!repos.has(name)) {
       const entry = deps.registry.find(e => e.name === name);
       const trunk = entry?.path && existsSync(entry.path) ? resolveTrunkRef(entry.path, entry.trunk) : null;
       repos.set(name, trunk && entry?.path ? new GitRefRepoTools(entry.path, trunk.sha) : null);
     }
     return repos.get(name) ?? null;
+  };
+  await verifyCandidates(deps, report, holder, todo, p => {
+    if (p.project_id !== null) {
+      const name = names.get(p.project_id);
+      return name ? repoTools(name) : null;
+    }
+    for (const a of p.anchors) {
+      const repo = parseAnchor(a).repo;
+      if (!repo) continue;
+      const tools = repoTools(repo);
+      if (tools) return tools;
+    }
+    return null;
   });
 }
 

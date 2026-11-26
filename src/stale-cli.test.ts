@@ -11,7 +11,7 @@ import type { ChatMessage } from "./llm.ts";
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-for (const suite of ["ab-1", "ab-2"]) test(`${suite} 真实 CLI：stale 确认与变更重核`, async (t) => {
+for (const suite of ["ab-1", "ab-2", "ab-3"]) test(`${suite} 真实 CLI：${suite === "ab-3" ? "锚点、跨仓扫描与决定核验" : "stale 确认与变更重核"}`, async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab1-cli-")));
   const home = join(dir, "home"), ab = join(dir, "ab"), repos = join(dir, "pm/repos"), repo = join(dir, "repo"), bin = join(dir, "bin");
   for (const p of [home, ab, repos, repo, bin]) mkdirSync(p, { recursive: true });
@@ -33,7 +33,7 @@ for (const suite of ["ab-1", "ab-2"]) test(`${suite} 真实 CLI：stale 确认�
   git("add", "."); git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "另一分支");
   writeFileSync(join(repo, "中文.ts"), "const CACHE_LIMIT = 999;\n");
   const current = git("rev-parse", "HEAD").trim(), dirty = git("status", "--porcelain=v1");
-  let verdict = "verified", quote = "CACHE_LIMIT = 42", httpStatus = 200;
+  let verdict = "verified", quote = "CACHE_LIMIT = 42", evidencePath = "中文.ts", httpStatus = 200;
   const requests: { messages: ChatMessage[] }[] = [];
   const server = createServer(async (req, res) => {
     assert.equal(req.url, "/v1/chat/completions");
@@ -43,8 +43,8 @@ for (const suite of ["ab-1", "ab-2"]) test(`${suite} 真实 CLI：stale 确认�
     requests.push(payload);
     if (httpStatus !== 200) { res.writeHead(httpStatus); res.end("fixture model failure"); return; }
     const tools = payload.messages.filter(m => m.role === "tool");
-    const message: ChatMessage = tools.length ? { role: "assistant", content: JSON.stringify({ verdict, evidence: [{ path: "中文.ts", line_start: 1, quote }] }) }
-      : { role: "assistant", content: null, tool_calls: [{ id: "read", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: "中文.ts" }) } }] };
+    const message: ChatMessage = tools.length ? { role: "assistant", content: JSON.stringify({ verdict, evidence: [{ path: evidencePath, line_start: 1, quote }] }) }
+      : { role: "assistant", content: null, tool_calls: [{ id: "read", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: evidencePath }) } }] };
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ choices: [{ message }], usage: { total_tokens: 10 } }));
   });
@@ -75,7 +75,126 @@ for (const suite of ["ab-1", "ab-2"]) test(`${suite} 真实 CLI：stale 确认�
     store.queueReverify([p.id], new Date());
   };
   try {
-    if (suite === "ab-2") {
+    if (suite === "ab-3") {
+    await t.test("ab-3 真实 CLI：--anchor 写入、继承、tag 清空、全局拦截、ab get 与跨仓 verify --changed --run", async () => {
+      const repo2 = join(dir, "repo2");
+      mkdirSync(repo2, { recursive: true });
+      const git2 = (...args: string[]) => execFileSync("git", ["-C", repo2, ...args], { env, encoding: "utf8" });
+      git2("init", "-qb", "main");
+      writeFileSync(join(repo2, "共享.ts"), "export const SHARED = 1;\n");
+      git2("add", "."); git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "repo2 init");
+      const r2Head = git2("rev-parse", "HEAD").trim();
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n- 主干：\`target\`\n`);
+      writeFileSync(join(repos, "repo2.md"), `- 路径：\`${repo2}\`\n- 主干：\`main\`\n`);
+
+      try {
+        // 1. remember --anchor（规范化 + 自动解析 trunk-ref 作为 anchor_head）
+        const remOut = await ok("remember", "--kind", "decision", "--text", "ab3 锚点决定", "--summary", "锚点", "--anchor", "./中文.ts", "--anchor", "repo2:共享.ts");
+        const decId = /已记住 \[([0-9a-f]{8})\]/.exec(remOut)?.[1];
+        assert.ok(decId);
+        assert.deepEqual(prop(decId).anchors, ["中文.ts", "repo2:共享.ts"]);
+        assert.equal(prop(decId).anchor_head, target);
+
+        // get 展示锚点与 10 位基准 sha
+        const getOut = await ok("get", decId);
+        assert.ok(getOut.includes(`代码锚点（基准 ${target.slice(0, 10)}）: 中文.ts；repo2:共享.ts`), getOut);
+
+        // 2. remember 拒绝 --anchor none、全局裸路径、未登记项目、非法路径、超 5 个
+        for (const args of [
+          ["remember", "--kind", "decision", "--text", "x", "--summary", "s", "--anchor", "none"],
+          ["remember", "--global", "--kind", "decision", "--text", "x", "--summary", "s", "--anchor", "中文.ts"],
+          ["remember", "--kind", "decision", "--text", "x", "--summary", "s", "--anchor", "unknownrepo:a.ts"],
+          ["remember", "--kind", "decision", "--text", "x", "--summary", "s", "--anchor", "../bad.ts"],
+          ["remember", "--kind", "decision", "--text", "x", "--summary", "s", "--anchor", "a", "--anchor", "b", "--anchor", "c", "--anchor", "d", "--anchor", "e", "--anchor", "f"],
+        ]) {
+          const r = await run(...args);
+          assert.notEqual(r.status, 0, args.join(" "));
+        }
+
+        // 全局条带跨仓锚点成功并解析该外部仓 trunk-ref
+        const gOut = await ok("remember", "--global", "--kind", "decision", "--text", "ab3 全局跨仓决定", "--summary", "跨仓", "--anchor", "repo2:共享.ts");
+        const gId = /已记住 \[([0-9a-f]{8})\]/.exec(gOut)?.[1];
+        assert.ok(gId);
+        assert.deepEqual(prop(gId).anchors, ["repo2:共享.ts"]);
+        assert.equal(prop(gId).anchor_head, r2Head);
+
+        // 3. correct：默认继承、--anchor none 不继承、--anchor 混用 none 报错
+        const corInherit = await ok("correct", decId, "--text", "ab3 继承锚点", "--summary", "纠正");
+        const corId1 = /已纠正 \[([0-9a-f]{8})\]/.exec(corInherit)?.[1];
+        assert.ok(corId1);
+        assert.deepEqual(prop(corId1).anchors, ["中文.ts", "repo2:共享.ts"]);
+        assert.equal(prop(corId1).anchor_head, target);
+
+        const corNone = await ok("correct", corId1, "--text", "ab3 清空锚点", "--summary", "纠正", "--anchor", "none");
+        const corId2 = /已纠正 \[([0-9a-f]{8})\]/.exec(corNone)?.[1];
+        assert.ok(corId2);
+        assert.deepEqual(prop(corId2).anchors, []);
+        assert.equal(prop(corId2).anchor_head, null);
+
+        assert.notEqual((await run("correct", decId, "--text", "bad", "--summary", "s", "--anchor", "none", "--anchor", "中文.ts")).status, 0);
+
+        // 4. tag：不带 --scene 时允许 decision/guidance 改锚点；--anchor none 清空；同时带 --scene 和 --anchor 写同一条 tag
+        await ok("tag", corId2, "--anchor", "中文.ts");
+        assert.deepEqual(prop(corId2).anchors, ["中文.ts"]);
+        assert.equal(prop(corId2).anchor_head, target);
+        await ok("tag", corId2, "--anchor", "none");
+        assert.deepEqual(prop(corId2).anchors, []);
+        assert.equal(prop(corId2).anchor_head, null);
+
+        const guidRule = await remember("rule", "ab3 偏好规则", true, false);
+        await ok("guidance", guidRule);
+        await ok("tag", guidRule, "--anchor", "中文.ts");
+        assert.deepEqual(prop(guidRule).anchors, ["中文.ts"]);
+        assert.equal(prop(guidRule).guidance, true);
+
+        const sceneRule = await remember("rule", "ab3 场景规则", true, false);
+        const beforeTagCount = store.workDb.prepare("SELECT count(*) AS n FROM events WHERE target_id=? AND kind='tag'").get(prop(sceneRule).id)!.n;
+        await ok("tag", sceneRule, "--scene", "code", "--anchor", "中文.ts");
+        const afterTagCount = store.workDb.prepare("SELECT count(*) AS n FROM events WHERE target_id=? AND kind='tag'").get(prop(sceneRule).id)!.n;
+        assert.equal(Number(afterTagCount) - Number(beforeTagCount), 1);
+        assert.deepEqual(prop(sceneRule).scenes, ["code"]);
+        assert.deepEqual(prop(sceneRule).anchors, ["中文.ts"]);
+
+        assert.notEqual((await run("tag", decId)).status, 0);
+        assert.notEqual((await run("tag", gId, "--anchor", "裸路径.ts")).status, 0);
+
+        // 5. 跨仓 verify --changed --run：repo2 改动 共享.ts，跨仓条目（decId + gId）命中 anchor 并消费，决定不自动转正
+        writeFileSync(join(repo2, "共享.ts"), "export const SHARED = 42;\n");
+        git2("add", "."); git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "repo2 update");
+        const r2New = git2("rev-parse", "HEAD").trim();
+        verdict = "verified"; quote = "SHARED = 42"; evidencePath = "共享.ts";
+        const dryScan = JSON.parse(await ok("verify", "--changed", "repo2", "--dry-run", "--json"));
+        assert.equal(dryScan.head, r2New);
+        assert.deepEqual(dryScan.items.map((i: { id: string; priority: string }) => [i.id, i.priority]), [
+          [prop(decId).id, "anchor"],
+          [prop(gId).id, "anchor"],
+          [prop(corId1).id, "anchor"],
+        ]);
+        const runScan = JSON.parse(await ok("verify", "--changed", "repo2", "--run", "--json"));
+        assert.equal(runScan.enqueued, 3);
+        assert.equal(runScan.run.verified, 3);
+        assert.equal(intake.queuedReverify(store.workDb).size, 0);
+        for (const id of [decId, gId, corId1]) {
+          assert.equal(prop(id).confirmed, false);
+          assert.equal(prop(id).confirmed_by, null);
+          assert.equal(prop(id).code_evidence?.head, r2New);
+        }
+        // get 基准缺失时显示「基准 未记」
+        const noHeadId = store.remember(prop(decId).project_id, null, false, {
+          kind: "decision",
+          text: "无 anchor_head 决定",
+          confirmed: false,
+          anchors: ["中文.ts"],
+          source: { host: null, session_id: null, transcript: null, anchor: null, summary: "s" },
+        });
+        assert.match(await ok("get", noHeadId.slice(0, 8)), /代码锚点（基准 未记）: 中文\.ts/);
+      } finally {
+        evidencePath = "中文.ts"; quote = "CACHE_LIMIT = 42"; verdict = "verified";
+        writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`);
+        rmSync(join(repos, "repo2.md"), { force: true });
+      }
+    });
+    } else if (suite === "ab-2") {
     await t.test("ab-2 真实 CLI：扫描、预演、JSON、租约、3 条消费和主干确认", async () => {
       writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n- 主干：\`target\`\n`);
       const ids: string[] = [];

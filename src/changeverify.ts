@@ -1,6 +1,6 @@
 import { relative } from "node:path";
 import { GitRefRepoTools, RepoTools } from "./codeverify.ts";
-import type { CodeRef, Proposition } from "./l2.ts";
+import { parseAnchor, type CodeRef, type Proposition } from "./l2.ts";
 import type { RegistryEntry } from "./registry.ts";
 import type { Store } from "./store.ts";
 import * as intake from "./intake.ts";
@@ -8,7 +8,10 @@ import { skipQueuedVerify, type VerifyRunResult } from "./work.ts";
 
 export const MAX_CHANGED_ENQUEUE = 20;
 type FileRef = Extract<CodeRef, { path: string }>;
-export type ChangePriority = "deleted" | "broken" | "overlap_or_ident";
+export type ChangePriority = "deleted" | "broken" | "anchor" | "overlap_or_ident";
+const PRIORITY_ORDER: Record<ChangePriority, number> = { deleted: 1, broken: 2, anchor: 3, overlap_or_ident: 4 };
+const bestPriority = (a: ChangePriority | null, b: ChangePriority | null): ChangePriority | null =>
+  !a ? b : !b ? a : PRIORITY_ORDER[a] <= PRIORITY_ORDER[b] ? a : b;
 export interface ChangeScanResult {
   project: string;
   trunkRef: string | null;
@@ -92,7 +95,6 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
   const tools = new ChangeRepoTools(entry.path, target.sha);
   const db = store.workDb;
   const pid = store.listProjects().find(p => p.name === entry.name)?.id;
-  if (!pid) return result;
   const queued = intake.queuedReverify(db);
   const ancestors = new Map<string, boolean>();
   const commits = new Map<string, boolean>();
@@ -114,16 +116,24 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
     if (!commitTime.has(sha)) commitTime.set(sha, isCommit(sha) ? Number(tools.git(["show", "-s", "--format=%ct", sha]).trim()) : 0);
     return commitTime.get(sha)!;
   };
-  const chooseBase = (p: Proposition): string => {
-    const evidence = p.code_evidence!.head;
-    const last = intake.lastVerify(db, p.id);
-    if (!last || (last.outcome !== "verified" && last.outcome !== "shifted") || last.head === evidence) return evidence;
-    if (isCommit(evidence) && isCommit(last.head)) {
-      if (ancestor(evidence, last.head)) return last.head;
-      if (ancestor(last.head, evidence)) return evidence;
-      if (ancestor(evidence, target.sha) !== ancestor(last.head, target.sha)) return ancestor(evidence, target.sha) ? evidence : last.head;
+  const pickNewer = (a: string, b: string): string => {
+    if (a === b) return a;
+    if (isCommit(a) && isCommit(b)) {
+      if (ancestor(a, b)) return b;
+      if (ancestor(b, a)) return a;
+      if (ancestor(a, target.sha) !== ancestor(b, target.sha)) return ancestor(a, target.sha) ? a : b;
+      return time(a) > time(b) ? a : b;
     }
-    return time(evidence) > time(last.head) ? evidence : last.head;
+    if (isCommit(a) !== isCommit(b)) return isCommit(a) ? a : b;
+    return a;
+  };
+  const chooseBase = (p: Proposition, isCrossRepo: boolean, last: ReturnType<typeof intake.lastVerify>): string | null => {
+    const lastHead = last && (last.outcome === "verified" || last.outcome === "shifted") ? last.head : null;
+    const raw = isCrossRepo
+      ? [p.anchor_head, lastHead].filter((sha): sha is string => !!sha && isCommit(sha))
+      : [p.code_evidence?.head, p.anchor_head, lastHead].filter((sha): sha is string => !!sha);
+    const unique = [...new Set(raw)];
+    return unique.length ? unique.reduce(pickNewer) : null;
   };
   const tree = (sha: string): Set<string> => {
     if (!trees.has(sha)) trees.set(sha, new Set(tools.git(["ls-tree", "-r", "--name-only", "-z", sha]).split("\0").filter(Boolean)));
@@ -148,17 +158,26 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
     }
     return broken ? "broken" : null;
   };
+  const anchorState = (anchors: string[]): ChangePriority | null => {
+    if (!anchors.length) return null;
+    return anchors.some(a => !tree(target.sha).has(a)) ? "deleted" : "anchor";
+  };
   const hit = (p: Proposition, priority: ChangePriority) => result.items.push({ id: p.id, seq: p.seq, priority });
   const shift = (p: Proposition) => {
     result.shifted++;
     if (!opts.dryRun) intake.recordVerify(db, p.id, target.sha, "shifted", opts.now);
   };
-  const groups = new Map<string, { p: Proposition; refs: FileRef[] }[]>();
+  const groups = new Map<string, { p: Proposition; refs: FileRef[]; anchors: string[] }[]>();
   for (const p of store.project().props.values()) {
-    if (p.state !== "active" || p.project_id !== pid || p.kind === "rule" || p.stale || p.superseded_draft || p.demoted) continue;
+    if (p.state !== "active" || p.kind === "rule" || p.stale || p.superseded_draft || p.demoted) continue;
+    const isOwn = pid !== undefined && p.project_id === pid;
+    const refs = isOwn ? (p.code_evidence?.refs.filter((ref): ref is FileRef => "path" in ref) ?? []) : [];
+    const anchorPaths = [...new Set(
+      p.anchors.map(parseAnchor).filter(a => isOwn ? (a.repo === null || a.repo === entry.name) : a.repo === entry.name).map(a => a.path),
+    )];
+    if (!isOwn && !anchorPaths.length) continue;
     result.checked++;
-    const refs = p.code_evidence?.refs.filter((ref): ref is FileRef => "path" in ref) ?? [];
-    if (!refs.length) { result.skipped.no_file_refs++; continue; }
+    if (!refs.length && !anchorPaths.length) { result.skipped.no_file_refs++; continue; }
     if (queued.has(p.id)) { result.skipped.already_queued++; continue; }
     const last = intake.lastVerify(db, p.id);
     if (skipQueuedVerify(last, target.sha, opts.now)) {
@@ -167,51 +186,79 @@ export function scanChangedProject(store: Store, entry: RegistryEntry, opts: { r
       else result.skipped.backoff++;
       continue;
     }
-    const base = chooseBase(p);
+    const base = chooseBase(p, !isOwn, last);
     if (base === target.sha) { result.skipped.same_head++; continue; }
     // normalize through the same scoped-path boundary as read-only code verification
-    const normalized: FileRef[] = [];
+    const normalizedRefs: FileRef[] = [];
     for (const ref of refs) {
-      try { normalized.push({ ...ref, path: tools.path(ref.path) }); } catch { /* 单条非法路径跳过，不中断整批 */ }
+      try { normalizedRefs.push({ ...ref, path: tools.path(ref.path) }); } catch { /* 单条非法路径跳过，不中断整批 */ }
     }
-    if (!normalized.length) { result.skipped.untracked_path++; continue; }
+    const normalizedAnchors: string[] = [];
+    for (const ap of anchorPaths) {
+      try { normalizedAnchors.push(tools.path(ap)); } catch { /* 单条非法路径跳过，不中断整批 */ }
+    }
+    const uniqueAnchors = [...new Set(normalizedAnchors)];
+    if (!normalizedRefs.length && !uniqueAnchors.length) { result.skipped.untracked_path++; continue; }
+    if (!base) {
+      const priority = anchorState(uniqueAnchors);
+      if (priority) hit(p, priority);
+      continue;
+    }
     if (!isCommit(base)) {
-      const priority = checkQuotes(normalized);
+      const priority = bestPriority(normalizedRefs.length ? checkQuotes(normalizedRefs) : null, anchorState(uniqueAnchors));
       if (priority) hit(p, priority); else shift(p);
       continue;
     }
-    const tracked = normalized.filter(ref => tree(base).has(ref.path));
-    if (!tracked.length) { result.skipped.untracked_path++; continue; }
+    const trackedRefs = normalizedRefs.filter(ref => tree(base).has(ref.path));
+    const trackedAnchors = uniqueAnchors.filter(a => tree(base).has(a));
+    if (!trackedRefs.length && !trackedAnchors.length) { result.skipped.untracked_path++; continue; }
     if (!ancestor(base, target.sha)) {
-      const priority = checkQuotes(tracked);
-      if (!priority) { shift(p); continue; }
+      const refP = trackedRefs.length ? checkQuotes(trackedRefs) : null;
+      const anchorsOk = trackedAnchors.every(a => tree(target.sha).has(a));
       if (!merges.has(base)) merges.set(base, optionalGit(tools, ["merge-base", base, target.sha]));
       const mb = merges.get(base);
-      if (mb && changedPaths(mb, [...new Set(tracked.map(ref => ref.path))]).size) hit(p, priority);
+      const mbChangedAnchors = mb && trackedAnchors.length ? changedPaths(mb, trackedAnchors) : null;
+      if (!refP && anchorsOk && (!trackedAnchors.length || (mbChangedAnchors !== null && mbChangedAnchors.size === 0))) {
+        shift(p);
+        continue;
+      }
+      if (!mb) { result.skipped.unmerged_branch++; continue; }
+      const hitRef = refP && trackedRefs.length && changedPaths(mb, [...new Set(trackedRefs.map(r => r.path))]).size ? refP : null;
+      const hitAnchor: ChangePriority | null = !anchorsOk ? "deleted" : (mbChangedAnchors && mbChangedAnchors.size > 0 ? "anchor" : null);
+      const priority = bestPriority(hitRef, hitAnchor);
+      if (priority) hit(p, priority);
       else result.skipped.unmerged_branch++;
       continue;
     }
     const group = groups.get(base) ?? [];
-    group.push({ p, refs: tracked }); groups.set(base, group);
+    group.push({ p, refs: trackedRefs, anchors: trackedAnchors }); groups.set(base, group);
   }
   for (const [base, group] of groups) {
-    const changed = changedPaths(base, [...new Set(group.flatMap(item => item.refs.map(ref => ref.path)))]);
-    for (const { p, refs } of group) {
-      if (!refs.some(ref => changed.has(ref.path))) { result.skipped.unchanged++; continue; }
-      const priority = checkQuotes(refs);
-      if (priority) { hit(p, priority); continue; }
-      const matched = refs.some(ref => {
-        if (!changed.has(ref.path)) return false;
-        const key = `${base}:${ref.path}`;
-        if (!diffs.has(key)) diffs.set(key, tools.git(["diff", "-U0", "--no-textconv", "--no-renames", base, target.sha, "--", ref.path]));
-        return overlapsOrIdent(diffs.get(key)!, ref);
-      });
-      if (matched) hit(p, "overlap_or_ident");
+    const changed = changedPaths(base, [...new Set(group.flatMap(item => [...item.refs.map(ref => ref.path), ...item.anchors]))]);
+    for (const { p, refs, anchors } of group) {
+      const refChanged = refs.some(ref => changed.has(ref.path));
+      const changedAnchors = anchors.filter(a => changed.has(a));
+      if (!refChanged && !changedAnchors.length) { result.skipped.unchanged++; continue; }
+      const ancP = anchorState(changedAnchors);
+      let refP: ChangePriority | null = null;
+      if (refChanged) {
+        refP = checkQuotes(refs);
+        if (!refP) {
+          const matched = refs.some(ref => {
+            if (!changed.has(ref.path)) return false;
+            const key = `${base}:${ref.path}`;
+            if (!diffs.has(key)) diffs.set(key, tools.git(["diff", "-U0", "--no-textconv", "--no-renames", base, target.sha, "--", ref.path]));
+            return overlapsOrIdent(diffs.get(key)!, ref);
+          });
+          if (matched) refP = "overlap_or_ident";
+        }
+      }
+      const priority = bestPriority(ancP, refP);
+      if (priority) hit(p, priority);
       else { result.prescreened++; result.prescreenedIds.push(p.id); }
     }
   }
-  const priorityOrder: Record<ChangePriority, number> = { deleted: 1, broken: 2, overlap_or_ident: 3 };
-  result.items.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || a.seq - b.seq);
+  result.items.sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || a.seq - b.seq);
   result.hits = result.items.length;
   result.items = result.items.slice(0, MAX_CHANGED_ENQUEUE);
   result.enqueued = result.items.length;

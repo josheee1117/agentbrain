@@ -14,7 +14,7 @@ import { chmodSync, mkdirSync, statSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname } from "node:path";
 import { cosine, fromBlob, toBlob } from "./embed.ts";
-import { fold, checkDetailBody, checkRememberBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody, type Who } from "./l2.ts";
+import { fold, checkDetailBody, checkRememberBody, checkTagBody, type DetailBody, type EventKind, type EventRow, type PropKind, type PropState, type Projection, type Proposition, type RememberBody, type TagBody, type Who } from "./l2.ts";
 
 /**
  * 库版本号（§12.6.1），存在 store.db 的 PRAGMA user_version。新增事件种类、表或列必须加一。
@@ -360,6 +360,7 @@ export class Store {
   lifecycle(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object = {}): string {
     const p = this.project().props.get(targetId);
     if (!p) throw new Error(`unknown or purged proposition: ${targetId}`);
+    if (kind === "tag") checkTagBody(body as TagBody);
     return this.append(kind, p.project_id, sessionId, false, targetId, body); // body 非 null；null 一律表示已 purge
   }
 
@@ -368,6 +369,7 @@ export class Store {
    * check 返回 null 才写；返回原因字符串就不写，原样返回。目标不在投影里也不写。
    */
   lifecycleIf(kind: "archive" | "reactivate" | "confirm" | "unconfirm" | "tag" | "stage" | "curate", targetId: string, sessionId: string | null, body: object, check: (p: Proposition) => string | null): { id: string } | { skipped: string } {
+    if (kind === "tag") checkTagBody(body as TagBody);
     const id = randomUUID();
     const json = JSON.stringify(body);
     this.assertWritable();
@@ -479,6 +481,7 @@ export class Store {
     const props = this.project().props;
     for (const a of appends) {
       if (a.kind === "remember") checkRememberBody(a.body as RememberBody);
+      else if (a.kind === "tag") checkTagBody(a.body as TagBody);
       else if (a.kind === "detail") {
         const target = a.target_id ? props.get(a.target_id) : undefined;
         if (!target) throw new Error(`unknown or purged proposition: ${a.target_id}`);

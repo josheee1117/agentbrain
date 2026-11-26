@@ -23,7 +23,7 @@ case "${1:-}" in
     chmod +x "$ISOLATED/bin/security"
     export HOME="$ISOLATED/home" AB_HOME="$ISOLATED/ab" AGENTBRAIN_HOME="$ISOLATED/ab" AB_REGISTRY="$ISOLATED/repos" PATH="$ISOLATED/bin:$PATH"
     unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE PI_SESSION_ID PI_SESSION_FILE PI_INTERCOM_SESSION_ID CLAUDE_SESSION_ID CODEX_SESSION_ID GEMINI_HOME ANTIGRAVITY_APP_DATA_DIR ANTIGRAVITY_CONVERSATION_ID
-    trap 'rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
+    trap '[ -z "${XP_PID:-}" ] || kill "$XP_PID" 2>/dev/null || true; [ -z "${ANC_PID:-}" ] || kill "$ANC_PID" 2>/dev/null || true; rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
@@ -40,6 +40,8 @@ case "${1:-}" in
     step cli-stale-guard env AB1_EVIDENCE="$EV/stale-guard" node --test --test-name-pattern="^ab-1" src/stale-cli.test.ts
     step cli-change-verify env AB1_EVIDENCE="$EV/change-verify" node --test --test-name-pattern="^ab-2" src/stale-cli.test.ts
     step cli-change-sweep node --test --test-name-pattern='ab-2|用前核对排队|§12.6.12' src/work.test.ts
+    step anchors-unit node --test src/anchors.test.ts src/backfill-anchors.test.ts
+    step cli-anchors-verify env AB1_EVIDENCE="$EV/anchors-verify" node --test --test-name-pattern="^ab-3" src/stale-cli.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
     S=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-XXXXXX")")
@@ -410,6 +412,49 @@ db.close();
 "
     step cli-staging-report env AB_HOME="$AB_HOME" node "$ROOT/scripts/staging-report.ts"
     step cli-staging-report-text bash -c "grep -qF '旧候选区条目 1 条' '$EV/cli-staging-report.log'"
+
+    # 8b. anchors & backfill-decision-anchors (ab-3): remember --anchor / tag --anchor / tag --anchor none / correct 继承 / get 展示 / verify --changed / preview & apply
+    ANC_AB="$S/anc_ab"; ANC_REPO="$S/anc_repo"; ANC_REG="$S/anc_repos"; ANC_PORT="$S/anc-port"
+    mkdir -p "$ANC_AB" "$ANC_REPO/src" "$ANC_REG"
+    git -C "$ANC_REPO" init -qb main
+    printf 'export const ANC = 1;\n' > "$ANC_REPO/src/锚点模块.ts"
+    git -C "$ANC_REPO" add . && git -C "$ANC_REPO" -c user.name=verify -c user.email=v@local commit -qm init
+    printf -- "- 路径：\`%s\`\n- 主干：\`main\`\n" "$ANC_REPO" > "$ANC_REG/ancrepo.md"
+    anc_ab(){ (cd "$ANC_REPO" && env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/src/cli.ts" "$@"); }
+    step cli-anchors-remember anc_ab remember --kind decision --text "锚点 CLI 验证决定" --summary "锚点验证" --anchor "./src/锚点模块.ts"
+    ANC_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-anchors-remember.log" 2>/dev/null | head -1)
+    step cli-anchors-get anc_ab get "$ANC_ID"
+    step cli-anchors-get-text bash -c "grep -qF '代码锚点（基准 ' '$EV/cli-anchors-get.log' && grep -qF 'src/锚点模块.ts' '$EV/cli-anchors-get.log'"
+    step cli-anchors-correct anc_ab correct "$ANC_ID" --text "锚点 CLI 继承决定" --summary "纠正继承"
+    ANC_COR=$(sed -n 's/^已纠正 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-anchors-correct.log" 2>/dev/null | head -1)
+    step cli-anchors-correct-get bash -c "(cd '$ANC_REPO' && env HOME='$FAKE_HOME' AB_HOME='$ANC_AB' AGENTBRAIN_HOME='$ANC_AB' AB_REGISTRY='$ANC_REG' node '$ROOT/src/cli.ts' get '$ANC_COR') > '$EV/cli-anchors-correct-get.log' 2>&1 && grep -qF 'src/锚点模块.ts' '$EV/cli-anchors-correct-get.log'"
+    step cli-anchors-tag-none anc_ab tag "$ANC_COR" --anchor none
+    step cli-anchors-tag-none-check bash -c "! (cd '$ANC_REPO' && env HOME='$FAKE_HOME' AB_HOME='$ANC_AB' AGENTBRAIN_HOME='$ANC_AB' AB_REGISTRY='$ANC_REG' node '$ROOT/src/cli.ts' get '$ANC_COR' | grep -qF '代码锚点')"
+    step cli-anchors-tag-set anc_ab tag "$ANC_COR" --anchor src/锚点模块.ts
+    printf 'export const ANC = 2;\n' > "$ANC_REPO/src/锚点模块.ts"
+    git -C "$ANC_REPO" add . && git -C "$ANC_REPO" -c user.name=verify -c user.email=v@local commit -qm bump
+    step cli-anchors-verify-changed anc_ab verify --changed ancrepo --json
+    step cli-anchors-verify-changed-hit bash -c "grep -qF '\"priority\":\"anchor\"' '$EV/cli-anchors-verify-changed.log'"
+
+    step cli-backfill-seed anc_ab remember --kind decision --text "待回填决定" --summary "回填"
+    ANC_BF=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-backfill-seed.log" 2>/dev/null | head -1)
+    cat > "$S/anc-mock.mjs" <<MOCK
+import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+const server = createServer((_req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify({ items: [{ id: "$ANC_BF", anchors: ["src/锚点模块.ts"], reason: "verify mock" }] }) } }], usage: { total_tokens: 10 } }));
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(process.argv[2], String(server.address().port)));
+MOCK
+    node "$S/anc-mock.mjs" "$ANC_PORT" & ANC_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$ANC_PORT" ] && break; sleep 0.3; done
+    printf '{"baseUrl":"http://127.0.0.1:%s/v1","model":"anc-mock"}\n' "$(cat "$ANC_PORT")" > "$ANC_AB/extract.json"
+    step cli-backfill-preview env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/scripts/backfill-decision-anchors.ts" preview --project ancrepo --out "$EV/backfill-plan.json" --md "$EV/backfill-plan.md"
+    step cli-backfill-preview-check bash -c "grep -qF 'src/锚点模块.ts' '$EV/backfill-plan.json' && grep -qF '| ancrepo |' '$EV/backfill-plan.md'"
+    step cli-backfill-apply env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/scripts/backfill-decision-anchors.ts" apply --plan "$EV/backfill-plan.json" --ids "$ANC_BF"
+    step cli-backfill-apply-check bash -c "(cd '$ANC_REPO' && env HOME='$FAKE_HOME' AB_HOME='$ANC_AB' AGENTBRAIN_HOME='$ANC_AB' AB_REGISTRY='$ANC_REG' node '$ROOT/src/cli.ts' get '$ANC_BF') > '$EV/cli-backfill-get.log' 2>&1 && grep -qF 'src/锚点模块.ts' '$EV/cli-backfill-get.log' && grep -qF '未确认' '$EV/cli-backfill-get.log'"
+    kill $ANC_PID 2>/dev/null || true
 
     # 9. 生命周期：correct / archive / guidance（memory.md）
     step cli-correct env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" correct "$ID" --text "测试全局规范：验证先于声明完成（改后）" --summary "验证规范" --confirmed

@@ -22,6 +22,7 @@ export const BODY_KINDS: readonly PropKind[] = ["decision", "note", "pitfall"];
 export const BODY_MAX_CHARS = 40000;
 export const ALTERNATIVES_MAX = 5;
 export const ALTERNATIVE_FIELD_MAX_CHARS = 200;
+export const ANCHORS_MAX = 5;
 export type Host = "claude" | "codex" | "pi" | "opencode" | "agy";
 /** 只表示条目还在不在用；可信程度另看 confirmed / confirmed_by（visibility.ts 的 trustOf）。候选区已去掉（§8.8）。 */
 export type PropState = "active" | "archived" | "superseded";
@@ -139,6 +140,10 @@ export interface RememberBody extends ModelProvenance {
   body?: string;
   /** 讨论时否定掉的方案（§8.11.2）：只有决定能带。 */
   alternatives?: Alternative[];
+  /** 代码路径锚点（§9.7.7）：仓内相对路径或 <repo>:<relpath>，最多 ANCHORS_MAX 个。 */
+  anchors?: string[];
+  /** 写锚点时解析出的基准提交 SHA。 */
+  anchor_head?: string;
 }
 
 /** detail 事件：给已有条目补上原来没有的详情（§8.11.2）。不换 id、不改确认状态和关联。 */
@@ -205,10 +210,12 @@ export interface UnconfirmBody {
   note?: string;
 }
 
-/** tag 事件：只改元数据标记，不改正文。scenes 整组替换，[] 清空；没给这个字段就不动。 */
+/** tag 事件：只改元数据标记，不改正文。scenes / anchors 整组替换，[] 清空；没给这个字段就不动。 */
 export interface TagBody {
   guidance?: boolean;
   scenes?: Scene[];
+  anchors?: string[];
+  anchor_head?: string;
 }
 
 /** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
@@ -278,6 +285,10 @@ export interface Proposition {
   guidance: boolean;
   /** 场景标签（§11.10）；旧数据缺字段为 []。 */
   scenes: Scene[];
+  /** 代码路径锚点（§9.7.7）；旧数据缺字段为 []。 */
+  anchors: string[];
+  /** 代码锚点基准提交 SHA；没有为 null。 */
+  anchor_head: string | null;
   /** 话题沉淀（§8.6）写入的条目：所属运行 id（ab work --undo 用）。 */
   topic_run?: string;
   /** 被 unconfirm 撤销过自动转正的原因；用户再确认后清空。 */
@@ -397,6 +408,8 @@ export function fold(rows: EventRow[]): Projection {
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         scenes: Array.isArray(b.scenes) ? b.scenes : [],
+        anchors: Array.isArray(b.anchors) ? b.anchors : [],
+        anchor_head: typeof b.anchor_head === "string" ? b.anchor_head : null,
         demoted: null,
         value: b.value ?? null,
         written_by: who,
@@ -466,6 +479,10 @@ export function fold(rows: EventRow[]): Projection {
       if (typeof b.guidance === "boolean") target.guidance = b.guidance;
       // 按字段是否出现更新：没给 scenes 不动，给 [] 才清空
       if (Array.isArray(b.scenes)) target.scenes = b.scenes;
+      if (Array.isArray(b.anchors)) {
+        target.anchors = b.anchors;
+        target.anchor_head = b.anchors.length ? (typeof b.anchor_head === "string" ? b.anchor_head : target.anchor_head) : null;
+      }
       continue;
     }
     if (r.kind === "evidence") {
@@ -602,11 +619,76 @@ export function checkBodyField(kind: PropKind, body: string | undefined): string
   return clean;
 }
 
+export function parseAnchor(anchor: string): { repo: string | null; path: string } {
+  const idx = anchor.indexOf(":");
+  return idx < 0 ? { repo: null, path: anchor } : { repo: anchor.slice(0, idx), path: anchor.slice(idx + 1) };
+}
+
+export function normalizeAnchor(raw: string): string {
+  if (typeof raw !== "string" || /[\0\r\n]/.test(raw)) throw new Error(`无效的代码锚点: ${String(raw)}`);
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error("代码锚点不能为空");
+  if (secretKinds(raw).length > 0 || secretKinds(trimmed).length > 0) throw new Error("代码锚点里含密钥，先删掉再记");
+  if (trimmed.startsWith("-") || trimmed.startsWith(":")) throw new Error(`代码锚点不能以 ${trimmed[0]} 开头: ${trimmed}`);
+  if (trimmed.endsWith("/") || trimmed.endsWith("\\")) throw new Error(`代码锚点不能是目录路径: ${trimmed}`);
+  if (/^[A-Za-z]:[/\\]/.test(trimmed)) throw new Error(`代码锚点不能是 Windows 盘符路径: ${trimmed}`);
+
+  let repo: string | null = null;
+  let relRaw = trimmed;
+  const colon = trimmed.indexOf(":");
+  if (colon >= 0) {
+    repo = trimmed.slice(0, colon);
+    relRaw = trimmed.slice(colon + 1);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repo)) throw new Error(`跨仓锚点的项目名非法: ${repo}`);
+    if (!relRaw.trim()) throw new Error(`跨仓锚点缺少相对路径: ${trimmed}`);
+    if (relRaw.includes(":")) throw new Error(`代码锚点相对路径不能包含冒号: ${trimmed}`);
+  }
+  if (relRaw.startsWith("/") || relRaw.startsWith("\\")) throw new Error(`代码锚点必须是相对路径: ${trimmed}`);
+  if (relRaw.startsWith("-")) throw new Error(`代码锚点相对路径不能以 - 开头: ${trimmed}`);
+  if (relRaw.endsWith("/") || relRaw.endsWith("\\")) throw new Error(`代码锚点不能是目录路径: ${trimmed}`);
+
+  const rawSegs = relRaw.split(/[\\/]+/);
+  if (rawSegs.some((seg) => seg === ".." || seg === ".git")) throw new Error(`代码锚点不允许包含 .. 或 .git: ${trimmed}`);
+  const segs = rawSegs.filter((seg) => seg !== "" && seg !== ".");
+  if (!segs.length) throw new Error(`代码锚点路径为空: ${trimmed}`);
+  const cleanPath = segs.join("/");
+  if (cleanPath.startsWith("-")) throw new Error(`代码锚点相对路径不能以 - 开头: ${trimmed}`);
+  return repo !== null ? `${repo}:${cleanPath}` : cleanPath;
+}
+
+export function checkAnchors(anchors: string[] | undefined): string[] | undefined {
+  if (anchors === undefined) return undefined;
+  if (!Array.isArray(anchors)) throw new Error("anchors 必须是字符串数组");
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of anchors) {
+    const clean = normalizeAnchor(raw);
+    if (!seen.has(clean)) {
+      seen.add(clean);
+      out.push(clean);
+    }
+  }
+  if (out.length > ANCHORS_MAX) throw new Error(`代码锚点最多 ${ANCHORS_MAX} 个，收到 ${out.length} 个`);
+  return out;
+}
+
+export function checkAnchorHead(head: string | undefined): void {
+  if (head === undefined) return;
+  if (typeof head !== "string" || !/^[0-9a-f]{7,40}$/.test(head)) {
+    throw new Error(`无效的 anchor_head: ${String(head)}`);
+  }
+}
+
 /** 写 remember 事件前的检查：种类、长度、密钥、脱敏。违反的抛错，调用方（CLI）报错退出；通过时就地换成脱敏后的字段。 */
 export function checkRememberBody(b: RememberBody): void {
   const body = checkBodyField(b.kind, b.body);
   if (body !== undefined) b.body = body;
   checkAlternatives(b.kind, b.alternatives);
+  if (b.anchors !== undefined) {
+    const checked = checkAnchors(b.anchors);
+    b.anchors = checked?.length ? checked : undefined;
+  }
+  checkAnchorHead(b.anchor_head);
   scanSecret("正文", b.text);
   scanSecret("背景", b.why);
   for (const e of b.evidence ?? []) scanSecret("原话", e.quote);
@@ -616,6 +698,18 @@ export function checkRememberBody(b: RememberBody): void {
     option: sanitize(a.option).text,
     rejected_because: sanitize(a.rejected_because).text,
   }));
+}
+
+/** 写 tag 事件前的检查与规范化（anchors=[] 为合法清空操作）。 */
+export function checkTagBody(b: TagBody): void {
+  if (b.guidance !== undefined && typeof b.guidance !== "boolean") throw new Error("guidance 必须是布尔值");
+  if (b.scenes !== undefined) {
+    if (!Array.isArray(b.scenes) || b.scenes.some((s) => !(SCENES as readonly string[]).includes(s))) {
+      throw new Error(`scenes 必须是 ${SCENES.join("|")} 的数组`);
+    }
+  }
+  if (b.anchors !== undefined) b.anchors = checkAnchors(b.anchors);
+  checkAnchorHead(b.anchor_head);
 }
 
 /** 写 detail 事件前的检查与脱敏。目标种类和原话条数由调用方从投影里取。 */
