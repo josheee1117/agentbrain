@@ -1569,7 +1569,7 @@ ab view 卡片:
 
 验收：固定 12 对人工标注样例，覆盖范围收窄/放宽各 2 对、已同步历史的重复/补充各 2 对、真正当前冲突 2 对、范围不明 2 对。每条启用路径各跑一遍，12 对关系正确且目标引用正确，历史组零冲突。对已确认、未确认目标各测试一次落 L1、投影、`ab get` 与 `ab view`；改动只能是新提议、关系与展示标记，目标正文、范围和确认状态逐字段不变。再追加跨会话印证、用户只确认提议、归档提议、显式 resolution，检查只有后两类用户处置能解除提醒。删 L3 重建后同样成立。对全局与项目、子代理读取分别验证，不可读提议不得泄漏正文或 id。
 
-### 9.7 代码变更驱动的记忆重核与需求收口更新（CANDIDATE，2026-11-23 定稿，2026-11-25 实测修订；单 1、2 已授权实现）
+### 9.7 代码变更驱动的记忆重核与需求收口更新（CANDIDATE，2026-11-23 定稿，2026-11-25 实测修订；单 1、2、3 已授权，每日扫描已启用）
 
 > 来源：用户 2026-11-23 提出「需求做完后知识库要在某个节点自动更新，要解决粒度、核验和各层联动」。原方案经 Claude Opus 与 Gemini Neon 两轮评审定稿，记录在 pm `docs/agentbrain/2026-11-23-kb-change-reverify/`（`final-plan.md` 与 `reviews/`）。2026-11-25 在正式库只读副本、隔离沙箱与 6 个近期真实交付需求上实测复核后，补齐了 cherry-pick 非祖先平移、标识符共变预筛、存量决定补锚点、`quotepath=false`，以及用户拍板同意的三项补充（需求收口正向提炼、未确认草稿退场、pm 侧收尾门禁），拆为 6 张单按单逐张授权推进。本节写 agentbrain 侧设计与两仓拆单总账；pm 侧实现落 pm 仓库。
 
@@ -1586,7 +1586,7 @@ ab view 卡片:
 | 5 | 入队项不走 §12.6.12 的退避，只比 `last.head === head`；无法核验和证据不足的条目会随每次无关提交重新入队 | `verifyStep`（`src/work.ts`） |
 | 6 | 仅靠单会话自动抽取会产生大量相互矛盾的未确认过程草稿且漏抽需求最终决定；同一需求内新草稿写 `supersedes` 后，旧未确认草稿仅挂 `pending_corrections` 仍占召回与待确认视图 | `fold`（`src/l2.ts`）、`recallable`（`src/visibility.ts`） |
 
-单 2 已实现断点 2、4、5 的修补。队列接受无代码证据的条目和决定，核验读取只读主干提交，入队项遵守无法核验与证据不足退避。首次未确认的决定核验仍留给单 3。每日扫描默认关闭，不能把代码合入当成正式库首扫授权。
+单 2 已实现断点 2、4、5 的修补。队列接受无代码证据的条目和决定，核验读取只读主干提交，入队项遵守无法核验与证据不足退避。首次未确认的决定核验仍留给单 3。2026-11-26 用户在审查 `/tmp` 回放报告后批准开启 `AUTO_CHANGE_SCAN_ENABLED = true`，并授权开始实现单 3。
 
 #### 9.7.2 和原方案相比
 
@@ -1652,7 +1652,7 @@ pm 实测：273 条有引文，54 个不同 head，命中 160 条，约 0.35 秒
 
 | 入口 | 做法 |
 |---|---|
-| `ab work --sweep`（主，反向） | 每个项目每天最多扫一次，不联网，用本地已有的 ref；扫描日记在 `work_meta` 的 `verify_scan_day:<project>`。**代码合入时默认关**，正式库首扫经用户放行后才打开 |
+| `ab work --sweep`（主，反向） | 每个项目每天最多扫一次，不联网，用本地已有的 ref；扫描日记在 `work_meta` 的 `verify_scan_day:<project>`。2026-11-26 用户批准正式库首扫后已开启 `AUTO_CHANGE_SCAN_ENABLED = true` |
 | pm `tools/req log <需求> 上线 --lane <线>`（加速，反向） | 按 `lane.repo` 在后台另起进程跑 `git fetch origin <主干> && ab verify --changed <repo>`，限时 15 秒，失败写 `work.log`，不影响 `req log` 的退出码。多仓需求按线逐仓触发 |
 | 需求收口正向提炼（`ab synthesize`，单 4） | `pm tools/req log <需求> 清灶` 后（或手动执行 `ab synthesize <project> --spec <文件>... [--diff-base <ref>]`）单次调模型，输入需求定谱/README/ADR、`git -c core.quotepath=false diff --stat` 与命中路径/主题的存量记忆，产出 ≤3 条带合法 `anchors` 与可选 `supersedes` 的**未确认候选**写入 L1，终端打印候选确认指令与同主题未确认过程草稿清理提示；不自动转正、不自动归档 |
 | 手动 | `ab verify --changed <project>`、`ab verify <id>`、`ab synthesize ...` |
@@ -1691,7 +1691,7 @@ work_meta: "verify_scan_day:<project>" → "YYYY-MM-DD"
 |---|---|---|---|
 | **1 止损护栏与草稿退场**（2026-11-25 已授权开始实现） | agentbrain | 9.7.5 注入规则（brief、召回、常驻偏好、status、展示）、`ab confirm` `override_stale`、未确认 `extract` 草稿 `superseded_draft` 投影与过滤、`ab verify <id> [--ref]`（含只读 ref 工具与决定不自动转正） | 三类确认来源与未确认条被标 `stale` 后，brief/recall/guidance 与 `inject_log` 符合上表；`ab confirm` 一键清 `stale` 并防同 head 复发；`ab verify <id> [--ref]` 不改脏工作区且决定不转正；未确认草稿退场可逆且绝不伤及已确认条目 |
 | **2 变更驱动重核**（2026-11-25 已授权开始实现） | agentbrain | 只读 `--ref`、trunk-ref 选取、9.7.3 三分支非祖先基线判定、9.7.4 `±3 行 OR 标识符共变` 预筛、`-c core.quotepath=false`、修断点 2/4/5、`ab verify --changed`、sweep 每日一次（默认关） | 负例：改无关行且无标识符命中 0 入队；删文件/改常量/远距离改同标识符必入队；非 cherry-pick 未合入分支和 gitignore 路径不入队；cherry-pick 原文完好自动平移基线；原目录停在别分支有脏改动仍按主干核。在 `/tmp` 副本回放 pm ADR 0033、0034 与 cherry-pick 仓库，报压缩比与漏报率 |
-| **3 锚点、决定核验与存量补锚点**（待单独授权） | agentbrain | `anchors` / `anchor_head`、`--anchor`、决定纳入核验但不自动转正；一次性离线脚本为存量 ~321 条项目级 `decision` 生成补锚点预览单，经用户确认后写入 `tag` 事件 | 锚点格式校验（含中文路径）、跨仓匹配、决定入队消费不转正；存量回填预览单幂等生成与用户确认写入 |
+| **3 锚点、决定核验与存量补锚点**（2026-11-26 已授权开始实现） | agentbrain | `anchors` / `anchor_head`、`--anchor`、决定纳入核验但不自动转正；一次性离线脚本为存量 ~321 条项目级 `decision` 生成补锚点预览单，经用户确认后写入 `tag` 事件 | 锚点格式校验（含中文路径）、跨仓匹配、决定入队消费不转正；存量回填预览单幂等生成与用户确认写入 |
 | **4 需求收口正向提炼**（待单独授权） | agentbrain | `ab synthesize` CLI 与结构化提炼流程（喂入定谱/ADR、`diff --stat`、存量记忆，产出 ≤3 条带锚点未确认候选 + 草稿清理提示） | 隔离库回放真实已收尾需求：产出 ≤3 条候选、锚点 100% 合法、可提 `supersedes` 但零自动转正/零自动归档 |
 | **pm-1 流程接线**（不在本仓） | pm | `req log 上线` 后台 `ab verify --changed` 加速器；`req log 清灶` 接 `ab synthesize`；拆线/初验模板补活文档与候选决定锚点提示 | 由 pm 验收（`ab` 不可用时 `req log` 照常） |
 | **pm-2 收尾机械门禁与忽略告警**（不在本仓） | pm | `req log 清灶` / `pm_tidy.py` 零模型检查：`README.md`「可复用」禁止留模板占位词、`repos/*.md` 禁多段 `## 现状` 堆叠且超 7 天告警；`verify-status` 发现 `.gitignore` 忽略 `.agents/skills/verify-*` 时报错 | 由 pm 验收（临时仓库与真实档案校验通过） |
@@ -3324,6 +3324,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-26 用户审查 `ab-2` `/tmp` 回放报告（`0/10` 漏报）后批准开启 `AUTO_CHANGE_SCAN_ENABLED = true` 并授权启动单 3（`ab-3`）；启用每日本地变更扫描常驻开关并更新对应单测与文档状态，随后快进合入常驻入口 `docs/agentbrain-v2-design`。
 
 - 2026-11-25 按 fix-ab2-review 修复单 2。只有 `verified` 或 `shifted` 的核验记录可作基线，证据不足退避到期后仍从代码证据提交比较，避免删除或断裂引文漏检。非法路径逐条跳过，全非法引文计入未跟踪路径，不平移基线。ab-1 与 ab-2 的真实 CLI 用例各用独立临时环境，验证脚本分别执行并记录证据。删除未产出的 anchor 优先级、冗余单侧提交分支及单处调用的仓库包装。每日自动扫描仍关闭，不改 L2 或存储结构。
 

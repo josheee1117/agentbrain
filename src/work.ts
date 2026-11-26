@@ -48,7 +48,7 @@ const PROJECT_DOCS_MAX_CHARS = 6000;
 const REGISTRY_MAX_CHARS = 3000;
 const CONFIRMED_MAX_CHARS = 3000;
 export const MAX_VERIFY_PER_RUN = 3;
-export const AUTO_CHANGE_SCAN_ENABLED = false;
+export const AUTO_CHANGE_SCAN_ENABLED = true;
 const VERIFY_RECHECK_MS = 24 * 3_600_000;
 /** 证据不足后再核的间隔：第 1 次 1 天，然后 2、4 天，之后保持 8 天（§12.6.12）。 */
 export const VERIFY_BACKOFF_DAYS = [1, 2, 4, 8];

@@ -1230,7 +1230,7 @@ test("ab-2 sweep 的核验读取主干提交，不读测试分支或脏工作区
   assert.doesNotMatch(chat.calls.flatMap(ms => ms.filter(m => m.role === "tool").map(m => m.content)).join("\n"), /999/);
 });
 
-test("ab-2 sweep 本地扫描默认关，显式开启每天一次，跨天再扫，坏项目不挡其他项目", async () => {
+test("ab-2 sweep 本地扫描默认开，显式关闭不扫，每天一次，跨天再扫，坏项目不挡其他项目", async () => {
   const e = env();
   const id = unconfirmed(e, "向量门槛 VEC_MIN_SIM 是 0.45", { confirmed: true });
   const head = execFileSync("git", ["-C", e.repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
@@ -1239,20 +1239,20 @@ test("ab-2 sweep 本地扫描默认关，显式开启每天一次，跨天再扫
   execFileSync("git", ["-C", e.repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "bump"]);
   let now = new Date("2026-11-25T12:00:00Z");
   const deps = e.deps(null, { now: () => now, registry: [{ name: "bad", path: join(e.dir, "missing") }, { name: "alpha", path: e.repo }] });
-  await runWork(deps, { sweep: true, dryRun: false });
+  await runWork(deps, { sweep: true, dryRun: false, changeScan: false });
   assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), null);
   assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
-  await runWork(deps, { sweep: true, dryRun: true, changeScan: true });
+  await runWork(deps, { sweep: true, dryRun: true });
   assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), null);
-  const r = await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  const r = await runWork(deps, { sweep: true, dryRun: false });
   assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), intake.localDay(now));
   assert.equal(intake.queuedReverify(e.store.workDb).has(id), true);
   assert.ok(r.problems.some(p => p.includes("bad")));
   intake.dequeueReverify(e.store.workDb, id);
-  await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  await runWork(deps, { sweep: true, dryRun: false });
   assert.equal(intake.queuedReverify(e.store.workDb).size, 0);
   now = new Date("2026-11-26T12:00:00Z");
-  await runWork(deps, { sweep: true, dryRun: false, changeScan: true });
+  await runWork(deps, { sweep: true, dryRun: false });
   assert.equal(intake.meta(e.store.workDb, "verify_scan_day:alpha"), intake.localDay(now));
   assert.equal(intake.queuedReverify(e.store.workDb).has(id), true);
 });
