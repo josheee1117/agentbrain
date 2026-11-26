@@ -32,6 +32,7 @@ export function writtenLine(p: Proposition): string {
   const sid = p.session_id ? p.session_id.slice(0, 8) : null;
   const via =
     p.origin === "extract" ? `后台抽取，来自 ${p.source.host ?? "未知宿主"} 会话 ${sid ?? "?"}`
+    : p.origin === "auto" ? "需求收口提炼"
     : p.origin === "import" ? "导入"
     : p.origin === "curate" ? "审稿改写"
     : sid ? `在 ${p.source.host ?? "agent"} 会话 ${sid} 里执行` : "不在 agent 会话里执行";

@@ -4,8 +4,8 @@
  * 预算类数字是代码常量（§2.2），零配置键。
  */
 import { parseArgs } from "node:util";
-import { homedir } from "node:os";
-import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { Store, tighten, type Embedder } from "./store.ts";
@@ -23,6 +23,7 @@ import { GitRefRepoTools, RepoTools, verifyProposition, VERIFY_PROMPT_VERSION } 
 import { allowedTranscript } from "./transcript-file.ts";
 import { BACKLOG_WINDOWS_PER_SWEEP, RELATE_BATCH, RELATE_SIM, RELATE_TOP, nextVerifyOutcome, piSessionId, runWork, verifyQueuedForProject, type WorkDeps } from "./work.ts";
 import { resolveTrunkRef, scanChangedProject } from "./changeverify.ts";
+import { synthesizeProject } from "./synthesize.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
@@ -125,7 +126,7 @@ function ownershipLine(p: Proposition, names: Map<string, string>): string {
 /** 读路径标记：确认来源（§12.6.7 T2，每条都标）、自动沉淀、归属未定、关系未判定（§9.4.4）、与代码不符。 */
 function marks(p: Proposition): string {
   return [
-    p.confirmed ? trustMark(p) : p.origin === "extract" ? "[未确认·自动沉淀]" : "[未确认]",
+    p.confirmed ? trustMark(p) : p.origin === "extract" ? "[未确认·自动沉淀]" : p.origin === "auto" ? "[未确认·收口提炼]" : "[未确认]",
     unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
     p.stale ? "[与代码不符]" : "",
@@ -771,7 +772,7 @@ function cmdGet(argv: string[]): void {
       : [];
     const quotes = quoteLines(p);
     const linesOut = [
-      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : " 未确认（agent 自记）"}${unresolvedMark(p)}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
+      `[${short(p.id)}] ${SCOPE_LABEL(p, names)} ${KIND_LABEL[p.kind]}${stateMark}${p.confirmed ? "" : p.origin === "extract" ? " 未确认（自动沉淀）" : p.origin === "auto" ? " 未确认（收口提炼）" : " 未确认（agent 自记）"}${unresolvedMark(p)}${p.unreconciled ? " 关系未判定" : ""}: ${p.text}`,
       confirmedLine(p),
       writtenLine(p),
       p.expired ? `到期未确认，已归档（撤销用 ab archive --reactivate ${short(p.id)}）` : "",
@@ -1039,6 +1040,138 @@ async function cmdVerify(argv: string[]): Promise<void> {
     const after = store.project().props.get(p.id)!;
     console.log(`核验 [${short(p.id)}] ${result.verdict} @${head.slice(0, 7)}${!p.confirmed && !after.confirmed && result.verdict === "verified" ? "，不自动转正" : ""}`);
   } finally { store.close(); }
+}
+
+function openReadOnlySnapshot(root: string): { store: Store; cleanup: () => void } {
+  const storeFile = join(root, "store.db");
+  if (!existsSync(storeFile)) {
+    const store = new Store(":memory:", ":memory:");
+    return { store, cleanup: () => store.close() };
+  }
+  const tmpDir = mkdtempSync(join(tmpdir(), "ab-synth-ro-"));
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const src = `${storeFile}${suffix}`;
+    if (existsSync(src)) copyFileSync(src, join(tmpDir, `store.db${suffix}`));
+  }
+  const store = new Store(join(tmpDir, "store.db"), ":memory:");
+  return {
+    store,
+    cleanup: () => {
+      store.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    },
+  };
+}
+
+async function cmdSynthesize(argv: string[]): Promise<void> {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      spec: { type: "string", multiple: true, default: [] },
+      "diff-base": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  const specs = values.spec as string[];
+  if (positionals.length !== 1 || !specs.length) {
+    die(`用法: ab synthesize <项目> --spec <文件>... [--diff-base <ref>] [--dry-run] [--json]\n${usageFor("synthesize")}`);
+  }
+  const projectName = positionals[0];
+  const registry = loadRegistry();
+  const entry = registry.find((e) => e.name === projectName);
+  if (!entry) die(`未登记项目：${projectName}\n${usageFor("synthesize")}`);
+  if (!entry.path) die(`项目 ${entry.name} 没有本地仓库路径`);
+  try {
+    realpathSync(entry.path);
+  } catch {
+    die(`本地项目仓库不可用：${entry.path}`);
+  }
+
+  const cfg = loadChatConfig(home());
+  if ("error" in cfg) die(`沉淀模型配置不可用：${cfg.error}`);
+  const base = chatChain(cfg, readKey, (c, k) => chatClient(c, k, undefined));
+  if ("error" in base) die(`沉淀模型不可用：${base.message}`);
+  let model = base.model;
+  const chat: Chat = async (messages, opts) => {
+    const r = await base.chat(messages, opts);
+    if (r.model) model = r.model;
+    return r;
+  };
+
+  const dryRun = values["dry-run"] === true;
+  const handle = dryRun ? openReadOnlySnapshot(home()) : (() => {
+    const s = open();
+    return { store: s, cleanup: () => s.close() };
+  })();
+
+  try {
+    const found = detectHost();
+    const det = found.ok ? found.detection : null;
+    const source: SourcePointer = {
+      host: det?.host ?? null,
+      session_id: det?.session_id ?? null,
+      transcript: det?.transcript ?? null,
+      anchor: det?.transcript && det ? latestAnchor(det.host, det.transcript) : null,
+      summary: "ab synthesize 需求收口综合沉淀",
+    };
+
+    let result;
+    try {
+      result = await synthesizeProject({
+        store: handle.store,
+        project: projectName,
+        registry,
+        specs,
+        diffBase: values["diff-base"],
+        dryRun,
+        chat,
+        model,
+        source,
+        updateVectors: dryRun ? undefined : updateVectors,
+      });
+    } catch (e) {
+      die((e instanceof Error ? e.message : String(e)).split("\n")[0]);
+    }
+
+    if (values.json) {
+      console.log(JSON.stringify(result));
+      return;
+    }
+
+    const lines: string[] = [
+      `${result.dryRun ? "预演，未写入。" : ""}项目 ${result.project}（HEAD @${result.head.slice(0, 7)}，模型 ${result.model}，提示词 ${result.promptVersion}${result.truncated ? "，spec 已截断" : ""}）`,
+    ];
+    if (!result.created.length) {
+      lines.push(`没有提炼出新的项目决定（跳过 ${result.skipped.length} 条）。`);
+    } else {
+      lines.push(`产出 ${result.created.length} 条未确认决定（绝不自动转正/归档）：`);
+      for (const item of result.created) {
+        lines.push(`  ${item.id ? `[${short(item.id)}]` : "[预演]"} 决定[未确认·收口提炼]: ${item.text}`);
+        lines.push(`    锚点（基准 ${item.anchorHead.slice(0, 7)}）: ${item.anchors.join("；")}`);
+        if (item.why) lines.push(`    为什么: ${item.why}`);
+        if (item.supersedes) lines.push(`    拟替代: [${short(item.supersedes)}]（未确认前不盖掉旧条目）`);
+        if (!result.dryRun && item.id) lines.push(`    确认用: ab confirm ${short(item.id)}`);
+      }
+    }
+    if (result.skipped.length) {
+      lines.push(`跳过 ${result.skipped.length} 条:`);
+      for (const s of result.skipped) lines.push(`  - ${s.text}（${s.reason}）`);
+    }
+    if (result.draftHints.length) {
+      lines.push(`同项目未确认草稿/待处理条目 ${result.draftHints.length} 条（未自动修改或归档）：`);
+      for (const h of result.draftHints) {
+        lines.push(`  [${h.shortId}] ${KIND_LABEL[h.kind]}（${h.reasons.join("、")}）: ${h.text}`);
+      }
+      lines.push("清理提示：认可保留用 ab confirm <id>；废案归档用 ab archive <id>");
+    }
+    if (result.vectorWarning) lines.push(`向量未更新：${result.vectorWarning}`);
+    console.log(lines.join("\n"));
+  } finally {
+    handle.cleanup();
+  }
 }
 
 function cmdArchive(argv: string[]): void {
@@ -1767,6 +1900,8 @@ const USAGE = `用法:
                                     只读主干扫描变更，默认最多入队 20 条；--run 持租约同步核 3 条，--dry-run 不写入
   ab verify <id 前缀> [--ref <git-ref>]
                                     强制单条代码重核；--ref 只读目标提交，不切分支或改工作区；决定不自动转正
+  ab synthesize <项目> --spec <文件>... [--diff-base <ref>] [--dry-run] [--json]
+                                    需求收口综合沉淀：结合文档与 git diff 提炼 ≤3 条带锚点未确认决定；--dry-run 零写库
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
   ab tag <id 前缀> [--scene <design,code,review|none>] [--anchor <路径>… | --anchor none]
@@ -1968,6 +2103,7 @@ async function main(): Promise<void> {
     if (cmd === "get") return cmdGet(rest);
     if (cmd === "confirm") return cmdConfirm(rest);
     if (cmd === "verify") return await cmdVerify(rest);
+    if (cmd === "synthesize") return await cmdSynthesize(rest);
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "tag") return cmdTag(rest);
     if (cmd === "guidance") return cmdGuidance(rest);

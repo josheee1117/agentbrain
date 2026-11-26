@@ -44,7 +44,7 @@ export interface SourcePointer {
 
 /** 切片 3：这条记忆从哪种依据抽出来（§8.2）。user_* 必须引用户原话，observed_failure 必须引工具输出。 */
 export type Basis = "user_directive" | "user_confirmed" | "observed_failure" | "agent_inference";
-export type Origin = "manual" | "extract" | "import" | "curate";
+export type Origin = "manual" | "extract" | "import" | "curate" | "auto";
 /** 从外部知识库导入的出处（§21 2026-10-13 Pensieve 导入）：原文件路径与内容哈希，重导时据此判断是否变更。 */
 export interface ImportRef {
   system: "pensieve";
@@ -391,7 +391,7 @@ export function fold(rows: EventRow[]): Projection {
         unreconciled: b.unreconciled === true,
         confirmed_by: b.confirmed !== false ? "user" : null,
         extra_sources: [],
-        model_outputs: b.origin === "extract" || b.origin === "curate" || b.topic || b.model !== undefined || b.prompt_version !== undefined
+        model_outputs: b.origin === "extract" || b.origin === "curate" || b.origin === "auto" || b.topic || b.model !== undefined || b.prompt_version !== undefined
           ? [{ event_id: r.id, kind: "remember", model: b.model ?? b.topic?.model ?? null, prompt_version: b.prompt_version ?? b.topic?.prompt_version ?? null }]
           : [],
         code_evidence: null,

@@ -11,7 +11,7 @@ import type { ChatMessage } from "./llm.ts";
 
 const CLI = join(import.meta.dirname, "cli.ts");
 
-for (const suite of ["ab-1", "ab-2", "ab-3"]) test(`${suite} 真实 CLI：${suite === "ab-3" ? "锚点、跨仓扫描与决定核验" : "stale 确认与变更重核"}`, async (t) => {
+for (const suite of ["ab-1", "ab-2", "ab-3", "ab-4"]) test(`${suite} 真实 CLI：${suite === "ab-4" ? "ab synthesize 收口综合沉淀" : suite === "ab-3" ? "锚点、跨仓扫描与决定核验" : "stale 确认与变更重核"}`, async (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab1-cli-")));
   const home = join(dir, "home"), ab = join(dir, "ab"), repos = join(dir, "pm/repos"), repo = join(dir, "repo"), bin = join(dir, "bin");
   for (const p of [home, ab, repos, repo, bin]) mkdirSync(p, { recursive: true });
@@ -34,6 +34,7 @@ for (const suite of ["ab-1", "ab-2", "ab-3"]) test(`${suite} 真实 CLI：${suit
   writeFileSync(join(repo, "中文.ts"), "const CACHE_LIMIT = 999;\n");
   const current = git("rev-parse", "HEAD").trim(), dirty = git("status", "--porcelain=v1");
   let verdict = "verified", quote = "CACHE_LIMIT = 42", evidencePath = "中文.ts", httpStatus = 200;
+  let synthReply: unknown = { candidates: [] };
   const requests: { messages: ChatMessage[] }[] = [];
   const server = createServer(async (req, res) => {
     assert.equal(req.url, "/v1/chat/completions");
@@ -42,8 +43,11 @@ for (const suite of ["ab-1", "ab-2", "ab-3"]) test(`${suite} 真实 CLI：${suit
     const payload: { messages: ChatMessage[] } = JSON.parse(body);
     requests.push(payload);
     if (httpStatus !== 200) { res.writeHead(httpStatus); res.end("fixture model failure"); return; }
+    const isSynth = payload.messages.some(m => m.role === "system" && (m.content ?? "").includes("综合沉淀"));
     const tools = payload.messages.filter(m => m.role === "tool");
-    const message: ChatMessage = tools.length ? { role: "assistant", content: JSON.stringify({ verdict, evidence: [{ path: evidencePath, line_start: 1, quote }] }) }
+    const message: ChatMessage = isSynth
+      ? { role: "assistant", content: JSON.stringify(synthReply) }
+      : tools.length ? { role: "assistant", content: JSON.stringify({ verdict, evidence: [{ path: evidencePath, line_start: 1, quote }] }) }
       : { role: "assistant", content: null, tool_calls: [{ id: "read", type: "function", function: { name: "read_file", arguments: JSON.stringify({ path: evidencePath }) } }] };
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ choices: [{ message }], usage: { total_tokens: 10 } }));
@@ -75,7 +79,95 @@ for (const suite of ["ab-1", "ab-2", "ab-3"]) test(`${suite} 真实 CLI：${suit
     store.queueReverify([p.id], new Date());
   };
   try {
-    if (suite === "ab-3") {
+    if (suite === "ab-4") {
+    await t.test("ab-4 真实 CLI：ab synthesize 预演零写库、写库不转正、跨仓锚点、supersedes 与草稿清理提示", async () => {
+      const repo2 = join(dir, "repo2");
+      mkdirSync(repo2, { recursive: true });
+      const git2 = (...args: string[]) => execFileSync("git", ["-C", repo2, ...args], { env, encoding: "utf8" });
+      git2("init", "-qb", "main");
+      writeFileSync(join(repo2, "共享.ts"), "export const SHARED = 1;\n");
+      git2("add", "."); git2("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "repo2 init");
+      writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n- 主干：\`target\`\n`);
+      writeFileSync(join(repos, "repo2.md"), `- 路径：\`${repo2}\`\n- 主干：\`main\`\n`);
+
+      try {
+        const pid = store.ensureProject("testrepo");
+        const oldConfirmed = await remember("decision", "既有已确认决定", true);
+        const oldDraft = store.remember(pid, null, false, { kind: "decision", text: "既有过程草稿决定", origin: "extract", confirmed: false, source: { host: null, session_id: null, transcript: null, anchor: null, summary: "ab4" } });
+        const spec1 = join(dir, "spec1.md");
+        const spec2 = join(dir, "spec2.md");
+        writeFileSync(spec1, "# 收口定谱\n缓存阈值更新为 99。\n");
+        writeFileSync(spec2, "# 跨仓契约\n同步对齐 repo2:共享.ts。\n");
+
+        synthReply = {
+          candidates: [
+            {
+              kind: "decision",
+              text: "ab4 收口决定一：缓存阈值固定为 99",
+              why: "结合 spec 与 diff 落定",
+              anchors: ["./中文.ts", "repo2:共享.ts", "不存在.ts"],
+              alternatives: [{ option: "保持 42", rejected_because: "容量不足" }],
+              supersedes: oldDraft.slice(0, 8),
+            },
+            {
+              kind: "decision",
+              text: "ab4 无效锚点应跳过",
+              anchors: ["../escape.ts"],
+            },
+          ],
+        };
+
+        const eventsBefore = store.eventCount();
+        const dryJson = JSON.parse(await ok("synthesize", "testrepo", "--spec", spec1, "--spec", spec2, "--diff-base", "target", "--dry-run", "--json"));
+        assert.equal(dryJson.project, "testrepo");
+        assert.equal(dryJson.dryRun, true);
+        assert.equal(dryJson.created.length, 1);
+        assert.equal(dryJson.created[0].confirmed, false);
+        assert.equal(dryJson.created[0].origin, "auto");
+        assert.deepEqual(dryJson.created[0].anchors, ["中文.ts", "repo2:共享.ts"]);
+        assert.equal(dryJson.created[0].supersedes, oldDraft);
+        assert.equal(dryJson.skipped.length, 1);
+        assert.ok(dryJson.draftHints.some((h: { id: string }) => h.id === oldDraft));
+        assert.equal(store.eventCount(), eventsBefore);
+
+        const out = await ok("synthesize", "testrepo", "--spec", spec1, "--spec", spec2);
+        assert.match(out, /ab confirm [0-9a-f]{8}/);
+        assert.match(out, /ab archive <id>/);
+        const createdId = /\[([0-9a-f]{8})\] 决定\[未确认·收口提炼\]/.exec(out)?.[1];
+        assert.ok(createdId, out);
+        const createdProp = prop(createdId);
+        assert.equal(createdProp.confirmed, false);
+        assert.equal(createdProp.confirmed_by, null);
+        assert.equal(createdProp.origin, "auto");
+        assert.equal(createdProp.anchor_head, current);
+        assert.deepEqual(createdProp.anchors, ["中文.ts", "repo2:共享.ts"]);
+        assert.equal(createdProp.supersedes, oldDraft);
+        assert.equal(prop(oldConfirmed).confirmed, true);
+        assert.equal(prop(oldConfirmed).state, "active");
+        assert.equal(prop(oldDraft).state, "active");
+        assert.equal(prop(oldDraft).confirmed, false);
+
+        const getOut = await ok("get", createdId);
+        assert.match(getOut, /未确认（收口提炼）/);
+        assert.match(getOut, new RegExp(`代码锚点（基准 ${current.slice(0, 10)}）: 中文\\.ts；repo2:共享\\.ts`));
+        assert.match(getOut, /模型产出记录/);
+
+        // 错误参数单行/非 0 退出且不留堆栈
+        for (const badArgs of [
+          ["synthesize", "missing", "--spec", spec1],
+          ["synthesize", "testrepo"],
+          ["synthesize", "testrepo", "--spec", join(dir, "missing.md")],
+        ]) {
+          const r = await run(...badArgs);
+          assert.notEqual(r.status, 0, badArgs.join(" "));
+          assert.doesNotMatch(r.err, /\n\s+at |Node\.js v/);
+        }
+      } finally {
+        writeFileSync(join(repos, "testrepo.md"), `- 路径：\`${repo}\`\n`);
+        rmSync(join(repos, "repo2.md"), { force: true });
+      }
+    });
+    } else if (suite === "ab-3") {
     await t.test("ab-3 真实 CLI：--anchor 写入、继承、tag 清空、全局拦截、ab get 与跨仓 verify --changed --run", async () => {
       const repo2 = join(dir, "repo2");
       mkdirSync(repo2, { recursive: true });

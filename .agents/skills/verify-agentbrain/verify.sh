@@ -23,7 +23,7 @@ case "${1:-}" in
     chmod +x "$ISOLATED/bin/security"
     export HOME="$ISOLATED/home" AB_HOME="$ISOLATED/ab" AGENTBRAIN_HOME="$ISOLATED/ab" AB_REGISTRY="$ISOLATED/repos" PATH="$ISOLATED/bin:$PATH"
     unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE PI_SESSION_ID PI_SESSION_FILE PI_INTERCOM_SESSION_ID CLAUDE_SESSION_ID CODEX_SESSION_ID GEMINI_HOME ANTIGRAVITY_APP_DATA_DIR ANTIGRAVITY_CONVERSATION_ID
-    trap '[ -z "${XP_PID:-}" ] || kill "$XP_PID" 2>/dev/null || true; [ -z "${ANC_PID:-}" ] || kill "$ANC_PID" 2>/dev/null || true; rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
+    trap '[ -z "${XP_PID:-}" ] || kill "$XP_PID" 2>/dev/null || true; [ -z "${ANC_PID:-}" ] || kill "$ANC_PID" 2>/dev/null || true; [ -z "${SYNTH_PID:-}" ] || kill "$SYNTH_PID" 2>/dev/null || true; rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
@@ -42,6 +42,8 @@ case "${1:-}" in
     step cli-change-sweep node --test --test-name-pattern='ab-2|用前核对排队|§12.6.12' src/work.test.ts
     step anchors-unit node --test src/anchors.test.ts src/backfill-anchors.test.ts
     step cli-anchors-verify env AB1_EVIDENCE="$EV/anchors-verify" node --test --test-name-pattern="^ab-3" src/stale-cli.test.ts
+    step synthesize-unit node --test src/synthesize.test.ts
+    step cli-synthesize-e2e env AB1_EVIDENCE="$EV/synthesize-e2e" node --test --test-name-pattern="^ab-4" src/stale-cli.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
     S=$(realpath "$(mktemp -d "${TMPDIR:-/tmp}/verify-ab-XXXXXX")")
@@ -457,6 +459,66 @@ MOCK
     step cli-backfill-apply-idempotent env HOME="$FAKE_HOME" AB_HOME="$ANC_AB" AGENTBRAIN_HOME="$ANC_AB" AB_REGISTRY="$ANC_REG" node "$ROOT/scripts/backfill-decision-anchors.ts" apply --plan "$EV/backfill-plan.json" --ids "$ANC_BF"
     step cli-backfill-apply-idempotent-check bash -c "grep -qF 'applied=0，skipped=1' '$EV/cli-backfill-apply-idempotent.log'"
     kill $ANC_PID 2>/dev/null || true
+
+    # 8c. synthesize (ab-4): 隔离库 + 临时 Git 仓 + 本地 HTTP mock 实跑 --dry-run --json 与实写确认 confirmed===false / origin==="auto"
+    SYNTH_AB="$S/synth_ab"; SYNTH_REPO="$S/synth_repo"; SYNTH_REG="$S/synth_repos"; SYNTH_PORT="$S/synth-port"
+    mkdir -p "$SYNTH_AB" "$SYNTH_REPO/src" "$SYNTH_REG"
+    git -C "$SYNTH_REPO" init -qb main
+    printf 'export const V = 1;\n' > "$SYNTH_REPO/src/模块.ts"
+    git -C "$SYNTH_REPO" add . && git -C "$SYNTH_REPO" -c user.name=verify -c user.email=v@local commit -qm init
+    git -C "$SYNTH_REPO" checkout -qb feat
+    printf 'export const V = 2;\n' > "$SYNTH_REPO/src/模块.ts"
+    git -C "$SYNTH_REPO" add . && git -C "$SYNTH_REPO" -c user.name=verify -c user.email=v@local commit -qm bump
+    printf -- "- 路径：\`%s\`\n- 主干：\`main\`\n" "$SYNTH_REPO" > "$SYNTH_REG/synthrepo.md"
+    printf '# 需求定谱\n模块版本定为 2。\n' > "$S/synth-spec.md"
+    cat > "$S/synth-mock.mjs" <<'MOCK'
+import { createServer } from "node:http";
+import { writeFileSync } from "node:fs";
+const server = createServer((_req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify({
+    choices: [{
+      message: {
+        role: "assistant",
+        content: JSON.stringify({
+          candidates: [
+            { kind: "decision", text: "收口决定：模块版本定为 2", why: "verify mock", anchors: ["src/模块.ts"] }
+          ]
+        })
+      }
+    }],
+    usage: { total_tokens: 12 }
+  }));
+});
+server.listen(0, "127.0.0.1", () => writeFileSync(process.argv[2], String(server.address().port)));
+MOCK
+    node "$S/synth-mock.mjs" "$SYNTH_PORT" & SYNTH_PID=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$SYNTH_PORT" ] && break; sleep 0.3; done
+    printf '{"baseUrl":"http://127.0.0.1:%s/v1","model":"synth-mock"}\n' "$(cat "$SYNTH_PORT")" > "$SYNTH_AB/extract.json"
+    synth_ab(){ (cd "$SYNTH_REPO" && env HOME="$FAKE_HOME" AB_HOME="$SYNTH_AB" AGENTBRAIN_HOME="$SYNTH_AB" AB_REGISTRY="$SYNTH_REG" node "$ROOT/src/cli.ts" "$@"); }
+    step cli-synthesize-dry synth_ab synthesize synthrepo --spec "$S/synth-spec.md" --diff-base main --dry-run --json
+    step cli-synthesize-dry-check node -e "
+const fs = require('node:fs');
+const j = JSON.parse(fs.readFileSync('$EV/cli-synthesize-dry.log', 'utf8'));
+if (j.dryRun !== true || j.created.length !== 1 || j.created[0].confirmed !== false || j.created[0].origin !== 'auto') process.exit(1);
+if (fs.existsSync('$SYNTH_AB/store.db') || fs.existsSync('$SYNTH_AB/index.db')) { console.error('dry-run 不得创建库文件'); process.exit(1); }
+"
+    step cli-synthesize-write synth_ab synthesize synthrepo --spec "$S/synth-spec.md" --diff-base main --json
+    step cli-synthesize-write-check node -e "
+const fs = require('node:fs');
+const { DatabaseSync } = require('node:sqlite');
+const j = JSON.parse(fs.readFileSync('$EV/cli-synthesize-write.log', 'utf8'));
+if (j.dryRun !== false || j.created.length !== 1 || !j.created[0].id || j.created[0].confirmed !== false || j.created[0].origin !== 'auto') process.exit(1);
+const db = new DatabaseSync('$SYNTH_AB/store.db', { readOnly: true });
+const row = db.prepare('SELECT body FROM events WHERE id=?').get(j.created[0].id);
+db.close();
+const b = JSON.parse(row.body);
+if (b.confirmed !== false || b.origin !== 'auto' || !Array.isArray(b.anchors) || b.anchors[0] !== 'src/模块.ts') process.exit(1);
+"
+    SYNTH_CREATED_ID=$(node -e "const j=JSON.parse(require('fs').readFileSync('$EV/cli-synthesize-write.log','utf8'));console.log(j.created[0].id.slice(0,8))")
+    step cli-synthesize-get synth_ab get "$SYNTH_CREATED_ID"
+    step cli-synthesize-get-check bash -c "grep -qF '未确认（收口提炼）' '$EV/cli-synthesize-get.log' && grep -qF 'src/模块.ts' '$EV/cli-synthesize-get.log'"
+    kill $SYNTH_PID 2>/dev/null || true
 
     # 9. 生命周期：correct / archive / guidance（memory.md）
     step cli-correct env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" correct "$ID" --text "测试全局规范：验证先于声明完成（改后）" --summary "验证规范" --confirmed
