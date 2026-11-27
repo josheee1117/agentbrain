@@ -207,7 +207,7 @@ function gatherInboxItems(
       scope: scopeName(a.project_id, names),
       propKind: a.kind,
       text: oneLine(a.text),
-      action: `ab get ${short(a.id)} ${short(b.id)} | ab archive <id>`,
+      action: `ab get ${short(a.id)} ${short(b.id)} | ab relate ${short(a.id)} ${short(b.id)} --coexist | ab archive <id>`,
       pairIds: pair.ids,
       pairShortIds: [short(a.id), short(b.id)],
       otherScope: scopeName(b.project_id, names),
@@ -389,4 +389,77 @@ export function briefInboxBlock(
   if (lines.length === 1) return null;
   const out = lines.join("\n");
   return out.length <= BRIEF_INBOX_MAX_CHARS ? out : out.slice(0, BRIEF_INBOX_MAX_CHARS);
+}
+
+export interface NoiseRuleItem {
+  id: string;
+  shortId: string;
+  scope: string;
+  scenes: string[];
+  briefInjections: number;
+  cited: number;
+  citationRate: number;
+  text: string;
+  action: string;
+}
+
+/** 只读扫描高注入低引用（默认近 30 天 brief 注入 >= 100 且引用率 < 1%）的已确认非偏好规则，建议转按需或归档。 */
+export function collectNoiseRules(
+  store: Store,
+  opts: { days?: number; minBriefInjections?: number; maxCitationRate?: number; now?: Date } = {},
+): NoiseRuleItem[] {
+  const days = opts.days ?? 30;
+  const minBrief = opts.minBriefInjections ?? 100;
+  const maxRate = opts.maxCitationRate ?? 0.01;
+  const now = opts.now ?? new Date();
+  const since = new Date(now.getTime() - days * 86_400_000).toISOString();
+
+  const stats = new Map<string, { briefInj: number; cited: number }>();
+  const rows = store.workDb
+    .prepare(
+      `SELECT prop_id,
+              SUM(CASE WHEN path='brief' AND failed=0 THEN 1 ELSE 0 END) AS brief_inj,
+              SUM(CASE WHEN cited=1 AND failed=0 THEN 1 ELSE 0 END) AS cited
+       FROM inject_log
+       WHERE ts >= ?
+       GROUP BY prop_id`,
+    )
+    .all(since) as { prop_id: string; brief_inj: number; cited: number }[];
+  for (const r of rows) {
+    stats.set(r.prop_id, { briefInj: Number(r.brief_inj ?? 0), cited: Number(r.cited ?? 0) });
+  }
+
+  const names = new Map(store.listProjects().map((p) => [p.id, p.name]));
+  const out: NoiseRuleItem[] = [];
+  for (const p of store.project().props.values()) {
+    if (p.state !== "active" || !p.confirmed || p.kind !== "rule" || p.guidance || p.on_demand) continue;
+    const st = stats.get(p.id);
+    if (!st || st.briefInj < minBrief) continue;
+    const rate = st.cited / st.briefInj;
+    if (rate >= maxRate) continue;
+    out.push({
+      id: p.id,
+      shortId: short(p.id),
+      scope: scopeName(p.project_id, names),
+      scenes: [...p.scenes],
+      briefInjections: st.briefInj,
+      cited: st.cited,
+      citationRate: Number(rate.toFixed(4)),
+      text: oneLine(p.text),
+      action: `ab tag ${short(p.id)} --on-demand | ab archive ${short(p.id)}`,
+    });
+  }
+  out.sort((a, b) => b.briefInjections - a.briefInjections || a.citationRate - b.citationRate);
+  return out;
+}
+
+export function formatNoiseText(items: NoiseRuleItem[], days = 30): string {
+  if (!items.length) return `近 ${days} 天无高注入低引用噪音规则。`;
+  const lines = [`高注入低引用规则候选（近 ${days} 天 brief 注入 ≥100 且引用率 <1%，共 ${items.length} 条）：`];
+  for (const it of items) {
+    const sc = it.scenes.length ? ` scenes=${it.scenes.join(",")}` : "";
+    lines.push(`  [${it.shortId}] ${it.scope}${sc} · brief=${it.briefInjections}, cited=${it.cited} (${(it.citationRate * 100).toFixed(2)}%): ${oneLine(it.text, 72)}`);
+    lines.push(`    处理: ${it.action}`);
+  }
+  return lines.join("\n");
 }

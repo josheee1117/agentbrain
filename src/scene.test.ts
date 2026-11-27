@@ -151,10 +151,10 @@ test("跨项目隔离：同场景的规则只出现在自己的项目里（项�
   }
 });
 
-test("预算：通用段和场景段同时挤满，场景段正文不超 2000；请求的场景没有条目时总上限仍是 2000", () => {
+test("预算：通用段和场景段同时挤满，场景段正文不超场景预算；请求的场景没有条目时总上限仍是 2000", () => {
   const { s } = seeded();
   try {
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 80; i++) {
       s.remember(null, "s", false, { kind: "rule", text: `通用规则 ${i} ${"细节".repeat(20)}`, confirmed: true, source: src });
       s.remember(null, "s", false, { kind: "rule", text: `场景规则 ${i} ${"细节".repeat(20)}`, confirmed: true, scenes: ["code"], source: src });
     }
@@ -181,7 +181,7 @@ test("场景段有自己的预算，放不下给 ab search --scene 提示，总�
   const { s } = seeded();
   try {
     const text2id = new Map<string, string>();
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 80; i++) {
       const text = `开发规范 ${i} ${"细节".repeat(20)}`;
       text2id.set(text, s.remember(null, "s", false, { kind: "rule", text, confirmed: true, scenes: ["code"], source: src }));
     }

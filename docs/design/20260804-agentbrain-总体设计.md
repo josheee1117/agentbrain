@@ -1329,9 +1329,7 @@ basis 必须是 user_directive 或 user_confirmed，并提供可定位、可逐�
 - search、get、brief 都写"与 [x] 冲突"，和"有待确认的纠正 [y]"分开。
 - `ab status` 加一行：`冲突 N 对，最老 D 天，挂着期间被注入 M 次；处理：ab get 看双方，ab archive 错的一条`。年龄取这对最新冲突判定的时间，注入数取那之后的 `inject_log`（借鉴群友看板的"最老等待"）。
 
-**处理**：只留一条用 `ab archive`，替代用 `ab correct` 再 `ab confirm`，反悔用 `ab archive --reactivate` 或归档新纠正。归档是整条生效的，被归档那条跟别的记忆的冲突也一起消失，`ab get` 会列出它所有的冲突，处理前能看到。
-
-**代价**：两条在不同条件下都成立时没有专门出口。可以不处理（冲突继续标着），或用 `ab correct` 把条件写进新正文再确认。真的经常碰到再单独设计。
+**处理**：只留一条用 `ab archive`，替代用 `ab correct` 再 `ab confirm`，反悔用 `ab archive --reactivate` 或归档新纠正。两条在不同条件下互补共存或属于细化关系时，用 `ab relate <id1> <id2> --coexist | --refines [--reason …]` 追加一条复用既有 `relate` 事件的判定（`outcome: "unrelated" | "refines", model: "user"`，库版本 `SCHEMA_VERSION = 1` 不变），解除误报冲突并保留双向关联（2026-11-27 增补）。归档是整条生效的，被归档那条跟别的记忆的冲突也一起消失，`ab get` 会列出它所有的冲突，处理前能看到。
 
 #### 8.13.3 收窄检查
 
@@ -2479,7 +2477,7 @@ box 上 `/workspace/agentbrain-review/viewer/`：`overview.png`、`graph.png`、
 
 #### 11.10.2 方案
 
-**数据**：条目多一个 `scenes`，取值只有 `design`（设计）、`code`（开发）、`review`，可多选；空表示不分场景。和 `guidance` 一样走现有 `tag` 事件改元数据，不改正文：
+**数据**：条目多一个 `scenes`，取值封闭四值 `design`（设计）、`code`（开发）、`test`（测试）、`review`，可多选；空表示不分场景。另支持 `on_demand?: boolean`（`ab tag <id> --on-demand | --no-on-demand`）：将低频条件规则移出被动 `brief`，在 `ab search` / `ab get` 中仍保留已确认状态与 `[按需]` 标记；`ab inbox --noise` 只读扫描近 30 天 `brief` 注入 ≥100 且引用率 <1% 的非偏好规则供治理。和 `guidance` 一样走现有 `tag` 事件改元数据，不改正文：
 
 - `RememberBody.scenes?: Scene[]`、`TagBody.scenes?: Scene[]`（整组替换，`[]` 清空）；投影 `Proposition.scenes: Scene[]`，旧数据缺字段为 `[]`。
 - 写：`ab remember … --scene design,code`；改：`ab tag <id 前缀> --scene design,code`，`--scene none` 清空。取值在 CLI 边界校验，未知值直接报错退出。tag 事件按字段是否出现更新：没给 `scenes` 不动，给 `[]` 才清空（不能写成 `b.scenes ?? []`）。
@@ -2492,7 +2490,7 @@ box 上 `/workspace/agentbrain-review/viewer/`：`overview.png`、`graph.png`、
 - 带场景的规则**不进通用全局段 / 项目段**，原来被挤掉的规则回来。
 - 场景只来自 `--scene <s>[,<s>]` 参数（不读环境变量：环境变量跟进程走，`send` 换任务和嵌套启动都会带错场景）。
 - **先定范围再筛场景**：项目目录（或显式项目名）取全局 + 本项目的规则；pm 目录和未登记目录只取全局。`--worker` 时全局规则要求 `for_workers`，本项目规则不要求（项目记忆本来不能带 `--for-workers`）。
-- 有场景时多一段「场景规则（<场景>）：」，收范围内 `scenes` 与之相交的已确认规则，按 seq 倒序，整条取舍；单独预算 `BRIEF_SCENE_MAX_CHARS = 2000`（写死），放不下的计入提示 `ab search --scene <场景>`。整个 brief 的上限改为 `BRIEF_MAX_CHARS + BRIEF_SCENE_MAX_CHARS`，各段先按自己的预算整条取舍，末尾硬截断只作兜底；`markUsed` / `inject_log` 记的必须是最终实际输出的 id。
+- 有场景时多一段「场景规则（<场景>）：」，收范围内 `scenes` 与之相交且非 `on_demand` 的已确认规则，按专属性优先（`scenes.length` 升序，同专属性再按 `seq` 倒序）最多取 `BRIEF_SCENE_MAX_RULES = 8` 条（预算 `BRIEF_SCENE_MAX_CHARS = 3000`），后附该场景的按需检索触发器 `SCENE_TRIGGERS`；放不下的计入提示 `ab search --scene <场景>`。整个 brief 的上限为 `BRIEF_MAX_CHARS + BRIEF_SCENE_MAX_CHARS`，各段先按自己的预算整条取舍，末尾硬截断只作兜底；`markUsed` / `inject_log` 记的必须是最终实际输出的 id。
 - 没有场景时只多一行索引（用同一范围计数）：`场景规则：设计 N / 开发 N / review N 条；进入该场景先 ab search --scene <场景>`（N 为 0 的场景不列；一条都没有时整行不出）。
 - 头标签带上场景，便于核对：`<agentbrain project="x" worker scene="code">`。
 
@@ -3344,6 +3342,8 @@ backup/export 与 schema migration 在出现第一次 schema 变更时再冻结�
 ---
 
 ## 21. 修订记录
+
+- 2026-11-27 渐进披露路由与 Truth Maintenance 最小闭环（用户基于 36 组对照实验拍板）：① `SCENES` 扩为 `design | code | test | review` 四值；② `brief` 场景段改为专属性优先（单场景专属规则先于跨场景总纲）上限 8 条 + 按需检索触发器 `SCENE_TRIGGERS`，worker 全局无场景段上限 8 条；③ `tag` 事件增 `on_demand`（`ab tag <id> --on-demand` 退出被动 `brief`、保留检索），`ab inbox --noise` 只读扫描近 30 天高注入低引用规则；④ 新增 `ab relate <id1> <id2> --coexist | --refines` 复用既有 L1 `relate` 事件显式解除误报冲突（`SCHEMA_VERSION = 1` 不变）。验证见 `src/truth-jit.test.ts` 与 `verify-agentbrain`。
 
 - 2026-11-26 按 **方案 B** 实现 `ab-inbox`（§8.15）。新增 `src/inbox.ts`（常量 `INBOX_DEFAULT_LIMIT=10`、`BRIEF_INBOX_MAX_ITEMS=5`、`BRIEF_INBOX_MAX_CHARS=450`、`collectInbox`、`formatInboxText`、`briefInboxBlock`），严格只收集 `stale`/`correction`/`synth`/`review`/`conflict` 5 类高信号待拍板项（排除普通未确认 `extract`/`manual` 条目）；`src/cli.ts` 新增 `ab inbox [项目名] [--all] [--kind ...] [--limit <n>] [--json]` 并复用只读快照打开库、绝不写 `events`/`inject_log`/`projects`；`src/brief.ts` 仅主会话（`!worker`）附加 `briefInboxBlock`（仅含已确认方的冲突对进展开，双未确认冲突留汇总行）、为主规则段保留保底预算且严守 `BRIEF_MAX_CHARS`、不把 inbox 条目记入 `used`，并将 `conflictReminder`/`staleReminder` 与 `src/status.ts` 待办行断链提示改指 `ab inbox --kind ...`。零新表、列、事件种类或配置键，`SCHEMA_VERSION` 保持 1。
 

@@ -29,7 +29,7 @@ import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
 import { citeEnabled, setCite, logInjections, logQuery, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
-import { collectInbox, formatInboxText, INBOX_DEFAULT_LIMIT, INBOX_KINDS, type InboxKind } from "./inbox.ts";
+import { collectInbox, collectNoiseRules, formatInboxText, formatNoiseText, INBOX_DEFAULT_LIMIT, INBOX_KINDS, type InboxKind } from "./inbox.ts";
 import { guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
@@ -128,6 +128,7 @@ function ownershipLine(p: Proposition, names: Map<string, string>): string {
 function marks(p: Proposition): string {
   return [
     p.confirmed ? trustMark(p) : p.origin === "extract" ? "[未确认·自动沉淀]" : p.origin === "auto" ? "[未确认·收口提炼]" : "[未确认]",
+    p.on_demand ? "[按需]" : "",
     unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
     p.stale ? "[与代码不符]" : "",
@@ -509,6 +510,7 @@ function cmdInbox(argv: string[]): void {
     args: argv,
     options: {
       all: { type: "boolean", default: false },
+      noise: { type: "boolean", default: false },
       kind: { type: "string" },
       limit: { type: "string" },
       json: { type: "boolean", default: false },
@@ -516,9 +518,20 @@ function cmdInbox(argv: string[]): void {
     strict: true,
     allowPositionals: true,
   });
-  if (positionals.length > 1) die(`用法: ab inbox [项目名] [--all] [--kind ${INBOX_KINDS.join("|")}] [--limit <n>] [--json]\n${usageFor("inbox")}`);
+  if (positionals.length > 1) die(`用法: ab inbox [项目名] [--all] [--noise] [--kind ${INBOX_KINDS.join("|")}] [--limit <n>] [--json]\n${usageFor("inbox")}`);
   if (positionals.length === 1 && !positionals[0].trim()) die("项目名不能为空");
   if (positionals.length === 1 && values.all) die("项目名与 --all 不能同时用");
+  if (values.noise) {
+    const handle = openReadOnlySnapshot(home(), "ab-inbox-ro-");
+    try {
+      const items = collectNoiseRules(handle.store, { now: new Date() });
+      if (values.json) process.stdout.write(JSON.stringify({ count: items.length, items }) + "\n");
+      else console.log(formatNoiseText(items));
+    } finally {
+      handle.cleanup();
+    }
+    return;
+  }
   let kind: InboxKind | undefined;
   if (values.kind !== undefined) {
     if (!(INBOX_KINDS as readonly string[]).includes(values.kind)) {
@@ -966,6 +979,7 @@ async function cmdCorrect(argv: string[]): Promise<void> {
       confirmed: values.confirmed === true,
       supersedes: old.id,
       scenes: old.scenes.length ? old.scenes : undefined,
+      on_demand: old.on_demand || undefined,
       ...(anchors?.length ? { anchors, ...(anchorHead ? { anchor_head: anchorHead } : {}) } : {}),
       source,
     });
@@ -1268,13 +1282,15 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
-/** ab tag：改元数据标记，不改正文。支持场景标签（§11.10）和代码锚点（§9.7.7）。 */
+/** ab tag：改元数据标记，不改正文。支持场景标签（§11.10）、代码锚点（§9.7.7）和按需检索标记。 */
 function cmdTag(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
     options: {
       scene: { type: "string" },
       anchor: { type: "string", multiple: true, default: [] },
+      "on-demand": { type: "boolean", default: false },
+      "no-on-demand": { type: "boolean", default: false },
     },
     strict: true,
     allowPositionals: true,
@@ -1282,7 +1298,10 @@ function cmdTag(argv: string[]): void {
   const hasScene = values.scene !== undefined;
   const rawAnchors = values.anchor as string[];
   const hasAnchor = rawAnchors.length > 0;
-  if (!positionals[0] || (!hasScene && !hasAnchor)) die("用法: ab tag <id 前缀> [--scene <design,code,review|none>] [--anchor <路径>… | --anchor none]");
+  const hasOnDemand = values["on-demand"] === true || values["no-on-demand"] === true;
+  if (values["on-demand"] && values["no-on-demand"]) die("--on-demand 与 --no-on-demand 不能同时用");
+  if (!positionals[0] || (!hasScene && !hasAnchor && !hasOnDemand))
+    die(`用法: ab tag <id 前缀> [--scene <${SCENES.join(",")}|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand]`);
   const scenes = hasScene ? parseScenes(values.scene!, true) : undefined;
   const store = open();
   try {
@@ -1293,6 +1312,11 @@ function cmdTag(argv: string[]): void {
       if (scenes!.length && p.guidance)
         die(`[${short(p.id)}] 是干活偏好（guidance），不能带场景；先 ab guidance ${short(p.id)} --off`);
       body.scenes = scenes;
+    }
+    if (hasOnDemand) {
+      if (values["on-demand"] && p.guidance)
+        die(`[${short(p.id)}] 是常驻干活偏好（guidance），不能同时标成按需；先 ab guidance ${short(p.id)} --off`);
+      body.on_demand = values["on-demand"] === true;
     }
     let anchorInfo: { anchors?: string[]; anchorHead?: string; isNone: boolean } | null = null;
     if (hasAnchor) {
@@ -1305,7 +1329,55 @@ function cmdTag(argv: string[]): void {
     const out: string[] = [];
     if (hasScene) out.push(scenes!.length ? `已设场景 [${short(p.id)}] ${scenes!.join(",")}: ${p.text}` : `已清空场景 [${short(p.id)}]: ${p.text}`);
     if (anchorInfo) out.push(anchorInfo.isNone ? `已清空锚点 [${short(p.id)}]: ${p.text}` : `已设锚点 [${short(p.id)}] ${anchorInfo.anchors!.join("，")}: ${p.text}`);
+    if (hasOnDemand) out.push(body.on_demand ? `已设为按需检索（不进被动 brief） [${short(p.id)}]: ${p.text}` : `已恢复进被动 brief [${short(p.id)}]: ${p.text}`);
     console.log(out.join("\n"));
+  } finally {
+    store.close();
+  }
+}
+
+/** ab relate：显式解除关系判定误报冲突（--coexist 共存无关 / --refines 补充细化），走既有 relate L1 事件，SCHEMA_VERSION 不变。 */
+function cmdRelate(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      coexist: { type: "boolean", default: false },
+      refines: { type: "boolean", default: false },
+      reason: { type: "string" },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (positionals.length !== 2 || (values.coexist === values.refines)) {
+    die("用法: ab relate <id1> <id2> (--coexist | --refines) [--reason <说明>]");
+  }
+  const store = open();
+  try {
+    const a = findByPrefix(store, positionals[0]);
+    const b = findByPrefix(store, positionals[1]);
+    if (a.id === b.id) die("不能对同一条记忆建立关联");
+    if (a.state !== "active" || b.state !== "active") die("只能关联仍有效的记忆");
+    const outcome = values.refines ? ("refines" as const) : ("unrelated" as const);
+    const reason = values.reason?.trim() || (values.refines ? "用户确认补充细化关系，解除误报冲突" : "用户确认两条互补共存，解除误报冲突");
+    const found = detectHost();
+    const sid = found.ok ? (found.detection?.session_id ?? null) : null;
+    store.commit(
+      [
+        {
+          kind: "relate",
+          project_id: a.project_id,
+          session_id: sid,
+          target_id: a.id,
+          body: { outcome, target: b.id, reason, model: "user" },
+        },
+      ],
+      () => {},
+    );
+    console.log(
+      outcome === "refines"
+        ? `已标记 [${short(a.id)}] 补充了 [${short(b.id)}]（冲突已解除）：${reason}`
+        : `已标记 [${short(a.id)}] 与 [${short(b.id)}] 互补共存（冲突已解除）：${reason}`,
+    );
   } finally {
     store.close();
   }
@@ -1938,11 +2010,11 @@ function cmdStatus(argv: string[] = []): void {
 }
 
 const USAGE = `用法:
-  ab brief [项目名] [--worker] [--scene design,code,review]
+  ab brief [项目名] [--worker] [--scene design,code,test,review]
                                     开工先跑：全局规则 + 当前项目的坑与规则；--worker 给被派活的子代理
-                                    --scene 另加载该场景的规则（设计/开发/review，可逗号多选）；不给只多一行索引
-  ab inbox [项目名] [--all] [--kind stale|correction|synth|review|conflict] [--limit <n>] [--json]
-                                    只读列出高信号待用户拍板清单（不符/纠正/收口提炼/复审/冲突）；不写事件与注入日志
+                                    --scene 另加载该场景的规则（设计/开发/测试/review，可逗号多选）；不给只多一行索引
+  ab inbox [项目名] [--all] [--noise] [--kind stale|correction|synth|review|conflict] [--limit <n>] [--json]
+                                    只读列出高信号待用户拍板清单（不符/纠正/收口提炼/复审/冲突）；--noise 扫描高注入低引用规则；不写库
   ab remember --kind <rule|decision|pitfall|note> --text <内容> --summary <当时在讨论什么>
               [--why <理由>] [--global | --project <项目名>] [--for-workers] [--confirmed]
               [--body-file <文件>] [--alternative "<方案>::<否掉的原因>"]…
@@ -1981,8 +2053,10 @@ const USAGE = `用法:
                                     需求收口综合沉淀：结合文档与 git diff 提炼 ≤3 条带锚点未确认决定；--dry-run 零写库
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab tag <id 前缀> [--scene <design,code,review|none>] [--anchor <路径>… | --anchor none]
-                                    改元数据标记（至少传一项）：--scene 仅限规则；--anchor 任何种类都可挂/清代码锚点
+  ab tag <id 前缀> [--scene <design,code,test,review|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand]
+                                    改元数据标记（至少传一项）：--scene 仅限规则；--anchor 挂/清代码锚点；--on-demand 退出被动 brief、保留按需检索
+  ab relate <id1> <id2> (--coexist | --refines) [--reason <说明>]
+                                    显式解除误报冲突：--coexist 标记互补共存，--refines 标记 id1 补充细化 id2
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入；带场景标签的不能标）
   ab audit worker-quotes [--apply]       找出只靠 worker 派活提示当"用户原话"的条目；--apply 撤销其自动转正
   ab review [--limit <n>] [--archive <id 前缀…> | --archive --all]
@@ -2184,6 +2258,7 @@ async function main(): Promise<void> {
     if (cmd === "synthesize") return await cmdSynthesize(rest);
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "tag") return cmdTag(rest);
+    if (cmd === "relate") return cmdRelate(rest);
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
     if (cmd === "status" || cmd === "doctor") return cmdStatus(rest);

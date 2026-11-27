@@ -11,9 +11,18 @@ export { BriefError };
 
 export const BRIEF_MAX_CHARS = 2000;
 /** 场景段的单独预算（§11.10，写死的常量；整个 brief 的上限是两段之和）。 */
-export const BRIEF_SCENE_MAX_CHARS = 2000;
+export const BRIEF_SCENE_MAX_CHARS = 3000;
+/** 每个场景被动注入的规则上限（Progressive Disclosure）：高信号核心留 brief，长尾走按需触发器。 */
+export const BRIEF_SCENE_MAX_RULES = 8;
+export const BRIEF_WORKER_GLOBAL_MAX_RULES = 8;
 
-const SCENE_LABEL: Record<Scene, string> = { design: "设计", code: "开发", review: "review" };
+const SCENE_LABEL: Record<Scene, string> = { design: "设计", code: "开发", test: "测试", review: "review" };
+export const SCENE_TRIGGERS: Record<Scene, string> = {
+  design: "按需触发器：改表/DDL/MySQL索引→ab search \"767 字节索引\"；幂等/长事务→ab search \"短事务提交状态\"；模式准入→ab search \"三条全过\"。",
+  code: "按需触发器：跨层DTO/对象转换→ab search \"对象转换 MapStruct\"；用户报错文案→ab search \"报错说人话\"；连败两次→ab search \"连续两次修复\"；MySQL索引→ab search \"767 字节索引\"。",
+  test: "按需触发器：本地起实例防串流→ab search \"关闭服务注册\"；专用测试库隔离→ab search \"专用库 askdata_e2e\"；修失败测试→ab search \"放宽断言\"。",
+  review: "按需触发器：复核GPT系意见→ab search \"叠甲\"；事务/幂等边界→ab search \"短事务提交状态\"；检索可见性→ab search \"可见性最小单位\"。",
+};
 /** 场景段标题与“放不下”提示的预留字符（只在有场景规则时从通用段预算里扣）。 */
 const SCENE_OVERHEAD_RESERVE = 80;
 /** 规则段落较多时至少保留的基础字符预算，避免高信号待拍板展开把规则段挤死。 */
@@ -27,11 +36,14 @@ function counts(list: Proposition[]): string {
 }
 
 /** 换行（含连续空白行）压成 " / "，不丢后半段。放不下的整条不放，计入 hidden。 */
-function lines(list: Proposition[], kinds: PropKind[], budget: number, used: string[]): { text: string; hidden: number } {
-  const rows = list.filter((p) => kinds.includes(p.kind)).sort((a, b) => b.seq - a.seq);
+function lines(list: Proposition[], kinds: PropKind[], budget: number, used: string[], maxItems = Infinity, bySpecificity = false): { text: string; hidden: number } {
+  const rows = list
+    .filter((p) => kinds.includes(p.kind))
+    .sort((a, b) => (bySpecificity ? (a.scenes.length - b.scenes.length) || (b.seq - a.seq) : b.seq - a.seq));
   let text = "";
   let shown = 0;
   for (const p of rows) {
+    if (shown >= maxItems) break;
     // §12.6.7 T1：不是用户确认的条目标出转正来源；没标的就是用户确认过的（见 TRUST_LEGEND）
     const trust = p.confirmed_by && p.confirmed_by !== "user" ? `（${TRUST_LABEL[p.confirmed_by]}）` : "";
     const line = `- [${short(p.id)}] ${stalePrefix(p)}${p.text.split(/\n+/).map((s) => s.trim()).filter(Boolean).join(" / ")}${trust}${disputed(p)}\n`;
@@ -133,7 +145,8 @@ function contentBudgets(fixed: string[], titles: string[], cap = BRIEF_MAX_CHARS
 
 /** used（可选）收集实际输出的条目 id，供到期复审记"最近被注入"。scenes 是 --scene 给的场景（§11.10）。 */
 export function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean, used: string[] = [], scenes: Scene[] = []): string {
-  const all = active(store).filter(p => !staleBlocked(p) && !p.superseded_draft);
+  const allActive = active(store).filter(p => !staleBlocked(p) && !p.superseded_draft);
+  const all = allActive.filter((p) => !p.on_demand);
   const global = all.filter((p) => p.project_id === null);
   const pending: Proposition[] = [];
 
@@ -146,8 +159,8 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   let head = "";
   const before: string[] = [];
   const after: string[] = [];
-  const sections: { title: string; rows: Proposition[]; kinds: PropKind[] }[] = [];
-  // 场景筛选前先定范围（§11.10）：这里放范围内所有规则（含未确认与带场景的）。
+  const sections: { title: string; rows: Proposition[]; kinds: PropKind[]; maxItems?: number }[] = [];
+  // 场景筛选前先定范围（§11.10）：这里放范围内所有被动规则（含未确认与带场景的，排除 on_demand）。
   let scopeRules: Proposition[] = [];
   let noteFor = (n: number) => `还有 ${n} 条放不下，用 ab search 查。`;
 
@@ -161,7 +174,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
     pending.push(...rules.filter((p) => !p.confirmed));
     pending.push(...mine.filter((p) => (p.kind === "pitfall" || p.kind === "rule") && !p.confirmed));
     sections.push(
-      { title: "全局规则（子代理也要看）：", rows: rules.filter((p) => p.confirmed && !p.scenes.length), kinds: ["rule"] },
+      { title: "全局规则（子代理也要看）：", rows: rules.filter((p) => p.confirmed && !p.scenes.length), kinds: ["rule"], maxItems: BRIEF_WORKER_GLOBAL_MAX_RULES },
       {
         title: `${project.name} 的坑与规则（最近在前；与现场证据冲突时信现场）：`,
         rows: mine.filter((p) => p.confirmed && !p.scenes.length),
@@ -266,18 +279,29 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   let hidden = 0;
   const body: string[] = [];
   sections.forEach((s, i) => {
-    const got = lines(s.rows, s.kinds, budgets[i] ?? 0, used);
+    const got = lines(s.rows, s.kinds, budgets[i] ?? 0, used, s.maxItems);
     hidden += got.hidden;
     if (got.text) body.push(s.title + "\n" + got.text.trimEnd());
   });
   let sceneNote = "";
+  let sceneTrigger = "";
   if (sceneRows.length) {
-    const got = lines(sceneRows, ["rule"], Math.max(0, BRIEF_SCENE_MAX_CHARS - sceneTitle.length - 1 - SCENE_OVERHEAD_RESERVE), used);
+    const rawTrigger = [...new Set(scenes)].map((s) => SCENE_TRIGGERS[s]).filter(Boolean).join("\n");
+    const triggerCost = rawTrigger ? rawTrigger.length + 2 : 0;
+    const got = lines(
+      sceneRows,
+      ["rule"],
+      Math.max(0, BRIEF_SCENE_MAX_CHARS - sceneTitle.length - 1 - SCENE_OVERHEAD_RESERVE - triggerCost),
+      used,
+      BRIEF_SCENE_MAX_RULES,
+      true,
+    );
     if (got.text) body.push(sceneTitle + "\n" + got.text.trimEnd());
     if (got.hidden) sceneNote = `场景还有 ${got.hidden} 条放不下，用 ab search --scene ${scenes.join(",")} 查。`;
+    if (rawTrigger) sceneTrigger = rawTrigger;
   }
   const note = hidden ? noteFor(hidden) : "";
-  const parts = [head, ...before, ...body, ...after, ...(note ? [note] : []), ...(sceneNote ? [sceneNote] : []), ...tails];
+  const parts = [head, ...before, ...body, ...after, ...(note ? [note] : []), ...(sceneNote ? [sceneNote] : []), ...(sceneTrigger ? [sceneTrigger] : []), ...tails];
   const max = BRIEF_MAX_CHARS + (sceneRows.length ? BRIEF_SCENE_MAX_CHARS : 0);
   let out = parts.filter(Boolean).join("\n") + CLOSE;
   if (out.length > max) out = out.slice(0, max - 40) + "\n…已截断，用 ab search 查。\n</agentbrain>\n";

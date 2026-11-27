@@ -24,6 +24,22 @@ case "${1:-}" in
     export HOME="$ISOLATED/home" AB_HOME="$ISOLATED/ab" AGENTBRAIN_HOME="$ISOLATED/ab" AB_REGISTRY="$ISOLATED/repos" PATH="$ISOLATED/bin:$PATH"
     unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE PI_SESSION_ID PI_SESSION_FILE PI_INTERCOM_SESSION_ID CLAUDE_SESSION_ID CODEX_SESSION_ID GEMINI_HOME ANTIGRAVITY_APP_DATA_DIR ANTIGRAVITY_CONVERSATION_ID
     trap '[ -z "${XP_PID:-}" ] || kill "$XP_PID" 2>/dev/null || true; [ -z "${ANC_PID:-}" ] || kill "$ANC_PID" 2>/dev/null || true; [ -z "${SYNTH_PID:-}" ] || kill "$SYNTH_PID" 2>/dev/null || true; rm -rf "$ISOLATED"; [ -z "${S:-}" ] || rm -rf "$S"' EXIT
+    step skill-sync-check node -e '
+const fs = require("node:fs"), path = require("node:path");
+const fdir = ".agents/skills/verify-agentbrain/features";
+const actual = fs.readdirSync(fdir).filter((f) => f.endsWith(".md") && f !== "README.md").sort();
+const readme = fs.readFileSync(path.join(fdir, "README.md"), "utf8");
+const linked = [...new Set([...readme.matchAll(/\]\(([a-z0-9_-]+\.md)\)/g)].map((m) => m[1]))].sort();
+const missInReadme = actual.filter((f) => !linked.includes(f));
+const deadInReadme = linked.filter((f) => !actual.includes(f));
+const skillMd = fs.readFileSync(".agents/skills/verify-agentbrain/SKILL.md", "utf8");
+const deadInSkill = [...skillMd.matchAll(/\]\((features\/[a-z0-9_-]+\.md)\)/g)].map((m) => m[1]).filter((rel) => !fs.existsSync(path.join(".agents/skills/verify-agentbrain", rel)));
+if (missInReadme.length || deadInReadme.length || deadInSkill.length) {
+  console.error({ missInReadme, deadInReadme, deadInSkill });
+  process.exit(1);
+}
+console.log("verify-agentbrain feature map sync ok:", actual.length, "files");
+'
     step unit npm test
     step typecheck npm run typecheck
     step cli-agy-roots node --test src/agy-roots.test.ts
@@ -43,6 +59,7 @@ case "${1:-}" in
     step anchors-unit node --test src/anchors.test.ts src/backfill-anchors.test.ts
     step cli-anchors-verify env AB1_EVIDENCE="$EV/anchors-verify" node --test --test-name-pattern="^ab-3" src/stale-cli.test.ts
     step synthesize-unit node --test src/synthesize.test.ts
+    step truth-jit-unit node --test src/truth-jit.test.ts
     step cli-synthesize-e2e env AB1_EVIDENCE="$EV/synthesize-e2e" node --test --test-name-pattern="^ab-4" src/stale-cli.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)
@@ -155,7 +172,7 @@ db.close();
     step cli-scene-reject-non-rule bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' remember --global --confirmed --kind pitfall --text 坑 --summary 验证 --scene code 2>'$EV/cli-scene-reject-non-rule.log'"
     step cli-scene-reject-non-rule-text bash -c "grep -qF '只能用于规则' '$EV/cli-scene-reject-non-rule.log'"
     step cli-scene-reject-unknown bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene nope 2>'$EV/cli-scene-reject-unknown.log'"
-    step cli-scene-reject-unknown-text bash -c "grep -qF '必须是 design|code|review' '$EV/cli-scene-reject-unknown.log'"
+    step cli-scene-reject-unknown-text bash -c "grep -qF '必须是 design|code|test|review' '$EV/cli-scene-reject-unknown.log'"
     step cli-scene-search-kind bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' search --scene code --kind pitfall 2>&1 | grep -qF '只列规则'"
     step cli-scene-guidance-conflict bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' guidance '$SCENE_ID' 2>'$EV/cli-scene-guidance-conflict.log'"
     step cli-scene-guidance-conflict-text bash -c "grep -qF '不能同时标成干活偏好' '$EV/cli-scene-guidance-conflict.log'"

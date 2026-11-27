@@ -28,8 +28,8 @@ export type Host = "claude" | "codex" | "pi" | "opencode" | "agy";
 export type PropState = "active" | "archived" | "superseded";
 /** 价值标准的标记（v3 第 1 阶段只打标记、不丢弃，交给审稿人）。 */
 export type ValueFlag = "no_scenario" | "phase" | "findable" | "narrative" | "project_unresolved" | "body_dropped" | "alternatives_dropped" | "evidence_truncated";
-/** 场景（§11.10）：规则按设计 / 开发 / review 打标签，开工只加载当前场景的。封闭三值，空表示不分场景。 */
-export const SCENES = ["design", "code", "review"] as const;
+/** 场景（§11.10）：规则按设计 / 开发 / 测试 / review 打标签，开工只加载当前场景的。封闭四值，空表示不分场景。 */
+export const SCENES = ["design", "code", "test", "review"] as const;
 export type Scene = (typeof SCENES)[number];
 
 export interface SourcePointer {
@@ -124,6 +124,8 @@ export interface RememberBody extends ModelProvenance {
   said_at?: string;
   /** 指导 agent 怎么干活的偏好（汇报方式、语气、工作流）。已确认的全局偏好每轮常驻注入（§21 2026-10-14 价值审计 C）。 */
   guidance?: boolean;
+  /** 按需检索条目：保持已确认与可检索，但不进被动 brief 注入。 */
+  on_demand?: boolean;
   /** 只对规则有意义（§11.10）。空/缺省表示不分场景。 */
   scenes?: Scene[];
   /** 旧版本（v3 候选区，§8.8 前）写下的候选标记。投影时忽略：条目照常是有效的未确认条目。 */
@@ -213,6 +215,7 @@ export interface UnconfirmBody {
 /** tag 事件：只改元数据标记，不改正文。scenes / anchors 整组替换，[] 清空；没给这个字段就不动。 */
 export interface TagBody {
   guidance?: boolean;
+  on_demand?: boolean;
   scenes?: Scene[];
   anchors?: string[];
   anchor_head?: string;
@@ -283,6 +286,8 @@ export interface Proposition {
   alternatives: Alternative[];
   /** 指导 agent 干活方式的偏好（见 RememberBody.guidance、tag 事件）。 */
   guidance: boolean;
+  /** 按需检索标记：true 时不进被动 brief，仍留在 search / get。 */
+  on_demand: boolean;
   /** 场景标签（§11.10）；旧数据缺字段为 []。 */
   scenes: Scene[];
   /** 代码路径锚点（§9.7.7）；旧数据缺字段为 []。 */
@@ -407,6 +412,7 @@ export function fold(rows: EventRow[]): Projection {
         alternatives: Array.isArray(b.alternatives) ? b.alternatives : [],
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
+        on_demand: b.on_demand === true,
         scenes: Array.isArray(b.scenes) ? b.scenes : [],
         anchors: Array.isArray(b.anchors) ? b.anchors : [],
         anchor_head: typeof b.anchor_head === "string" ? b.anchor_head : null,
@@ -427,7 +433,9 @@ export function fold(rows: EventRow[]): Projection {
     }
     if (r.kind === "evidence" || r.kind === "relate" || r.kind === "verify") {
       const b = JSON.parse(r.body) as ModelProvenance;
-      target.model_outputs.push({ event_id: r.id, kind: r.kind, model: b.model ?? null, prompt_version: b.prompt_version ?? null });
+      if (b.model !== "user") {
+        target.model_outputs.push({ event_id: r.id, kind: r.kind, model: b.model ?? null, prompt_version: b.prompt_version ?? null });
+      }
     }
     if (r.kind === "detail") {
       const b = JSON.parse(r.body) as DetailBody;
@@ -477,6 +485,7 @@ export function fold(rows: EventRow[]): Projection {
     if (r.kind === "tag") {
       const b = JSON.parse(r.body) as TagBody;
       if (typeof b.guidance === "boolean") target.guidance = b.guidance;
+      if (typeof b.on_demand === "boolean") target.on_demand = b.on_demand;
       // 按字段是否出现更新：没给 scenes 不动，给 [] 才清空
       if (Array.isArray(b.scenes)) target.scenes = b.scenes;
       if (Array.isArray(b.anchors)) {
@@ -703,6 +712,7 @@ export function checkRememberBody(b: RememberBody): void {
 /** 写 tag 事件前的检查与规范化（anchors=[] 为合法清空操作）。 */
 export function checkTagBody(b: TagBody): void {
   if (b.guidance !== undefined && typeof b.guidance !== "boolean") throw new Error("guidance 必须是布尔值");
+  if (b.on_demand !== undefined && typeof b.on_demand !== "boolean") throw new Error("on_demand 必须是布尔值");
   if (b.scenes !== undefined) {
     if (!Array.isArray(b.scenes) || b.scenes.some((s) => !(SCENES as readonly string[]).includes(s))) {
       throw new Error(`scenes 必须是 ${SCENES.join("|")} 的数组`);

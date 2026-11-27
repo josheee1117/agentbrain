@@ -4,14 +4,14 @@
 |---|---|---|
 | status / doctor | [status.md](status.md) | 数据库状态摘要、宿主与接线诊断、状态栏单行指标 |
 | brief | [brief.md](brief.md) | 开工背景速览、全局规则与当前项目坑注入（含子代理 --worker 模式） |
-| inbox | [inbox.md](inbox.md) | 待用户确认高信号清单 `ab inbox`（5 类优先级、只读零写入）与主会话 `ab brief` 前 5 条展开 |
-| scene | [scene.md](scene.md) | 规则场景标签（设计/开发/review）、brief 按场景加载与 search --scene 列举 |
+| inbox | [inbox.md](inbox.md) | 待用户确认高信号清单 `ab inbox`（5 类优先级、`--noise` 低引用规则扫描、只读零写入）与主会话 `ab brief` 前 5 条展开 |
+| scene | [scene.md](scene.md) | 规则四场景标签（`design`/`code`/`test`/`review`）、专属性优先 `≤8` 条路由 + 按需触发器、`--on-demand` 与 `search --scene` 列举 |
 | remember / search / get / correct | [memory.md](memory.md) | 显式记忆记录、纠正替代、混合检索与详情关联查看、模型产出记录（模型与提示词版本） |
 | stale 护栏与草稿退场 | [stale-guard.md](stale-guard.md) | 按确认来源停注或警告，confirm 清 stale，单条 verify 只读 ref，未确认 extract 草稿可逆退场 |
 | 变更驱动重核 | [change-verify.md](change-verify.md) | 只读主干扫描、非祖先三分支、机械预筛、20 条入队上限、持租约同步消费和默认关闭的每日扫描 |
 | 锚点、决定核验与存量补锚点 | [anchors-decisions.md](anchors-decisions.md) | `anchors`/`anchor_head`、`--anchor`、跨仓锚点匹配与入队消费、决定首次核验不转正、离线补锚点脚本 |
 | 需求收口综合沉淀 | [synthesize.md](synthesize.md) | `ab synthesize` 结合 `--spec` 与 diff 提炼 ≤3 条带锚点未确认决定、`--dry-run` 零写库与草稿清理提示 |
-| 冲突显示与处理 | [conflicts.md](conflicts.md) | 冲突按对双向显示，与待确认纠正分开；status 报对数、最老天数和期间注入次数；归档与恢复闭环 |
+| 冲突显示与处理 | [conflicts.md](conflicts.md) | 冲突按对双向显示，与待确认纠正分开；`ab relate --coexist\|--refines` 解除互补误报冲突；status 报对数、最老天数和期间注入次数；归档与恢复闭环 |
 | 详情正文与原话 | [detail.md](detail.md) | 决定/事实/坑的详情正文、否掉的方案、`ab get` 原话显示、含 Pensieve 重导补正文 |
 | 跨项目段 | [cross-project.md](cross-project.md) | 项目目录里搜索时，末尾带出其他项目里相近的条目（阈值 0.65、最多 3 条） |
 | 归属显示 | [attribution.md](attribution.md) | 抽取判到别的项目时 `ab get` 写清会话在哪；归属没确认的条目标「[归属未定]」 |
