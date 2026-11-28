@@ -39,7 +39,7 @@ function counts(list: Proposition[]): string {
 function lines(list: Proposition[], kinds: PropKind[], budget: number, used: string[], maxItems = Infinity, bySpecificity = false): { text: string; hidden: number } {
   const rows = list
     .filter((p) => kinds.includes(p.kind))
-    .sort((a, b) => (bySpecificity ? (a.scenes.length - b.scenes.length) || (b.seq - a.seq) : b.seq - a.seq));
+    .sort((a, b) => (Number(b.redline) - Number(a.redline)) || (bySpecificity ? (a.scenes.length - b.scenes.length) || (b.seq - a.seq) : b.seq - a.seq));
   let text = "";
   let shown = 0;
   for (const p of rows) {
@@ -61,8 +61,26 @@ const CLOSE = "\n</agentbrain>\n";
 export function trustLegend(rows: readonly Proposition[]): string | null {
   const code = rows.some((p) => p.confirmed_by === "code");
   const corr = rows.some((p) => p.confirmed_by === "corroboration");
-  if (!code && !corr) return null;
-  return `没标注的条目是用户确认过的${code ? "；标（代码核验）的由模型核对代码后转正，没有人确认过" : ""}${corr ? "；标（跨会话印证）的是用户在多个会话里说过" : ""}。`;
+  const adopt = rows.some((p) => p.confirmed_by === "adoption");
+  if (!code && !corr && !adopt) return null;
+  return `没标注的条目是用户确认过的${code ? "；标（代码核验）的由模型核对代码后转正，没有人确认过" : ""}${corr ? "；标（跨会话印证）的是用户在多个会话里说过" : ""}${adopt ? "；标（实盘采纳）的是多次检索或注入后被实际采纳转正" : ""}。`;
+}
+
+/** 从库里当前范围的已确认按需（on_demand）场景条目实时拼出触发器索引；无带触发条件的条目时回退默认提示。 */
+export function buildSceneTriggerLine(onDemandInScope: readonly Proposition[], scenes: readonly Scene[]): string {
+  const matched = onDemandInScope
+    .filter((p) => p.scenes.some((s) => scenes.includes(s)) && !!(p.trigger ?? p.value?.scenario))
+    .sort((a, b) => (a.scenes.length - b.scenes.length) || (b.seq - a.seq))
+    .slice(0, 6);
+  if (matched.length > 0) {
+    const cues = matched.map((p) => {
+      const raw = (p.trigger ?? p.value?.scenario ?? "").replace(/\s+/g, " ").replace(/^当/, "").replace(/时[。.]?$/, "").trim();
+      const shortCue = [...raw].slice(0, 22).join("");
+      return `[${short(p.id)}] ${shortCue}`;
+    });
+    return `按需触发器（命中场景先 ab get <id>）：${cues.join("；")}。`;
+  }
+  return [...new Set(scenes)].map((s) => SCENE_TRIGGERS[s]).filter(Boolean).join("\n");
 }
 
 /** 冲突汇总（§8.13.7）：只数与本次 brief 范围（全局 + 当前项目）有关的冲突对，
@@ -147,6 +165,7 @@ function contentBudgets(fixed: string[], titles: string[], cap = BRIEF_MAX_CHARS
 export function brief(store: Store, cwd: string, projectName: string | undefined, worker: boolean, used: string[] = [], scenes: Scene[] = []): string {
   const allActive = active(store).filter(p => !staleBlocked(p) && !p.superseded_draft);
   const all = allActive.filter((p) => !p.on_demand);
+  const allOnDemand = allActive.filter((p) => p.on_demand && p.confirmed && !p.redline);
   const global = all.filter((p) => p.project_id === null);
   const pending: Proposition[] = [];
 
@@ -162,6 +181,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   const sections: { title: string; rows: Proposition[]; kinds: PropKind[]; maxItems?: number }[] = [];
   // 场景筛选前先定范围（§11.10）：这里放范围内所有被动规则（含未确认与带场景的，排除 on_demand）。
   let scopeRules: Proposition[] = [];
+  let onDemandInScope: Proposition[] = [];
   let noteFor = (n: number) => `还有 ${n} 条放不下，用 ab search 查。`;
 
   if (worker) {
@@ -171,6 +191,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
     head = `<agentbrain project="${project.name}" worker>`;
     const rules = global.filter((p) => p.kind === "rule" && p.for_workers);
     scopeRules = [...rules, ...mine.filter((p) => p.kind === "rule")];
+    onDemandInScope = allOnDemand.filter((p) => (p.project_id === null ? p.for_workers && p.kind === "rule" : p.project_id === pid));
     pending.push(...rules.filter((p) => !p.confirmed));
     pending.push(...mine.filter((p) => (p.kind === "pitfall" || p.kind === "rule") && !p.confirmed));
     sections.push(
@@ -184,6 +205,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   } else if ((inPm && !projectName) || (!project && !projectName && inPm)) {
     head = '<agentbrain scope="pm">';
     scopeRules = global.filter((p) => p.kind === "rule");
+    onDemandInScope = allOnDemand.filter((p) => p.project_id === null);
     pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
     sections.push({ title: "全局规则与坑（最近在前）：", rows: global.filter((p) => p.confirmed && !p.scenes.length), kinds: ["rule", "pitfall"] });
     const idByName = new Map(store.listProjects().map((p) => [p.name, p.id]));
@@ -201,6 +223,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
     const mine = all.filter((p) => p.project_id === pid);
     head = `<agentbrain project="${project.name}">`;
     scopeRules = [...global.filter((p) => p.kind === "rule"), ...mine.filter((p) => p.kind === "rule")];
+    onDemandInScope = allOnDemand.filter((p) => p.project_id === null || p.project_id === pid);
     pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
     pending.push(...mine.filter((p) => !p.confirmed));
     sections.push(
@@ -217,6 +240,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   } else {
     head = '<agentbrain scope="unregistered">';
     scopeRules = global.filter((p) => p.kind === "rule");
+    onDemandInScope = allOnDemand.filter((p) => p.project_id === null);
     before.push("当前目录不是已登记项目，只给出全局记忆。");
     pending.push(...global.filter((p) => (p.kind === "rule" || p.kind === "pitfall") && !p.confirmed));
     sections.push({ title: "全局规则与坑：", rows: global.filter((p) => p.confirmed && !p.scenes.length), kinds: ["rule", "pitfall"] });
@@ -286,7 +310,7 @@ export function brief(store: Store, cwd: string, projectName: string | undefined
   let sceneNote = "";
   let sceneTrigger = "";
   if (sceneRows.length) {
-    const rawTrigger = [...new Set(scenes)].map((s) => SCENE_TRIGGERS[s]).filter(Boolean).join("\n");
+    const rawTrigger = buildSceneTriggerLine(onDemandInScope, scenes);
     const triggerCost = rawTrigger ? rawTrigger.length + 2 : 0;
     const got = lines(
       sceneRows,

@@ -50,9 +50,9 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
   const id = /\[([0-9a-f]{8})\]/.exec(ab(["remember", "--confirmed", "--kind", "pitfall", "--text", "别在 alpha 召回里用全局锁，凭据从环境变量读", "--summary", "锁"]))![1];
   ab(["remember", "--confirmed", "--kind", "rule", "--text", "beta 的全局锁规则", "--summary", "beta"], beta);
 
-  // 1. 开关默认关：召回块只有提醒，没有指令；不自动检索；记录 recall_runs
+  // 1. 开关默认关：常规提问保持静默（无泛化提醒噪音），不自动检索；照常记录 recall_runs
   const off = hook();
-  assert.match(off, /要不要查历史记忆由你判断/);
+  assert.equal(off, "");
   assert.doesNotMatch(off, /记忆：|ab-used/);
   assert.doesNotMatch(off, new RegExp(`\\[${id}\\] 坑:`));
   let d = db();
@@ -96,6 +96,7 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
 });
 
 test("库被别的进程占着写锁时，召回 hook 照常输出，统计放弃不等", () => {
+  ab(["setup", "--cite", "on"]);
   const before = (db().prepare("SELECT COUNT(*) AS n FROM recall_runs").get() as { n: number }).n;
   const lock = new DatabaseSync(join(home, "store.db"));
   lock.exec("BEGIN IMMEDIATE");
@@ -110,4 +111,5 @@ test("库被别的进程占着写锁时，召回 hook 照常输出，统计放�
     lock.close();
   }
   assert.equal((db().prepare("SELECT COUNT(*) AS n FROM recall_runs").get() as { n: number }).n, before, "拿不到锁就不记");
+  ab(["setup", "--cite", "off"]);
 });

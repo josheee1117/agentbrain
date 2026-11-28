@@ -60,6 +60,7 @@ console.log("verify-agentbrain feature map sync ok:", actual.length, "files");
     step cli-anchors-verify env AB1_EVIDENCE="$EV/anchors-verify" node --test --test-name-pattern="^ab-3" src/stale-cli.test.ts
     step synthesize-unit node --test src/synthesize.test.ts
     step truth-jit-unit node --test src/truth-jit.test.ts
+    step phase2-lifecycle-unit node --test src/phase2-lifecycle.test.ts
     step cli-synthesize-e2e env AB1_EVIDENCE="$EV/synthesize-e2e" node --test --test-name-pattern="^ab-4" src/stale-cli.test.ts
 
     # Isolate with scratch directory (resolve canonical path to satisfy opencode canonical DB check)

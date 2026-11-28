@@ -4,7 +4,7 @@
  */
 import type { PropKind, Proposition } from "./l2.ts";
 
-export type Trust = "user" | "code" | "corroboration" | "unconfirmed";
+export type Trust = "user" | "code" | "corroboration" | "adoption" | "unconfirmed";
 
 export const RECALL_KINDS: readonly PropKind[] = ["pitfall", "rule", "decision"];
 

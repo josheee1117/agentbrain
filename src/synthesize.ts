@@ -7,11 +7,13 @@ import {
   checkAnchors,
   checkRememberBody,
   parseAnchor,
+  SCENES,
   type Alternative,
   type Origin,
   type PropKind,
   type Proposition,
   type RememberBody,
+  type Scene,
   type SourcePointer,
 } from "./l2.ts";
 import { parseJsonLoose, promptVersion, type Chat, type ChatMessage } from "./llm.ts";
@@ -22,27 +24,34 @@ export const SYNTH_MAX_CANDIDATES = 3;
 export const SYNTH_SPEC_MAX_CHARS = 24_000;
 export const SYNTH_EXISTING_MAX = 40;
 export const SYNTH_DRAFT_HINTS_MAX = 20;
+export const SYNTH_KINDS = ["decision", "rule", "pitfall"] as const;
+export type SynthKind = (typeof SYNTH_KINDS)[number];
 
 const MAX_PROMPT_FILES = 800;
 const MAX_DIFF_PATCH_CHARS = 8_000;
 const EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-const SYSTEM = `你是 agentbrain 的需求收口综合沉淀助手。给定需求/方案/派活文档（spec）、仓库 git diff 与变更文件清单、仓内可验证文件清单，以及项目现有有效记忆，提炼本次真正落定、值得长期保留的新项目决定（decision，最多 ${SYNTH_MAX_CANDIDATES} 条）。
+const SYSTEM = `你是 agentbrain 的需求收口综合沉淀助手。给定需求/方案/派活文档（spec）、仓库 git diff 与变更文件清单、仓内可验证文件清单，以及项目现有有效记忆，提炼本次真正落定、值得长期保留的新项目记忆（最多 ${SYNTH_MAX_CANDIDATES} 条，kind 取 "decision" | "rule" | "pitfall"）。
 
 规则：
-1. 只提炼明确落定且长期有效的架构、契约或关键工程决定（kind 固定为 "decision"），不记过程碎片、临时状态或与现有记忆同义重复的内容；没有新落定决定时返回空数组 []。
-2. 每条决定必须至少带 1 个真实存在的代码或契约锚点（最多 ${ANCHORS_MAX} 个），只能从给定仓内文件清单挑选相对路径，或写成 "<已知项目名>:<相对路径>"，绝不编造不存在的路径。
+1. 只提炼明确落定且长期有效的三类结论，不记过程碎片、临时状态或与现有记忆同义重复的内容；没有值得长期保留的新结论时返回 {"candidates":[]}：
+   - "decision"：落定的架构、契约、数据模型或关键工程取舍（可带 alternatives）；
+   - "rule"：本次变更或复盘确立、后续改同类模块必须遵守的项目硬约束（可带 scenes，元素取自 design|code|test|review）；
+   - "pitfall"：本次实锤暴露、换个任务改这片代码还会再踩的反直觉陷阱与防坑做法。
+2. 每条候选必须至少带 1 个真实存在的代码或契约锚点（最多 ${ANCHORS_MAX} 个），只能从给定仓内文件清单挑选相对路径，或写成 "<已知项目名>:<相对路径>"，绝不编造不存在的路径。
 3. 若本次定稿明确替代了现有记忆清单里的某条同项目条目，可将 supersedes 设为该条的 8 位短 id 或完整 id；否则省略或设为 null。
 4. 只输出严格 JSON 对象：
-{"candidates":[{"kind":"decision","text":"一句话说清决定","why":"为什么这样定","anchors":["相对路径"],"alternatives":[{"option":"否掉的方案","rejected_because":"原因"}],"supersedes":null}]}`;
+{"candidates":[{"kind":"decision|rule|pitfall","text":"一句话说清结论","why":"为什么这样定或为什么会踩坑","scenes":[],"anchors":["相对路径"],"alternatives":[{"option":"否掉的方案","rejected_because":"原因"}],"supersedes":null}]}`;
 
 export const SYNTH_PROMPT_VERSION = promptVersion(SYSTEM);
 
 export interface SynthesizeCandidate {
   id: string | null;
-  kind: "decision";
+  kind: SynthKind;
   text: string;
   why?: string;
+  scenes?: Scene[];
+  onDemand?: boolean;
   anchors: string[];
   anchorHead: string;
   alternatives?: Alternative[];
@@ -409,7 +418,7 @@ export async function synthesizeProject(opts: SynthesizeOptions): Promise<Synthe
   const projectActive = projectId ? allProps.filter((p) => p.project_id === projectId && p.state === "active") : [];
 
   const existingForPrompt = projectActive
-    .filter((p) => (p.kind === "decision" || p.kind === "rule") && !p.superseded_draft)
+    .filter((p) => p.kind !== "note" && !p.superseded_draft)
     .sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "decision" ? -1 : 1) || (a.confirmed === b.confirmed ? 0 : a.confirmed ? -1 : 1) || b.seq - a.seq)
     .slice(0, SYNTH_EXISTING_MAX);
 
@@ -481,10 +490,12 @@ export async function synthesizeProject(opts: SynthesizeOptions): Promise<Synthe
       skipped.push({ text: rawText || "(空)", reason: "缺少有效 text" });
       continue;
     }
-    if (rec.kind !== undefined && rec.kind !== "decision") {
-      skipped.push({ text: rawText, reason: `仅沉淀 decision 类型（收到 ${String(rec.kind)}）` });
+    const kindRaw = rec.kind === undefined ? "decision" : rec.kind;
+    if (typeof kindRaw !== "string" || !(SYNTH_KINDS as readonly string[]).includes(kindRaw)) {
+      skipped.push({ text: rawText, reason: `仅沉淀 decision/rule/pitfall 类型（收到 ${String(rec.kind)}）` });
       continue;
     }
+    const kind = kindRaw as SynthKind;
 
     const supersedesId = resolveSupersedes(rec.supersedes, projectId, allProps);
     const dupReason = isDuplicateText(rawText, projectActive, supersedesId, acceptedNorms);
@@ -505,7 +516,11 @@ export async function synthesizeProject(opts: SynthesizeOptions): Promise<Synthe
     }
 
     const why = typeof rec.why === "string" && rec.why.trim() ? rec.why.trim() : undefined;
-    const alternatives = parseAlternatives(rec.alternatives);
+    const alternatives = kind === "decision" ? parseAlternatives(rec.alternatives) : undefined;
+    const scenes = kind === "rule" && Array.isArray(rec.scenes)
+      ? [...new Set(rec.scenes.filter((s): s is Scene => typeof s === "string" && (SCENES as readonly string[]).includes(s)))]
+      : [];
+    const onDemand = kind !== "decision";
     const source: SourcePointer = opts.source ?? {
       host: null,
       session_id: null,
@@ -515,9 +530,11 @@ export async function synthesizeProject(opts: SynthesizeOptions): Promise<Synthe
     };
 
     const body: RememberBody = {
-      kind: "decision",
+      kind,
       text: rawText,
       ...(why ? { why } : {}),
+      ...(scenes.length ? { scenes } : {}),
+      ...(onDemand ? { on_demand: true } : {}),
       ...(alternatives ? { alternatives } : {}),
       anchors: validAnchors,
       anchor_head: gitCtx.head,
@@ -544,9 +561,11 @@ export async function synthesizeProject(opts: SynthesizeOptions): Promise<Synthe
     acceptedNorms.push(normText(body.text));
     created.push({
       id: createdId,
-      kind: "decision",
+      kind,
       text: body.text,
       ...(body.why ? { why: body.why } : {}),
+      ...(body.scenes?.length ? { scenes: body.scenes } : {}),
+      ...(body.on_demand ? { onDemand: true } : {}),
       anchors: body.anchors!,
       anchorHead: body.anchor_head!,
       ...(body.alternatives ? { alternatives: body.alternatives } : {}),

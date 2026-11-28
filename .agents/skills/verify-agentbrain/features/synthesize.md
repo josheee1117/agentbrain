@@ -6,10 +6,10 @@
 ab synthesize <project> --spec <file>... [--diff-base <ref>] [--dry-run] [--json]
 ```
 
-在需求/功能收口时，结合 `--spec`（可重复，合并总字数超 `SYNTH_SPEC_MAX_CHARS = 24_000` 按序截断并标记 `truncated`）与仓库 git diff（`--diff-base`，缺省回退 `resolveTrunkRef` / `HEAD~1` / 初始树）以及项目现有有效记忆（最多 `SYNTH_EXISTING_MAX = 40` 条），单次调模型提炼最多 `SYNTH_MAX_CANDIDATES = 3` 条新的项目级 `decision`。
+在需求/功能收口时，结合 `--spec`（可重复，合并总字数超 `SYNTH_SPEC_MAX_CHARS = 24_000` 按序截断并标记 `truncated`）与仓库 git diff（`--diff-base`，缺省回退 `resolveTrunkRef` / `HEAD~1` / 初始树）以及项目现有有效记忆（最多 `SYNTH_EXISTING_MAX = 40` 条），单次调模型提炼最多 `SYNTH_MAX_CANDIDATES = 3` 条新的项目级 `decision | rule | pitfall`。
 
 硬不变量：
-- 每条产出强制 `kind: "decision"`、`confirmed: false`、`origin: "auto"`、`anchor_head: HEAD`（仅在有 `anchors` 时设置），并逐条经过 `checkRememberBody`。
+- 每条产出 `kind` 仅允许 `"decision" | "rule" | "pitfall"`（缺省回退 `"decision"`，其中 `"rule"` / `"pitfall"` 默认带 `on_demand: true` 归入按需温层，`"rule"` 可解析可选 `scenes`），强制 `confirmed: false`、`origin: "auto"`、`anchor_head: HEAD`（仅在有 `anchors` 时设置），并逐条经过 `checkRememberBody`。
 - `anchors` 逐项调用 `checkAnchors` 并核对仓库真实文件树存在性，过滤无效/不存在路径，无有效锚点或与已有记忆同义重复的候选记录跳过原因。
 - `supersedes` 仅解析**同一项目**且处于 `active`（含 `stale`）的唯一匹配目标为完整 UUID；跨项目、已归档/已替代或无效前缀静默置空，不阻断其余候选。
 - 绝不自动 `confirm`、绝不自动 `archive` 任何已有条目；`draftHints`（最多 `SYNTH_DRAFT_HINTS_MAX = 20` 条）仅作摘要与清理提示。

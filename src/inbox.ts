@@ -58,6 +58,7 @@ export interface InboxOpts {
   limit?: number;
   now?: Date;
   clock?: Clock;
+  includeDraftConflicts?: boolean;
 }
 
 export interface InboxResult {
@@ -99,6 +100,7 @@ function gatherInboxItems(
   inScope: (projectId: string | null) => boolean,
   now: Date,
   clock: Clock,
+  includeDraftConflicts = false,
 ): { items: InboxItem[]; counts: InboxCounts } {
   const proj = store.project();
   const props = proj.props;
@@ -199,6 +201,8 @@ function gatherInboxItems(
     if (!a || !b) continue;
     if (!inScope(a.project_id) && !inScope(b.project_id)) continue;
     const confirmedAny = a.confirmed || b.confirmed;
+    // 默认屏蔽后台自动抽取草稿之间的未确认互撞噪音（两端均为未确认 extract 草稿），只保留涉及已确认或人工/收口条目的冲突
+    if (!includeDraftConflicts && !confirmedAny && a.origin === "extract" && b.origin === "extract") continue;
     const conflictDays = Math.max(0, Math.floor((now.getTime() - Date.parse(pair.ts)) / 86_400_000));
     conflictItems.push({
       kind: "conflict",
@@ -275,7 +279,7 @@ export function collectInbox(store: Store, opts: InboxOpts = {}): InboxResult {
   const now = opts.now ?? new Date();
   const clock = opts.clock ?? ownClock;
   const limit = Math.max(1, opts.limit ?? INBOX_DEFAULT_LIMIT);
-  const { items, counts } = gatherInboxItems(store, makeInScope(scope, pid), now, clock);
+  const { items, counts } = gatherInboxItems(store, makeInScope(scope, pid), now, clock, opts.includeDraftConflicts === true);
   const filtered = opts.kind ? items.filter((it) => it.kind === opts.kind) : items;
 
   return {

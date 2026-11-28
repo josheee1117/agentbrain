@@ -3,7 +3,7 @@
 ## Sub-features
 - `ab inbox [项目名] [--all] [--kind stale|correction|synth|review|conflict] [--limit <n>] [--json]` 只读列出 5 类高信号待用户拍板条目
 - 严格优先级：`stale` > `correction` > `synth` > `review` > `conflict`（含至少一条已确认的冲突对优先，其次最老在前）
-- 排除普通未确认 `extract`/`manual` 条目与已被 `superseded_draft` 替代的草稿
+- 排除普通未确认 `extract`/`manual` 条目、已被 `superseded_draft` 替代的草稿，以及两端均为未确认自动抽取草稿（`origin === "extract"`）的后台草稿互撞冲突（仅保留涉及已确认或人工/收口条目的冲突）
 - 作用域过滤对齐 `brief`（`--all` / `pm` 全库、项目目录全局 + 当前项目、未登记目录仅全局；按名查 `listProjects()` 不写 `projects` 表）
 - 主会话 `ab brief`（`!worker`）附带前 `BRIEF_INBOX_MAX_ITEMS = 5` 条、总长 `<= BRIEF_INBOX_MAX_CHARS = 450` 的高信号展开（含已确认冲突，不含双未确认冲突），严守 `BRIEF_MAX_CHARS`、不挤死规则段、不计入 `used`/`inject_log`
 - `brief`（`conflictReminder` / `staleReminder`）与 `status` 待办行指向 `ab inbox --kind ...`

@@ -15,7 +15,7 @@ export function short(id: string): string {
 }
 
 /** 确认来源的叫法（§12.6.7 T1/T2）：读路径都用这一份，agent 才分得清哪些是人确认过的。 */
-export const TRUST_LABEL = { user: "用户确认", code: "代码核验", corroboration: "跨会话印证" } as const;
+export const TRUST_LABEL = { user: "用户确认", code: "代码核验", corroboration: "跨会话印证", adoption: "实盘采纳" } as const;
 
 /** 已确认条目的来源标记；未确认的由调用方按原口径标（自动沉淀 / agent 自记）。 */
 export function trustMark(p: Pick<Proposition, "confirmed" | "confirmed_by">): string {
@@ -46,6 +46,7 @@ export function confirmedLine(p: Proposition): string {
   const at = e ? e.ts.slice(0, 10) : "时间未记录";
   if (p.confirmed_by === "code") return `确认: ${TRUST_LABEL.code}转正 · ${at}（模型按仓库代码核对后转正，没有人确认过）`;
   if (p.confirmed_by === "corroboration") return `确认: ${TRUST_LABEL.corroboration}转正 · ${at}（两个以上会话里用户都这样说过）`;
+  if (p.confirmed_by === "adoption") return `确认: ${TRUST_LABEL.adoption}转正 · ${at}（多次被检索或注入后实际采纳转正，没有人手动确认过）`;
   const where = e?.session_id ? `在 agent 会话 ${e.session_id.slice(0, 8)} 里执行` : "不在 agent 会话里执行";
   return `确认: ${TRUST_LABEL.user} · ${e ? whoLabel(e) : "操作者未记录（旧事件）"} · ${at} · ${where}`;
 }

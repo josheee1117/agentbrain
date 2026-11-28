@@ -118,7 +118,7 @@ function main() {
   const hook = JSON.parse(ab(["recall", "--hook"], env, JSON.stringify({ prompt: "全局锁", cwd: repo })));
   log("hook-output.json", hook);
   const context = hook.hookSpecificOutput.additionalContext;
-  assert.ok(context.includes(pref) && context.includes("要不要查历史记忆由你判断") && context.includes("每个最终回答"));
+  assert.ok(context.includes(pref) && context.includes("<agentbrain-recall>") && context.includes("每个最终回答"));
   assert.ok(!context.includes(pit), "hook 不应自动检索坑记忆");
 
   const hooks = (host: Host) => ({ hooks: { UserPromptSubmit: [{ hooks: [

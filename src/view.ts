@@ -17,7 +17,7 @@ import type { CodeVersion } from "./status.ts";
 /** "运行状况"里最多列几个没做成的窗口（§12.6.8 V5）。 */
 const OPS_PROBLEM_ROWS = 10;
 
-export type ViewStatus = "user" | "code" | "corroboration" | "unconfirmed" | "stale";
+export type ViewStatus = "user" | "code" | "corroboration" | "adoption" | "unconfirmed" | "stale";
 
 export interface ViewEntry {
   id: string;
@@ -438,7 +438,7 @@ table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:6px;borde
 .num{text-align:right;font-variant-numeric:tabular-nums}.dim{color:#5b6488}
 .pill{padding:1px 8px;border-radius:99px;font-size:11px;margin-right:4px;display:inline-block}
 .k-decision{background:#2a1f5c;color:#c4b5fd}.k-pitfall{background:#4a1d2a;color:#fda4af}.k-rule{background:#0f3b3a;color:#5eead4}.k-note{background:#3b3416;color:#fde68a}
-.s-user{color:#22c55e}.s-code{color:#38bdf8}.s-corroboration{color:#a78bfa}.s-unconfirmed{color:#94a3b8}.s-stale{color:#ef4444}
+.s-user{color:#22c55e}.s-code{color:#38bdf8}.s-corroboration{color:#a78bfa}.s-adoption{color:#34d399}.s-unconfirmed{color:#94a3b8}.s-stale{color:#ef4444}
 .filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.filters input,.filters select{background:rgba(255,255,255,.05);color:#e6e9f2;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:5px 8px}
 .item{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer}.item:hover,.item.sel{background:rgba(255,255,255,.06)}
 .item .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -464,7 +464,7 @@ a{color:#93c5fd;cursor:pointer}#tip{position:fixed;pointer-events:none;backgroun
 const D=JSON.parse(document.getElementById('data').textContent),T=D.telemetry;
 const E=D.entries,byId=new Map(E.map(e=>[e.id,e])),A=E.filter(e=>e.state==='active');
 const KIND={rule:'规则',decision:'决定',pitfall:'坑',note:'事实'},KC={decision:'#7c5cff',pitfall:'#f472b6',rule:'#2dd4bf',note:'#fbbf24'};
-const ST={user:'用户确认',code:'代码核验',corroboration:'跨会话印证',unconfirmed:'未确认',stale:'与代码不符'},SC={user:'#22c55e',code:'#38bdf8',corroboration:'#a78bfa',unconfirmed:'#475569',stale:'#ef4444'};
+const ST={user:'用户确认',code:'代码核验',corroboration:'跨会话印证',adoption:'实盘采纳',unconfirmed:'未确认',stale:'与代码不符'},SC={user:'#22c55e',code:'#38bdf8',corroboration:'#a78bfa',adoption:'#34d399',unconfirmed:'#475569',stale:'#ef4444'};
 const STATE={active:'有效',archived:'已归档',superseded:'已被替代'};
 const LINK={merged_into:'已并入',merged_from:'合并自',refines:'补充了',refined_by:'被补充',conflicts:'冲突',supersedes:'替代了',supersedes_pending:'替代（未生效）',superseded_by:'被替代',pending_correction:'待确认纠正'};
 const EC={refines:'#64748b',refined_by:'#64748b',merged_into:'#60a5fa',merged_from:'#60a5fa',conflicts:'#ef4444',supersedes:'#e2e8f0',superseded_by:'#e2e8f0',supersedes_pending:'#f59e0b',pending_correction:'#f59e0b'};

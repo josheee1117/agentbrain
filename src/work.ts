@@ -4,6 +4,7 @@
  * 另做三件定期事：按代码核验未确认的坑/事实、跨会话印证、过期提议归档。
  */
 import { prune as pruneTelemetry, stripAbUsed } from "./telemetry.ts";
+import { runLifecyclePass, type LifecycleReport } from "./lifecycle.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { closeSync, existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, readSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { createHash } from "node:crypto";
@@ -112,6 +113,8 @@ export interface WorkReport {
   problems: string[];
   /** 话题模式的运行报告（审计记录，可 ab work --undo <run> 整次撤销）。 */
   topic?: TopicRunReport;
+  /** sweep 时执行的四层生命周期自动流转统计。 */
+  lifecycle?: LifecycleReport;
 }
 
 // ---------- 会话登记 ----------
@@ -635,6 +638,8 @@ export function admit(
       ...(c.valid_days ? { valid_days: c.valid_days } : {}),
       ...(c.said_at ? { said_at: c.said_at } : {}),
       ...(c.guidance ? { guidance: true } : {}),
+      ...(c.scenes?.length && !c.guidance && c.kind === "rule" ? { scenes: c.scenes } : {}),
+      ...(c.on_demand && !c.guidance ? { on_demand: true } : {}),
       ...(c.body ? { body: c.body } : {}),
       ...(c.alternatives ? { alternatives: c.alternatives } : {}),
       ...(c.value ? { value: c.value } : {}),
@@ -1459,7 +1464,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
     backlogLeft: 0,
     receipt: intake.emptyReceipt(),
     verify: { verified: 0, contradicted: 0, not_verifiable: 0, inconclusive: 0, errors: 0 },
-    relate: { duplicate: 0, refines: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
+    relate: { duplicate: 0, refines: 0, supersedes: 0, conflicts: 0, unrelated: 0, unsure: 0, corroborated: 0, errors: 0 },
     dry: [],
     split: 0,
     problems: [],
@@ -1513,6 +1518,7 @@ export async function runWork(deps: WorkDeps, opts: WorkOptions): Promise<WorkRe
         }
       }
       await verifyPass(deps, report, holder);
+      report.lifecycle = runLifecyclePass(deps.store, { now: deps.now(), dryRun: false });
       intake.prune(db, deps.now());
       pruneTopicMarks(db, deps.now());
     }

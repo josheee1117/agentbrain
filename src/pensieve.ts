@@ -245,7 +245,7 @@ export interface ImportReport {
   /** 因密钥或超长没写进 body 的文档（正文没进库，报告要列出）。 */
   detailSkipped: DetailSkipped[];
   skipped: Skipped[];
-  relate: { mergedExisting: number; mergedIntoExisting: number; refines: number; conflicts: string[]; unrelated: number; unsure: number; errors: number; errorDetails: string[] };
+  relate: { mergedExisting: number; mergedIntoExisting: number; refines: number; supersedes: number; conflicts: string[]; unrelated: number; unsure: number; errors: number; errorDetails: string[] };
 }
 
 export interface ImportDeps {
@@ -259,7 +259,7 @@ export interface ImportDeps {
 }
 
 export async function importPensieve(deps: ImportDeps, plan: ReturnType<typeof planImport>): Promise<ImportReport> {
-  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, detailed: [], detailSkipped: [], skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0, errorDetails: [] } };
+  const report: ImportReport = { created: [], corrected: [], unchanged: 0, archivedSkip: 0, detailed: [], detailSkipped: [], skipped: plan.skipped, relate: { mergedExisting: 0, mergedIntoExisting: 0, refines: 0, supersedes: 0, conflicts: [], unrelated: 0, unsure: 0, errors: 0, errorDetails: [] } };
   const pending: string[] = []; // 未变但还没做过关系判定的（上次判定出错或中断），本次补判
   for (const it of plan.items) {
     const pid = it.project === null ? null : deps.projectId(it.project);

@@ -1221,14 +1221,23 @@ test("§12.6.12 无法核验只核一次；证据不足要等提交变了且过�
   assert.doesNotMatch(firstNew, new RegExp(old.slice(0, 8)), "没核过的排在重核前面");
 });
 
-test("到期不再自动归档：sweep 后未确认提议仍 active，只进到期复审清单（§21 2026-10-14）", async () => {
+test("四层生命周期：超 14 天零采纳的自动抽取草稿自动归档（可恢复），人工/收口未确认条目仍留在复审清单", async () => {
   const e = env();
   const id = unconfirmed(e, "很久以前的坑");
+  const manualId = e.store.remember(e.pid, "s0", false, {
+    kind: "pitfall",
+    text: "人工记录未确认的旧坑",
+    confirmed: false,
+    origin: "manual",
+    source: { host: "claude", session_id: "s0", transcript: null, anchor: null, summary: "x" },
+  });
   const later = new Date(Date.now() + 91 * 86_400_000);
   await runWork(e.deps(verifierChat({ verdict: "not_verifiable" }), { now: () => later }), { sweep: true, dryRun: false });
   const p = e.store.project().props.get(id)!;
-  assert.deepEqual([p.state, p.expired], ["active", false]);
-  assert.deepEqual(reviewList(e.store.project().props.values(), e.store.usage(), later).map((d) => d.prop.id), [id]);
+  assert.deepEqual([p.state, p.expired], ["archived", true]);
+  const pm = e.store.project().props.get(manualId)!;
+  assert.deepEqual([pm.state, pm.expired], ["active", false]);
+  assert.deepEqual(reviewList(e.store.project().props.values(), e.store.usage(), later).map((d) => d.prop.id), [manualId]);
 });
 
 test("ab-2 sweep 的核验读取主干提交，不读测试分支或脏工作区", async () => {

@@ -11,7 +11,7 @@
 - 换文件后的重放不重记证据：用户编辑 Codex 旧消息也会换文件，新文件首轮会把已抽过的原话再送一遍。给已有条目追加来源时，同宿主同会话里 `quote_sha256` 已经记过的证据跳过；整条来源都跳掉就不写事件。跨会话同原话照常追加（那是印证，有意义）
 - 话题模式的 `topic_cooldown:<host>` 判到期不查库：新版本写入已按 `MAX_DEFER_MS` 封顶一小时，截止时间比「现在 + 一小时」还远的只可能是旧版本未封顶的原值，按到期处理（`src/intake.ts` 的 `cooldownDue`）。不再按同宿主任意 429 行的 `MAX(updated_at)` 重新起算，别的会话的 429 挡不住已到期的历史冷却
 - 模型产出留痕（§8.10）：普通抽取、一步式话题、重复追加证据、关系判定、代码核验写下的 L1 事件都带 `model` 与 `prompt_version`（实发系统提示词全文的 SHA-256 前 12 位），`ab get` 按事件逐条列出
-- 转正只有三条路：用户 confirm / 代码核验 / 跨会话印证；跨会话印证要求两个以上会话各自有用户原话，关系未判定（`[关系未判定]`）或带冲突、待确认纠正、替代关系的条目不转正
+- 转正与四层生命周期（`ab work --sweep` / `ab lifecycle`）：转正含用户 `confirm`、代码核验（`code`）、跨会话印证（`corroboration`，≥2 独立会话）与实盘采纳（`adoption`，≥2 会话引用或主动 `ab get`）；L0 安全红线（`ab tag --redline`，上限 15 条）永久豁免降级与归档；单会话零采纳 `code` 核验条目与近 30 天 `brief` 注入 ≥25 且零采纳条目自动降入 L2 按需温层（`on_demand: true`）；`origin="extract"` 满 14 天零采纳单会话草稿自动 `archive(reason="expired")`（可 `ab archive --reactivate` 恢复）
 
 - 失败原因存库（§12.6.6）：`capture_windows.error_detail` 是 HTTP 状态码加脱敏后的上游报错；`ab work` 输出末尾有「出错明细」
 - 钩子拉起的 `ab work --session` 输出追加到 `<AB_HOME>/work.log`（超过 5 MB 轮转一份）

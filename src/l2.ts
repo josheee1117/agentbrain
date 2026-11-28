@@ -56,8 +56,8 @@ export interface ImportRef {
 }
 /** 抽取器判定的与已有记忆的关系（§9.4.4）。 */
 export type RelationType = "new" | "duplicate" | "refines" | "conflicts" | "supersedes" | "unsure";
-/** 谁让这条转正：用户、代码核验、跨会话印证。旧数据缺字段按用户。 */
-export type ConfirmedBy = "user" | "code" | "corroboration";
+/** 谁让这条转正：用户、代码核验、跨会话印证、实盘采纳。旧数据缺字段按用户。 */
+export type ConfirmedBy = "user" | "code" | "corroboration" | "adoption";
 
 /**
  * transcript 里的证据坐标（§13.3）。quote 是逐字核对、过滤密钥之后实际算哈希的那段原话（§8.11.2），
@@ -126,6 +126,8 @@ export interface RememberBody extends ModelProvenance {
   guidance?: boolean;
   /** 按需检索条目：保持已确认与可检索，但不进被动 brief 注入。 */
   on_demand?: boolean;
+  /** 永久安全红线（L0）：豁免使用率衰减降级与超期归档，必须常驻（上限 15 条）。 */
+  redline?: boolean;
   /** 只对规则有意义（§11.10）。空/缺省表示不分场景。 */
   scenes?: Scene[];
   /** 旧版本（v3 候选区，§8.8 前）写下的候选标记。投影时忽略：条目照常是有效的未确认条目。 */
@@ -216,6 +218,7 @@ export interface UnconfirmBody {
 export interface TagBody {
   guidance?: boolean;
   on_demand?: boolean;
+  redline?: boolean;
   scenes?: Scene[];
   anchors?: string[];
   anchor_head?: string;
@@ -223,7 +226,7 @@ export interface TagBody {
 
 /** relate 事件：ab work 关系判定第 2 层的结论（§9.4.4、§21 2026-10-13）。unsure 也写，表示判过、仍未定。 */
 export interface RelateBody extends ModelProvenance {
-  outcome: "duplicate" | "refines" | "conflicts" | "unrelated" | "unsure";
+  outcome: "duplicate" | "refines" | "supersedes" | "conflicts" | "unrelated" | "unsure";
   target: string | null;
   reason: string;
   model: string;
@@ -288,6 +291,8 @@ export interface Proposition {
   guidance: boolean;
   /** 按需检索标记：true 时不进被动 brief，仍留在 search / get。 */
   on_demand: boolean;
+  /** 永久安全红线（L0）：豁免衰减降级与归档。 */
+  redline: boolean;
   /** 场景标签（§11.10）；旧数据缺字段为 []。 */
   scenes: Scene[];
   /** 代码路径锚点（§9.7.7）；旧数据缺字段为 []。 */
@@ -413,6 +418,7 @@ export function fold(rows: EventRow[]): Projection {
         ...(typeof b.topic?.run === "string" ? { topic_run: b.topic.run } : {}),
         guidance: b.guidance === true,
         on_demand: b.on_demand === true,
+        redline: b.redline === true,
         scenes: Array.isArray(b.scenes) ? b.scenes : [],
         anchors: Array.isArray(b.anchors) ? b.anchors : [],
         anchor_head: typeof b.anchor_head === "string" ? b.anchor_head : null,
@@ -486,6 +492,7 @@ export function fold(rows: EventRow[]): Projection {
       const b = JSON.parse(r.body) as TagBody;
       if (typeof b.guidance === "boolean") target.guidance = b.guidance;
       if (typeof b.on_demand === "boolean") target.on_demand = b.on_demand;
+      if (typeof b.redline === "boolean") target.redline = b.redline;
       // 按字段是否出现更新：没给 scenes 不动，给 [] 才清空
       if (Array.isArray(b.scenes)) target.scenes = b.scenes;
       if (Array.isArray(b.anchors)) {
@@ -526,6 +533,8 @@ export function fold(rows: EventRow[]): Projection {
       target.related = { outcome: b.outcome, target: b.target };
       // 第 2 层判出了确定关系才解除"关系未判定"；unsure 照旧，之后只有用户能解除
       if (b.outcome !== "unsure") target.unreconciled = false;
+      // 时间演进替代：补充第 2 层判出的 supersedes，由后续统一替代循环标记 superseded_draft 或 pending_corrections
+      if (b.outcome === "supersedes" && b.target && !target.supersedes) target.supersedes = b.target;
       // 冲突只标记，不写 supersedes；另一端的判定也只更新同一对。
       judgePair(target.id, b.target, b.outcome, r);
       continue;
@@ -690,6 +699,8 @@ export function checkAnchorHead(head: string | undefined): void {
 
 /** 写 remember 事件前的检查：种类、长度、密钥、脱敏。违反的抛错，调用方（CLI）报错退出；通过时就地换成脱敏后的字段。 */
 export function checkRememberBody(b: RememberBody): void {
+  if (b.redline !== undefined && typeof b.redline !== "boolean") throw new Error("redline 必须是布尔值");
+  if (b.redline === true && b.on_demand === true) throw new Error("安全红线（redline）必须常驻，不能同时标成按需（on_demand）");
   const body = checkBodyField(b.kind, b.body);
   if (body !== undefined) b.body = body;
   checkAlternatives(b.kind, b.alternatives);
@@ -713,6 +724,8 @@ export function checkRememberBody(b: RememberBody): void {
 export function checkTagBody(b: TagBody): void {
   if (b.guidance !== undefined && typeof b.guidance !== "boolean") throw new Error("guidance 必须是布尔值");
   if (b.on_demand !== undefined && typeof b.on_demand !== "boolean") throw new Error("on_demand 必须是布尔值");
+  if (b.redline !== undefined && typeof b.redline !== "boolean") throw new Error("redline 必须是布尔值");
+  if (b.redline === true && b.on_demand === true) throw new Error("安全红线（redline）必须常驻，不能同时标成按需（on_demand）");
   if (b.scenes !== undefined) {
     if (!Array.isArray(b.scenes) || b.scenes.some((s) => !(SCENES as readonly string[]).includes(s))) {
       throw new Error(`scenes 必须是 ${SCENES.join("|")} 的数组`);

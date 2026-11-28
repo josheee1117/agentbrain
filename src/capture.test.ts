@@ -152,7 +152,7 @@ test("ab work --sweep 按仓库代码核验未确认的坑：证据对得上就�
   const plain = await ab(["recall", "宿主子进程环境变量很少，找不到解释器"]);
   assert.match(plain.out, /找不到解释器就报错退出/, "转正后进文本检索");
   const recall = await ab(["recall", "--hook"], { input: JSON.stringify({ prompt: "宿主子进程环境变量很少，找不到解释器", cwd: repo }) });
-  assert.match(recall.out, /要不要查历史记忆由你判断/, "hook 只给提醒");
+  assert.match(recall.out, /"hookEventName":"UserPromptSubmit"/, "hook 返回合法 JSON 而不全量检索");
   assert.doesNotMatch(recall.out, /找不到解释器就报错退出/, "hook 不再自动检索");
 });
 

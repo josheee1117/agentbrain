@@ -113,7 +113,7 @@ test("hook 只注入偏好和提醒，不再检索；search/get/brief 交付带�
   });
   assert.equal(hook.status, 0);
   const content = JSON.parse(hook.stdout).hookSpecificOutput.additionalContext;
-  assert.match(content, /要不要查历史记忆由你判断/);
+  assert.equal(content, "");
   assert.doesNotMatch(content, /自动检索不应注入的特有旧坑/);
   for (const args of [["brief"], ["search", "特有旧坑"], ["get", id]]) assert.equal(ab(args, alpha, own).code, 0);
   const db = new DatabaseSync(join(own, "store.db"));
@@ -515,7 +515,7 @@ test("recall 保留文本检索，recall --hook 改为偏好和提醒（不自�
   const json = JSON.parse(hit.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
   assert.equal(json.hookSpecificOutput.hookEventName, "UserPromptSubmit");
   const ctx = json.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /要不要查历史记忆由你判断/);
+  assert.equal(ctx, "");
   assert.doesNotMatch(ctx, /别在 alpha 召回里用全局锁/);
 
   const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 召回", cwd: alpha }));
@@ -577,7 +577,7 @@ test("integrations 里 Claude Code 与 Codex 的样例命令能产出 UserPrompt
     assert.equal(r.status, 0, file);
     const out = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
     assert.equal(out.hookSpecificOutput.hookEventName, "UserPromptSubmit", file);
-    assert.match(out.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/, file);
+    assert.equal(out.hookSpecificOutput.additionalContext, "", file);
   }
 });
 
@@ -952,7 +952,7 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   assert.equal(hit.code, 0, hit.err);
   const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } };
   assert.match(j.hookSpecificOutput.additionalContext, /说人话/);
-  assert.match(j.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/);
+  assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/);
   assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /别在 alpha 计数里用全局锁/);
   const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 计数", cwd: alpha }));
   assert.equal(slash.out, "");
@@ -1176,7 +1176,7 @@ test("recall --hook：先规范 agy 截断路径再判 worker，身份待定不�
   writeFileSync(full, JSON.stringify({ type: "SYSTEM_MESSAGE", content: "首轮还未落盘" }) + "\n");
   for (const path of [full, null, join(logs, "missing.jsonl")]) {
     const pending = hook(path);
-    assert.match(pending, /要不要查历史记忆由你判断/);
+    assert.equal(pending, "");
     assert.doesNotMatch(pending, /<agentbrain-prefs>|只给主会话/);
   }
   const rules = ab(["brief", "--worker"], alpha, own);
@@ -1210,7 +1210,7 @@ for (const scenario of ["codex-main-long", "codex-main-short", "codex-worker-lon
     assert.equal(result.code, 0, result.err);
     const context = JSON.parse(result.out).hookSpecificOutput.additionalContext;
     t.diagnostic(`${scenario} recall --hook 输出：${context}`);
-    assert.match(context, /要不要查历史记忆由你判断/);
+    assert.doesNotMatch(context, /要不要查历史记忆由你判断/);
     if (worker) assert.doesNotMatch(context, /<agentbrain-prefs>|只给主会话/);
     else assert.match(context, /<agentbrain-prefs>[\s\S]*只给主会话的工作偏好/);
   });
@@ -1253,8 +1253,12 @@ test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab sta
     await handlers.get("session_start")!({}, ctx);
     await new Promise((r) => setTimeout(r, 1500));
     assert.equal(statuses.at(-1), "🧠 ab · 待确认 1"); // 真 ab status --line 的结果；失败数 0 不显示
+    const silent = await handlers.get("before_agent_start")!({ prompt: "扩展 全局锁" }, ctx);
+    assert.equal(silent, undefined, "常规未命中提问保持静默不注入噪音");
+    const g = ab(["remember", "--global", "--confirmed", "--kind", "rule", "--text", "扩展偏好：汇报简洁", "--summary", "扩展"], alpha, own);
+    assert.equal(ab(["guidance", g.out.match(/\[([0-9a-f]{8})\]/)![1]], alpha, own).code, 0);
     const res = (await handlers.get("before_agent_start")!({ prompt: "扩展 全局锁" }, ctx)) as { message: { content: string } };
-    assert.match(res.message.content, /要不要查历史记忆由你判断/);
+    assert.match(res.message.content, /扩展偏好：汇报简洁/);
     assert.equal(statuses.at(-1), "🧠 ab · 待确认 1");
     await commands.get("ab")!.handler("", ctx);
     assert.match(notes.at(-1)!, /^🧠 ab · 待确认 1\n\n[\s\S]*到期待复审: 1/);

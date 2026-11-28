@@ -27,10 +27,11 @@ import { loadSpecs, synthesizeProject } from "./synthesize.ts";
 import * as intake from "./intake.ts";
 import { buildViewData, renderHtml } from "./view.ts";
 import { applyNotes, type NoteAction } from "./notes.ts";
-import { citeEnabled, setCite, logInjections, logQuery, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, RECALL_REMINDER, type Ctx as TelemetryCtx } from "./telemetry.ts";
+import { citeEnabled, setCite, logInjections, logQuery, modelOf, recordRecall, scanSession, sessionsToScan, withCiteInstruction, CITE_INSTRUCTION, type Ctx as TelemetryCtx } from "./telemetry.ts";
 import { brief, BriefError } from "./brief.ts";
 import { collectInbox, collectNoiseRules, formatInboxText, formatNoiseText, INBOX_DEFAULT_LIMIT, INBOX_KINDS, type InboxKind } from "./inbox.ts";
-import { guidanceBlock, recall } from "./recall.ts";
+import { countActiveRedlines, formatLifecycleReport, REDLINE_MAX, runLifecyclePass } from "./lifecycle.ts";
+import { conditionalTriggerHint, guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
@@ -128,6 +129,7 @@ function ownershipLine(p: Proposition, names: Map<string, string>): string {
 function marks(p: Proposition): string {
   return [
     p.confirmed ? trustMark(p) : p.origin === "extract" ? "[未确认·自动沉淀]" : p.origin === "auto" ? "[未确认·收口提炼]" : "[未确认]",
+    p.redline ? "[红线]" : "",
     p.on_demand ? "[按需]" : "",
     unresolvedMark(p),
     p.unreconciled ? "[关系未判定]" : "",
@@ -319,9 +321,17 @@ async function cmdRecall(argv: string[]): Promise<void> {
         prefs = "";
       }
 
-      // 2. 提醒块（带报告要求，若开关打开）
-      let reminder = `<agentbrain-recall>\n${RECALL_REMINDER}\n</agentbrain-recall>\n`;
-      if (cite) reminder = withCiteInstruction(reminder);
+      // 2. 条件触发提醒（BM25 <2.5ms）：常规提问保持静默，命中窄域高区分词才给短 ID 线索；cite 开启时保留回答报告要求
+      let trig = { block: "", ids: [] as string[] };
+      try {
+        trig = conditionalTriggerHint(store, query, cwd, worker ?? true, new Set(used));
+      } catch {
+        trig = { block: "", ids: [] };
+      }
+      let reminder = trig.block;
+      if (cite) {
+        reminder = reminder ? withCiteInstruction(reminder) : `<agentbrain-recall>\n${CITE_INSTRUCTION}\n</agentbrain-recall>\n`;
+      }
 
       const block = prefs + reminder;
       process.stdout.write(JSON.stringify({
@@ -329,7 +339,7 @@ async function cmdRecall(argv: string[]): Promise<void> {
         ...(hookRaw?.want_session_state === true ? { agentbrain: { session: { worker, brief_present: hasBriefInjected(ctx?.transcript) } } } : {}),
       }) + "\n");
 
-      if (ctx) telemetry(() => recordRecall(store.workDb, ctx, "nohit", [], performance.now() - t0, cite, new Date()));
+      if (ctx) telemetry(() => recordRecall(store.workDb, ctx, trig.ids.length ? "hit" : "nohit", trig.ids, performance.now() - t0, cite, new Date()));
       if (used.length) markUsed(store, used);
       return;
     }
@@ -1231,11 +1241,12 @@ async function cmdSynthesize(argv: string[]): Promise<void> {
           `${result.dryRun ? "预演，未写入。" : ""}项目 ${result.project}（HEAD @${result.head.slice(0, 7)}，模型 ${result.model}，提示词 ${result.promptVersion}${result.truncated ? "，spec 已截断" : ""}）`,
         ];
         if (!result.created.length) {
-          lines.push(`没有提炼出新的项目决定（跳过 ${result.skipped.length} 条）。`);
+          lines.push(`没有提炼出新的项目收口记忆（跳过 ${result.skipped.length} 条）。`);
         } else {
-          lines.push(`产出 ${result.created.length} 条未确认决定（绝不自动转正/归档）：`);
+          lines.push(`产出 ${result.created.length} 条未确认收口记忆（绝不自动转正/归档）：`);
           for (const item of result.created) {
-            lines.push(`  ${item.id ? `[${short(item.id)}]` : "[预演]"} 决定[未确认·收口提炼]: ${item.text}`);
+            const tags = `${item.onDemand ? "[按需]" : ""}${item.scenes?.length ? `[场景:${item.scenes.join(",")}]` : ""}`;
+            lines.push(`  ${item.id ? `[${short(item.id)}]` : "[预演]"} ${KIND_LABEL[item.kind]}[未确认·收口提炼]${tags}: ${item.text}`);
             lines.push(`    锚点（基准 ${item.anchorHead.slice(0, 7)}）: ${item.anchors.join("；")}`);
             if (item.why) lines.push(`    为什么: ${item.why}`);
             if (item.supersedes) lines.push(`    拟替代: [${short(item.supersedes)}]（未确认前不盖掉旧条目）`);
@@ -1282,7 +1293,7 @@ function cmdArchive(argv: string[]): void {
   }
 }
 
-/** ab tag：改元数据标记，不改正文。支持场景标签（§11.10）、代码锚点（§9.7.7）和按需检索标记。 */
+/** ab tag：改元数据标记，不改正文。支持场景标签（§11.10）、代码锚点（§9.7.7）、按需检索与安全红线标记。 */
 function cmdTag(argv: string[]): void {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -1291,6 +1302,8 @@ function cmdTag(argv: string[]): void {
       anchor: { type: "string", multiple: true, default: [] },
       "on-demand": { type: "boolean", default: false },
       "no-on-demand": { type: "boolean", default: false },
+      redline: { type: "boolean", default: false },
+      "no-redline": { type: "boolean", default: false },
     },
     strict: true,
     allowPositionals: true,
@@ -1299,9 +1312,12 @@ function cmdTag(argv: string[]): void {
   const rawAnchors = values.anchor as string[];
   const hasAnchor = rawAnchors.length > 0;
   const hasOnDemand = values["on-demand"] === true || values["no-on-demand"] === true;
+  const hasRedline = values.redline === true || values["no-redline"] === true;
   if (values["on-demand"] && values["no-on-demand"]) die("--on-demand 与 --no-on-demand 不能同时用");
-  if (!positionals[0] || (!hasScene && !hasAnchor && !hasOnDemand))
-    die(`用法: ab tag <id 前缀> [--scene <${SCENES.join(",")}|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand]`);
+  if (values.redline && values["no-redline"]) die("--redline 与 --no-redline 不能同时用");
+  if (values.redline && values["on-demand"]) die("--redline（常驻安全红线）与 --on-demand（按需检索）不能同时用");
+  if (!positionals[0] || (!hasScene && !hasAnchor && !hasOnDemand && !hasRedline))
+    die(`用法: ab tag <id 前缀> [--scene <${SCENES.join(",")}|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand] [--redline | --no-redline]`);
   const scenes = hasScene ? parseScenes(values.scene!, true) : undefined;
   const store = open();
   try {
@@ -1313,9 +1329,22 @@ function cmdTag(argv: string[]): void {
         die(`[${short(p.id)}] 是干活偏好（guidance），不能带场景；先 ab guidance ${short(p.id)} --off`);
       body.scenes = scenes;
     }
+    if (hasRedline) {
+      const wantRedline = values.redline === true;
+      if (wantRedline && !p.redline) {
+        const cur = countActiveRedlines(store.project().props.values());
+        if (cur >= REDLINE_MAX) {
+          die(`安全红线（L0）上限为 ${REDLINE_MAX} 条，当前已有 ${cur} 条；请先用 ab tag <id> --no-redline 腾出名额`);
+        }
+      }
+      body.redline = wantRedline;
+      if (wantRedline && p.on_demand) body.on_demand = false;
+    }
     if (hasOnDemand) {
       if (values["on-demand"] && p.guidance)
         die(`[${short(p.id)}] 是常驻干活偏好（guidance），不能同时标成按需；先 ab guidance ${short(p.id)} --off`);
+      if (values["on-demand"] && (body.redline ?? p.redline))
+        die(`[${short(p.id)}] 是安全红线（L0），不能同时标成按需；先 ab tag ${short(p.id)} --no-redline`);
       body.on_demand = values["on-demand"] === true;
     }
     let anchorInfo: { anchors?: string[]; anchorHead?: string; isNone: boolean } | null = null;
@@ -1329,10 +1358,38 @@ function cmdTag(argv: string[]): void {
     const out: string[] = [];
     if (hasScene) out.push(scenes!.length ? `已设场景 [${short(p.id)}] ${scenes!.join(",")}: ${p.text}` : `已清空场景 [${short(p.id)}]: ${p.text}`);
     if (anchorInfo) out.push(anchorInfo.isNone ? `已清空锚点 [${short(p.id)}]: ${p.text}` : `已设锚点 [${short(p.id)}] ${anchorInfo.anchors!.join("，")}: ${p.text}`);
+    if (hasRedline) out.push(body.redline ? `已设为安全红线（L0 豁免衰减） [${short(p.id)}]: ${p.text}` : `已取消安全红线 [${short(p.id)}]: ${p.text}`);
     if (hasOnDemand) out.push(body.on_demand ? `已设为按需检索（不进被动 brief） [${short(p.id)}]: ${p.text}` : `已恢复进被动 brief [${short(p.id)}]: ${p.text}`);
     console.log(out.join("\n"));
   } finally {
     store.close();
+  }
+}
+
+function cmdLifecycle(argv: string[]): void {
+  const { values, positionals } = parseArgs({
+    args: argv,
+    options: {
+      "dry-run": { type: "boolean", default: false },
+      json: { type: "boolean", default: false },
+    },
+    strict: true,
+    allowPositionals: true,
+  });
+  if (positionals.length > 0) die(`用法: ab lifecycle [--dry-run] [--json]\n${usageFor("lifecycle")}`);
+  const dryRun = values["dry-run"] === true;
+  const handle = dryRun
+    ? openReadOnlySnapshot(home())
+    : (() => {
+        const s = open();
+        return { store: s, cleanup: () => s.close() };
+      })();
+  try {
+    const report = runLifecyclePass(handle.store, { dryRun });
+    if (values.json) console.log(JSON.stringify(report));
+    else console.log(formatLifecycleReport(report));
+  } finally {
+    handle.cleanup();
   }
 }
 
@@ -1777,8 +1834,11 @@ async function cmdWork(argv: string[]): Promise<void> {
         `窗口: 完成 ${r.windows.done}，延后 ${r.windows.deferred}，失败 ${r.windows.failed}，跳过 ${r.windows.skipped}${r.split ? `，拆开重试 ${r.split}` : ""}${r.scanned ? `；扫描补登记 ${r.scanned}` : ""}${r.backlogLeft ? `；补登记会话留到下次 ${r.backlogLeft}（每次 sweep 最多 ${BACKLOG_WINDOWS_PER_SWEEP} 个窗口）` : ""}`,
         `产出: 候选 ${x.candidates}，提议 ${x.proposals}，附加来源 ${x.attached}，待确认纠正 ${x.corrections}，关系未判定 ${x.unreconciled}，跨会话印证转正 ${x.corroborated}，同窗口合并 ${x.merged}`,
         `丢弃: 整条候选 ${fmtCounts(x.dropped)}；单条证据 ${fmtCounts(x.evidence_dropped)}`,
-        Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
+        Object.values(r.relate).some(Boolean) ? `关系判定: 重复并入 ${r.relate.duplicate}，补充 ${r.relate.refines}，替代 ${r.relate.supersedes}，冲突 ${r.relate.conflicts}，无关 ${r.relate.unrelated}，拿不准 ${r.relate.unsure}，并入后跨会话印证转正 ${r.relate.corroborated}，出错 ${r.relate.errors}` : "",
         values.sweep ? `代码核验: 转正 ${r.verify.verified}，与代码不符 ${r.verify.contradicted}，代码无法核验 ${r.verify.not_verifiable}，证据不足 ${r.verify.inconclusive}，出错 ${r.verify.errors}` : "",
+        r.lifecycle
+          ? `生命周期: 印证转正 ${r.lifecycle.promotedCorroboration.length}，采纳转正 ${r.lifecycle.promotedAdoption.length}，核验入温层 ${r.lifecycle.warmTieredCode.length}，衰减转按需 ${r.lifecycle.demotedToOnDemand.length}，超14天草稿归档 ${r.lifecycle.archivedDrafts.length}`
+          : "",
         r.topic && r.topic.windows.length
           ? `话题沉淀: 运行 ${r.topic.run}，话题窗口 ${r.topic.windows.length}，写入正式库 ${r.topic.windows.reduce((n, w) => n + w.created.length, 0)} 条（未确认），并入建议 ${r.topic.windows.reduce((n, w) => n + w.merges.length, 0)} 条（只进报告）；报告 ${join(topicReportDir(home()), `${r.topic.run}.json`)}；整次撤销 ab work --undo ${r.topic.run}`
           : "",
@@ -2050,11 +2110,12 @@ const USAGE = `用法:
   ab verify <id 前缀> [--ref <git-ref>]
                                     强制单条代码重核；--ref 只读目标提交，不切分支或改工作区；决定不自动转正
   ab synthesize <项目> --spec <文件>... [--diff-base <ref>] [--dry-run] [--json]
-                                    需求收口综合沉淀：结合文档与 git diff 提炼 ≤3 条带锚点未确认决定；--dry-run 零写库
+                                    需求收口综合沉淀：结合文档与 git diff 提炼 ≤3 条带锚点未确认决定/规则/坑；--dry-run 零写库
   ab confirm <id 前缀>
   ab archive <id 前缀> [--reactivate]
-  ab tag <id 前缀> [--scene <design,code,test,review|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand]
-                                    改元数据标记（至少传一项）：--scene 仅限规则；--anchor 挂/清代码锚点；--on-demand 退出被动 brief、保留按需检索
+  ab tag <id 前缀> [--scene <design,code,test,review|none>] [--anchor <路径>… | --anchor none] [--on-demand | --no-on-demand] [--redline | --no-redline]
+                                    改元数据标记（至少传一项）：--scene 仅限规则；--anchor 挂/清代码锚点；--on-demand 退出被动 brief；--redline 设为 L0 永久安全红线（上限 15 条）
+  ab lifecycle [--dry-run] [--json]   执行四层生命周期自动流转（印证/采纳自动转正、零引用衰减转按需、14天未使用抽取草稿归档）
   ab relate <id1> <id2> (--coexist | --refines) [--reason <说明>]
                                     显式解除误报冲突：--coexist 标记互补共存，--refines 标记 id1 补充细化 id2
   ab guidance <id 前缀> [--off]          标成"指导干活方式的偏好"（确认过的全局偏好每轮常驻注入；带场景标签的不能标）
@@ -2258,6 +2319,7 @@ async function main(): Promise<void> {
     if (cmd === "synthesize") return await cmdSynthesize(rest);
     if (cmd === "archive") return cmdArchive(rest);
     if (cmd === "tag") return cmdTag(rest);
+    if (cmd === "lifecycle") return cmdLifecycle(rest);
     if (cmd === "relate") return cmdRelate(rest);
     if (cmd === "guidance") return cmdGuidance(rest);
     if (cmd === "audit") return cmdAudit(rest);
