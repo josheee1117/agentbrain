@@ -296,7 +296,7 @@ export function guidanceBlock(props: Iterable<Proposition>, worker: boolean, exc
     )
     .sort((a, b) => b.seq - a.seq);
   if (!rows.length) return "";
-  const head = "<agentbrain-prefs>\n用户的干活偏好（每轮常驻）：\n";
+  const head = "<agentbrain-prefs>\n用户的干活偏好（会话首轮）：\n";
   const tail = "\n</agentbrain-prefs>\n";
   const lines: string[] = [];
   let used = head.length + tail.length;

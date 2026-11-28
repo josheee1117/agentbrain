@@ -948,12 +948,16 @@ test("recall --hook 注入常驻偏好与提醒，斜杠命令与不相关目录
   const pref = remember(["--confirmed", "--global", "--kind", "rule", "--text", "说人话", "--summary", "偏好"]);
   const prefId = pref.out.match(/\[([0-9a-f]{8})\]/)![1];
   assert.equal(ab(["guidance", prefId], alpha, own).code, 0);
-  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, transcript_path: join(transcriptDir, `2026-01-01T00-00-00-000Z_${SESSION}.jsonl`) }));
+  const turn1File = join(transcriptDir, "2026-01-01T00-00-00-000Z_turn1-guidance.jsonl");
+  writeFileSync(turn1File, JSON.stringify({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "首轮提问" } }) + "\n");
+  const hit = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, session_id: "turn1-guidance", transcript_path: turn1File }));
   assert.equal(hit.code, 0, hit.err);
   const j = JSON.parse(hit.out) as { hookSpecificOutput: { additionalContext: string } };
   assert.match(j.hookSpecificOutput.additionalContext, /说人话/);
   assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /要不要查历史记忆由你判断/);
   assert.doesNotMatch(j.hookSpecificOutput.additionalContext, /别在 alpha 计数里用全局锁/);
+  const turn2 = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "计数 全局锁", cwd: alpha, transcript_path: join(transcriptDir, `2026-01-01T00-00-00-000Z_${SESSION}.jsonl`) }));
+  assert.equal(JSON.parse(turn2.out).hookSpecificOutput.additionalContext, "", "第 2 轮起不再每轮常驻偏好");
   const slash = recall(["recall", "--hook"], alpha, own, JSON.stringify({ prompt: "/help 计数", cwd: alpha }));
   assert.equal(slash.out, "");
 });
@@ -1227,6 +1231,9 @@ test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab sta
     st.workDb.prepare("UPDATE events SET ts=? WHERE id=?").run(new Date(Date.now() - 400 * 86_400_000).toISOString(), old);
     st.close();
   }
+  const piExtSid = "pi-ext-turn1";
+  const piExtFile = join(transcriptDir, `2026-01-02T00-00-00-000Z_${piExtSid}.jsonl`);
+  writeFileSync(piExtFile, JSON.stringify({ type: "message", id: "u1", parentId: null, message: { role: "user", content: "首轮输入" } }) + "\n");
   const extPath = join(import.meta.dirname, "../integrations/pi/agentbrain-recall.ts");
   const mod = (await import(extPath)) as { createExtension(run: unknown): (pi: unknown) => void };
   const run = (args: string[], input: object, timeout: number) =>
@@ -1235,7 +1242,7 @@ test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab sta
       encoding: "utf8",
       timeout,
       input: JSON.stringify(input),
-      env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: SESSION, AB_NO_WORK: "1" },
+      env: { ...process.env, AB_HOME: own, AB_REGISTRY: repos, HOME: fakeHome, PATH: `${bin}:${process.env.PATH}`, PI_SESSION_ID: piExtSid, AB_NO_WORK: "1" },
     })).then((r) => (r.status === 0 ? { ok: true, out: r.stdout } : { ok: false, reason: "exit" }));
   const handlers = new Map<string, (e: unknown, ctx: unknown) => Promise<unknown>>();
   const commands = new Map<string, { handler(a: string, ctx: unknown): Promise<void> }>();
@@ -1244,7 +1251,7 @@ test("Pi 扩展接真 ab：会话开始挂待办，提醒注入，/ab 打 ab sta
   const notes: string[] = [];
   const ctx = {
     cwd: alpha,
-    sessionManager: { getSessionFile: () => join(fakeHome, "s.jsonl"), getSessionId: () => SESSION },
+    sessionManager: { getSessionFile: () => piExtFile, getSessionId: () => piExtSid },
     ui: { setStatus: (k: string, t: string) => { assert.equal(k, "agentbrain"); statuses.push(t); }, notify: (m: string) => notes.push(m) },
   };
   const cwd0 = process.cwd();

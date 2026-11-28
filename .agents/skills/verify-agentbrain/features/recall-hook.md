@@ -1,8 +1,8 @@
 # recall-hook (宿主每轮钩子与上下文注入)
 
 ## Sub-features
-- 宿主每轮钩子 (`ab recall --hook`)：不再按本轮提问全量被动检索注入，也取消泛化的每轮固定提醒噪音；改为输出常驻偏好 (`<agentbrain-prefs>`) + 轻量本地 BM25 条件触发器（`<2.5ms` 零网络）：常规提问完全静默（`additionalContext` 不拼召回提醒），仅在命中窄域高区分词时输出 `[shortId] 种类（线索：…）→ 动手前先跑 ab get <id>`；引用开关开启（`cite=on`）时保留回答报告指令
-- 身份入口先通过 `telemetryCtx` / `allowedTranscript` 规范路径，再调用 `workerIdentity`。只有完整首轮无标记才确认主会话；待定时不调用 `guidanceBlock` 与条件触发器，`raw.worker=true` 可强制 worker。
+- 宿主每轮钩子 (`ab recall --hook`)：取消每轮常驻重复注入；偏好 (`<agentbrain-prefs>`) 与引用报告说明只在会话首轮（`!hasSessionSeeded`）注入一次，第 2 轮起自动静默（`additionalContext` 为空串），仅在提问命中窄域高区分词时通过 `<2.5ms` 本地 BM25 条件触发器输出 `[shortId] 种类（线索：…）→ 动手前先跑 ab get <id>`
+- 身份入口先通过 `telemetryCtx` / `allowedTranscript` 规范路径，再调用 `workerIdentity`。只有完整首轮无标记才确认主会话；待定或已过首轮时不调用 `guidanceBlock`，`raw.worker=true` 可强制 worker。
 - 文本检索保留：`ab recall <文本>` 仍支持按关键词和向量召回记忆（供手动查或对照评测使用）
 - 宿主集成接口支持：Claude Code hook (UserPromptSubmit)、Pi 扩展 `agentbrain-recall`、Codex 注入
 - 结果格式化输出：生成 `<agentbrain-recall>` 与 `<agentbrain-prefs>` 注入块，不再输出 `want_count`

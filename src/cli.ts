@@ -35,7 +35,7 @@ import { conditionalTriggerHint, guidanceBlock, recall } from "./recall.ts";
 import { MainSaid, userQuoteHashes, workerQuoteAudit } from "./audit.ts";
 import { sha256 } from "./extract.ts";
 import { sanitize } from "./sanitize.ts";
-import { cleanTranscript, hasBriefInjected, isWorkerTranscript, workerIdentity } from "./transcript.ts";
+import { cleanTranscript, hasBriefInjected, hasSessionSeeded, isWorkerTranscript, workerIdentity } from "./transcript.ts";
 import { opencodeId, opencodeSession } from "./opencode.ts";
 import { agyLocate, agySessionId } from "./agy.ts";
 import { applyActions, candidateInput, connectPanel, loadReport, planAll, runPanel, saveReport, undoRun, type RunReport } from "./curate.ts";
@@ -312,16 +312,28 @@ async function cmdRecall(argv: string[]): Promise<void> {
         return;
       }
 
-      // 1. 常驻偏好（guidanceBlock，不变）
+      // 1. 会话首轮偏好：只在首轮（transcript 尚无助手回复且未注入过 brief/prefs）注入一次；第 2 轮起不再每轮常驻重复
+      const seeded = hasSessionSeeded(ctx?.transcript);
+      let sessionCiteSent = false;
+      if (cite && seeded && ctx?.host && ctx?.session_id) {
+        try {
+          sessionCiteSent = !!store.workDb
+            .prepare("SELECT 1 FROM recall_runs WHERE host=? AND session_id=? AND cite=1 LIMIT 1")
+            .get(ctx.host, ctx.session_id);
+        } catch {
+          sessionCiteSent = false;
+        }
+      }
+
       const used: string[] = [];
       let prefs = "";
       try {
-        if (worker !== null) prefs = guidanceBlock(store.project().props.values(), worker, new Set(), used);
+        if (worker !== null && !seeded) prefs = guidanceBlock(store.project().props.values(), worker, new Set(), used);
       } catch {
         prefs = "";
       }
 
-      // 2. 条件触发提醒（BM25 <2.5ms）：常规提问保持静默，命中窄域高区分词才给短 ID 线索；cite 开启时保留回答报告要求
+      // 2. 条件触发提醒（BM25 <2.5ms）：常规提问保持静默，命中窄域高区分词才给短 ID 线索；cite 开启时仅在首轮（或开关刚打开首轮）及命中线索时附带
       let trig = { block: "", ids: [] as string[] };
       try {
         trig = conditionalTriggerHint(store, query, cwd, worker ?? true, new Set(used));
@@ -330,7 +342,8 @@ async function cmdRecall(argv: string[]): Promise<void> {
       }
       let reminder = trig.block;
       if (cite) {
-        reminder = reminder ? withCiteInstruction(reminder) : `<agentbrain-recall>\n${CITE_INSTRUCTION}\n</agentbrain-recall>\n`;
+        if (reminder) reminder = withCiteInstruction(reminder);
+        else if (!seeded || !sessionCiteSent) reminder = `<agentbrain-recall>\n${CITE_INSTRUCTION}\n</agentbrain-recall>\n`;
       }
 
       const block = prefs + reminder;

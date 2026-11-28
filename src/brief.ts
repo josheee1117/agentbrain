@@ -20,7 +20,7 @@ const SCENE_LABEL: Record<Scene, string> = { design: "设计", code: "开发", t
 export const SCENE_TRIGGERS: Record<Scene, string> = {
   design: "按需触发器：改表/DDL/MySQL索引→ab search \"767 字节索引\"；幂等/长事务→ab search \"短事务提交状态\"；模式准入→ab search \"三条全过\"。",
   code: "按需触发器：跨层DTO/对象转换→ab search \"对象转换 MapStruct\"；用户报错文案→ab search \"报错说人话\"；连败两次→ab search \"连续两次修复\"；MySQL索引→ab search \"767 字节索引\"。",
-  test: "按需触发器：本地起实例防串流→ab search \"关闭服务注册\"；专用测试库隔离→ab search \"专用库 askdata_e2e\"；修失败测试→ab search \"放宽断言\"。",
+  test: "按需触发器：本地起实例防串流→ab search \"关闭服务注册\"；连测试环境配套跑真实E2E→ab search \"测试环境 配套\"；修失败测试→ab search \"放宽断言\"。",
   review: "按需触发器：复核GPT系意见→ab search \"叠甲\"；事务/幂等边界→ab search \"短事务提交状态\"；检索可见性→ab search \"可见性最小单位\"。",
 };
 /** 场景段标题与“放不下”提示的预留字符（只在有场景规则时从通用段预算里扣）。 */

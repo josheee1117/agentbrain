@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "./store.ts";
@@ -26,7 +26,7 @@ const SRC: RememberBody["source"] = {
 };
 
 function makeSandbox() {
-  const dir = mkdtempSync(join(tmpdir(), "ab-phase2-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "ab-phase2-")));
   const repos = join(dir, "repos");
   const alpha = join(dir, "alpha");
   const abHome = join(dir, "ab");
@@ -290,13 +290,43 @@ test("动态 brief 索引与 <2.5ms BM25 条件触发钩子：常规对话零噪
     const hitCtx = JSON.parse(hitCli.stdout).hookSpecificOutput.additionalContext as string;
     assert.match(hitCtx, new RegExp(`ab get ${mysqlRule.slice(0, 8)}`));
 
-    // 5. cite=on 时常规对话只带 CITE_INSTRUCTION，不带旧版泛化提醒噪音
+    // 5. cite=on 且无历史回复（首轮）时带一次 CITE_INSTRUCTION，第 2 轮起（已有回复）自动静默不再每轮常驻
     assert.equal(sb.runCli("setup", "--cite", "on").status, 0);
-    const citeRoutine = sb.runHook({ prompt: "好的，先跑一下测试然后提交代码吧", cwd: sb.alpha });
-    const citeCtx = JSON.parse(citeRoutine.stdout).hookSpecificOutput.additionalContext as string;
-    assert.match(citeCtx, /<agentbrain-recall>/);
-    assert.match(citeCtx, /每个最终回答/);
-    assert.doesNotMatch(citeCtx, /要不要查历史记忆由你判断/);
+    const citeTurn1 = sb.runHook({ prompt: "好的，先跑一下测试然后提交代码吧", cwd: sb.alpha });
+    const citeCtx1 = JSON.parse(citeTurn1.stdout).hookSpecificOutput.additionalContext as string;
+    assert.match(citeCtx1, /<agentbrain-recall>/);
+    assert.match(citeCtx1, /每个最终回答/);
+    assert.doesNotMatch(citeCtx1, /要不要查历史记忆由你判断/);
+
+    const seededId = "c0000000-1111-2222-3333-444444444444";
+    const seededLogDir = join(sb.dir, `.gemini/antigravity/brain/${seededId}/.system_generated/logs`);
+    mkdirSync(seededLogDir, { recursive: true });
+    const seededFull = join(seededLogDir, "transcript_full.jsonl");
+    writeFileSync(
+      seededFull,
+      [
+        JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "首轮输入" }),
+        JSON.stringify({ step_index: 1, type: "PLANNER_RESPONSE", content: "首轮回复" }),
+      ].join("\n") + "\n",
+    );
+    const prefRes = sb.runCli("remember", "--global", "--confirmed", "--kind", "rule", "--text", "首轮注入不重复偏好", "--summary", "s");
+    const prefShort = /\[([0-9a-f]{8})\]/.exec(prefRes.stdout)![1];
+    assert.equal(sb.runCli("guidance", prefShort).status, 0);
+    // 记一条首轮 cite=1 记录，模拟该会话首轮已发过引用说明
+    const tmpStore = new Store(join(sb.abHome, "store.db"), join(sb.abHome, "index.db"));
+    tmpStore.workDb
+      .prepare("INSERT INTO recall_runs(ts,host,session_id,transcript,outcome,n_hits,ms,cite) VALUES(?,?,?,?,?,?,?,1)")
+      .run(new Date().toISOString(), "agy", seededId, seededFull, "nohit", 0, 1);
+    tmpStore.close();
+
+    const turn2 = sb.runHook({
+      prompt: "好的，先跑一下测试然后提交代码吧",
+      cwd: sb.alpha,
+      session_id: seededId,
+      transcript_path: seededFull,
+    });
+    assert.equal(turn2.status, 0, turn2.stderr);
+    assert.equal(JSON.parse(turn2.stdout).hookSpecificOutput.additionalContext, "", "第 2 轮起偏好与引用说明均不再每轮常驻");
   } finally {
     if (prevReg === undefined) delete process.env.AB_REGISTRY;
     else process.env.AB_REGISTRY = prevReg;

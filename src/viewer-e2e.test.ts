@@ -97,12 +97,14 @@ test("召回记录、引用开关、ab-used 扫描、看板数据，一条链走
 
 test("库被别的进程占着写锁时，召回 hook 照常输出，统计放弃不等", () => {
   ab(["setup", "--cite", "on"]);
+  const freshTranscript = join(tdir, "2026-01-02T00-00-00-000Z_s_lock_turn1.jsonl");
+  writeFileSync(freshTranscript, line({ type: "session", version: 3, id: "s_lock_turn1", timestamp: new Date().toISOString(), cwd: alpha }));
   const before = (db().prepare("SELECT COUNT(*) AS n FROM recall_runs").get() as { n: number }).n;
   const lock = new DatabaseSync(join(home, "store.db"));
   lock.exec("BEGIN IMMEDIATE");
   try {
     const t0 = Date.now();
-    const ctx = hook();
+    const ctx = JSON.parse(ab(["recall", "--hook"], alpha, JSON.stringify({ prompt: "alpha 召回 全局锁", cwd: alpha, transcript_path: freshTranscript }))).hookSpecificOutput.additionalContext as string;
     const ms = Date.now() - t0;
     assert.match(ctx, /<agentbrain-recall>/);
     assert.ok(ms < 2000, `hook 用了 ${ms}ms`);

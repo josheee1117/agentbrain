@@ -593,12 +593,16 @@ if (ev !== $INBOX_EV_BEFORE || inj !== 0 || uninit !== 0) { console.error({ ev, 
     step cli-archive-mark bash -c "env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$UNCONF_ID' | grep -qF '（已归档）'"
     step cli-archive-reactivate env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" archive "$UNCONF_ID" --reactivate
     step cli-archive-reactivated-mark bash -c "! env AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' get '$UNCONF_ID' | grep -qF '（已归档）'"
+    GLOGS="$FAKE_HOME/.gemini/antigravity-cli/brain/g0000000-1111-2222-3333-444444444444/.system_generated/logs"
+    mkdir -p "$GLOGS"
+    printf '{"step_index":0,"type":"USER_INPUT","status":"DONE","content":"首轮主会话输入"}\n' > "$GLOGS/transcript_full.jsonl"
     step cli-guidance env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" remember --kind rule --text "偏好测试：改动后先跑测试" --summary "验证规范" --global --confirmed
     GUIDE_ID=$(sed -n 's/^已记住 \[\([0-9a-f]\{8\}\)\].*/\1/p' "$EV/cli-guidance.log" 2>/dev/null | head -1)
     step cli-guidance-mark env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID"
-    step cli-guidance-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$ALOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qF '偏好测试：改动后先跑测试'"
+    step cli-guidance-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$GLOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qF '偏好测试：改动后先跑测试'"
+    step cli-guidance-turn2-silent bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$ALOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
     step cli-guidance-off env AB_HOME="$AB_HOME" AGENTBRAIN_HOME="$AB_HOME" AB_REGISTRY="$AB_REGISTRY" node "$ROOT/src/cli.ts" guidance "$GUIDE_ID" --off
-    step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$ALOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
+    step cli-guidance-off-prefs bash -c "printf '{\"prompt\":\"验证规范\",\"cwd\":\"%s\",\"transcript_path\":\"%s/transcript_full.jsonl\"}\n' '$REPO' '$GLOGS' | env HOME='$FAKE_HOME' AB_HOME='$AB_HOME' AGENTBRAIN_HOME='$AB_HOME' AB_REGISTRY='$AB_REGISTRY' node '$ROOT/src/cli.ts' recall --hook | grep -qvF '偏好测试：改动后先跑测试'"
 
     # 10. 数据安全（admin.md，设计 §12.6）：单独一个库，备份 → 再写一条 → 恢复预览 → 恢复 → 清除被拒 → status 新增各行 → 权限
     ADM="$S/admin_home"; A="env AB_HOME=$ADM AB_REGISTRY=$AB_REGISTRY HOME=$FAKE_HOME node $ROOT/src/cli.ts"

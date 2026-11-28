@@ -478,6 +478,49 @@ export function hasBriefInjected(file: string | null | undefined): boolean {
     }
   });
 }
+
+/** 会话是否已过首轮（已有宿主注入过偏好/brief，或已有过助手回复）：为 true 时不再每轮重复注入偏好与固定引用说明。 */
+export function hasSessionSeeded(file: string | null | undefined): boolean {
+  if (!file) return false;
+  if (file.startsWith("opencode://")) {
+    try {
+      return cleanTranscript("opencode", file).turns.some((t) => t.role === "assistant");
+    } catch {
+      return false;
+    }
+  }
+  let raw: string;
+  try {
+    raw = readTranscript(file, TRANSCRIPT_HEAD_MAX_BYTES);
+  } catch {
+    return false;
+  }
+  return raw.split("\n").some((line) => {
+    if (!line.trim()) return false;
+    try {
+      const e = JSON.parse(line) as any;
+      if (!e || typeof e !== "object") return false;
+      if (
+        e.type === "SYSTEM_MESSAGE" &&
+        typeof e.content === "string" &&
+        (e.content.includes("<agentbrain-prefs>") || e.content.includes("<agentbrain-brief>"))
+      ) {
+        return true;
+      }
+      if (e.type === "PLANNER_RESPONSE" || e.type === "assistant") return true;
+      if (e.type === "custom_message" && e.customType === "agentbrain-recall") return true;
+      if (e.type === "message" && e.message?.role === "assistant") return true;
+      if (e.type === "response_item" && e.payload?.type === "message" && e.payload?.role === "assistant") return true;
+      return false;
+    } catch {
+      return (
+        /^\s*\{[^{}]*"type"\s*:\s*"(?:PLANNER_RESPONSE|assistant)"/.test(line) ||
+        (/^\s*\{[^{}]*"type"\s*:\s*"SYSTEM_MESSAGE"/.test(line) &&
+          (line.includes("<agentbrain-prefs>") || line.includes("<agentbrain-brief>")))
+      );
+    }
+  });
+}
 function readWorkerIdentity(file: string | null | undefined, maxBytes: number): boolean | null {
   if (!file) return null;
   if (file.startsWith("opencode://")) {
